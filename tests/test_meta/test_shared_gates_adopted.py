@@ -12,19 +12,25 @@ from pathlib import Path
 from py_ci_shared.atomic_write_staging import assert_atomic_write_staging
 from py_ci_shared.hash_fed_by_array_copy import assert_no_hash_fed_by_array_copy
 from py_ci_shared.hash_key_determinism import assert_hash_keys_are_deterministic
+from py_ci_shared.check_then_act_outside_lock import assert_no_check_then_act_outside_lock
+from py_ci_shared.fail_open_handlers import assert_no_new_fail_open_handlers
 from py_ci_shared.identity_comparisons import assert_no_identity_comparisons
 from py_ci_shared.import_cycles import assert_no_import_cycles
 from py_ci_shared.module_cache_thread_safety import assert_thread_safe_module_caches
+from py_ci_shared.lock_held_across_io import assert_no_lock_held_across_io
 from py_ci_shared.module_reload_safety import assert_no_reloads_in_code
 from py_ci_shared.naive_utcnow import assert_no_naive_utcnow
+from py_ci_shared.no_source_text_tests import assert_no_source_text_tests
 from py_ci_shared.no_xfail_to_defer import assert_no_xfail_to_defer
 from py_ci_shared.numba_seed_range import assert_numba_seeds_fit_int64
 from py_ci_shared.sentinel_or_fallback import assert_no_sentinel_or_fallback
+from py_ci_shared.shared_mutable_placeholder import assert_no_shared_mutable_placeholders
 from py_ci_shared.stale_source_citations import assert_no_stale_source_citations
 from py_ci_shared.swallowed_exceptions import assert_no_swallowed_exceptions
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src" / "pyutilz"
+FAIL_OPEN_BASELINE = Path(__file__).resolve().parent / "_fail_open_baseline.json"
 
 
 def test_numba_seeds_fit_the_seed_argument():
@@ -113,3 +119,37 @@ def test_no_array_copied_just_to_be_hashed():
 def test_no_naive_utcnow():
     """`datetime.utcnow()` is deprecated and naive; use `datetime.now(timezone.utc)`."""
     assert_no_naive_utcnow(SRC, min_files=200)
+
+
+# Adopted with py-ci-shared 1.22.12 (the concurrency, placeholder, source-text and fail-open rules). Zero findings is the bar,
+# except where the module docstring of the test says otherwise.
+
+
+def _py_files(root: Path) -> list[Path]:
+    """Every Python file under *root*, sorted so a finding's order is stable across runs."""
+    return sorted(root.rglob("*.py"))
+
+
+def test_no_lock_held_across_blocking_io():
+    """A connect, HTTP call, subprocess, sleep or file write made while a lock is held makes every other thread wait for it."""
+    assert_no_lock_held_across_io(_py_files(SRC), min_files=200)
+
+
+def test_check_and_write_on_a_shared_dict_share_one_lock():
+    """A membership test or get, then a write to the same shared dict, must sit under one lock block: another thread can insert between them."""
+    assert_no_check_then_act_outside_lock(_py_files(SRC), min_files=200)
+
+
+def test_no_mutable_placeholder_returned_by_reference():
+    """A list, dict or object built once in an enclosing scope and returned by name hands every caller the same object."""
+    assert_no_shared_mutable_placeholders(_py_files(SRC) + _py_files(REPO_ROOT / "tests"), min_files=200)
+
+
+def test_no_test_asserts_on_sql_text():
+    """A test that matches the spelling of a SQL statement proves nothing about the rows it returns; drive a fake or a real result instead."""
+    assert_no_source_text_tests(_py_files(REPO_ROOT / "tests"), min_files=250)
+
+
+def test_no_silent_default_return_in_except_handlers():
+    """An except handler that returns a default and logs nothing hides the failure from the caller; log the exception type at the handler."""
+    assert_no_new_fail_open_handlers(files=_py_files(SRC), repo_root=REPO_ROOT, baseline_path=FAIL_OPEN_BASELINE, min_files=200)

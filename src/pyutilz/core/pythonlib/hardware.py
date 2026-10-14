@@ -18,7 +18,8 @@ def is_jupyter_notebook() -> bool:
         if "IPKernelApp" in ipython.config:  # Jupyter notebook or JupyterLab
             return True
         return False
-    except (ImportError, NameError):
+    except (ImportError, NameError) as exc:
+        logger.debug("is_jupyter_notebook: IPython probe unavailable, not a notebook: %s: %s", type(exc).__name__, exc)
         return False
 
 

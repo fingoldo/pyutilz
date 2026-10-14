@@ -265,14 +265,12 @@ class TestF05FilemakerTokenLeak:
         fm = pytest.importorskip("pyutilz.core.filemaker")
 
         secret = "SECRET-BEARER-TOKEN-VALUE"  # pragma: allowlist secret
-        payload = {"response": {"sessionToken": secret}, "messages": [{"code": "0"}]}
-
         class _Resp:
             status_code = 200
 
             @staticmethod
             def json():
-                return payload
+                return {"response": {"sessionToken": secret}, "messages": [{"code": "0"}]}
 
         with patch.object(fm, "filemaker_url", "https://fm.example.org/api"), patch.object(fm.web, "connect", lambda **_kw: None), patch.object(
             fm.web, "get_url", lambda *_a, **_kw: _Resp()

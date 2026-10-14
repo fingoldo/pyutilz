@@ -69,7 +69,7 @@ def test_the_lookup_happens_once_per_model_name(monkeypatch: pytest.MonkeyPatch)
 
     def counting(*a, **k):
         calls["n"] += 1
-        return _HAIKU_LISTING
+        return dict(_HAIKU_LISTING)
 
     monkeypatch.setattr(_catalogue, "_fetch_models_catalogue", counting)
     cm.claude_model_spec("claude-haiku-5-5")

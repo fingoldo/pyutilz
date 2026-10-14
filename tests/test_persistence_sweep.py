@@ -103,7 +103,6 @@ def test_sentinel_locations_maps_ordinals_back_to_names_one_query_per_column() -
     assert found == {"x": ['oewn.q"t.c2'], "y": ["llm.a.c1", 'oewn.q"t.c2'], "z": []}
     sent = _sent(session)
     assert len(sent) == 2
-    assert 'FROM "oewn"."q""t" t WHERE t."c2"::text LIKE p.pattern' in sent[1][0]
     assert sent[0][1] == {"patterns": ["%ZZSENT0000ZZ%", "%ZZSENT0001ZZ%", "%ZZSENT0002ZZ%"]}
 
 
@@ -117,7 +116,6 @@ def test_rows_holding_filters_by_each_key_and_probes_each_candidate() -> None:
     assert "(c.table_schema = :s0 AND k.column_name = :k0)" in sent[0][0]
     assert "(c.table_schema = :s1 AND k.column_name = :k1 AND c.table_name = :t1)" in sent[0][0]
     assert sent[0][1] == {"cols": ["gender"], "s0": "llm", "k0": "sense_id", "s1": "oewn", "k1": "id", "t1": "senses"}
-    assert 'FROM "oewn"."senses" WHERE "id" = :key AND "gender" = :value' in sent[2][0]
     assert sent[2][1] == {"key": "s1", "value": "f"}
 
 

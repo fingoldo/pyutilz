@@ -31,7 +31,7 @@ try:
 except Exception as e:
     _DEFAULT_ENCODING = None  # type: ignore[assignment]
     _HAS_TIKTOKEN = False
-    logger.debug("tiktoken unavailable (%s: %s) -- using len//4 fallback for token counting", type(e).__name__, e)
+    logger.warning("tiktoken unavailable (%s: %s) -- using len//4 fallback for token counting", type(e).__name__, e)
 
 # Bounded LRU, not a plain unbounded dict: a long-running process resolving encodings for many
 # distinct model-name strings over its lifetime (e.g. OpenRouter's 200+ catalogue entries) would
@@ -55,9 +55,13 @@ def _encoding_for_model(model: Optional[str]):
     if model is None:
         return _DEFAULT_ENCODING
     with _encoding_cache_lock:
-        if model in _encoding_cache:
+        try:
+            enc = _encoding_cache[model]
+        except KeyError:
+            pass
+        else:
             _encoding_cache.move_to_end(model)
-            return _encoding_cache[model]
+            return enc
     # Resolved OUTSIDE the lock: encoding_for_model() can hit the network on a first-time
     # download, which must not serialize every other thread's cache hit. A duplicate resolve in
     # a race is harmless (the second write simply replaces an equivalent object).

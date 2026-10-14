@@ -4,6 +4,7 @@ Split out of the historical flat ``pyutilz.core.pythonlib`` module; re-exported 
 package ``__init__`` to preserve the public import surface.
 """
 
+import logging
 import re
 
 from ._common import Any, Tuple, njit
@@ -13,6 +14,9 @@ from ._common import Any, Tuple, njit
 # "1,5" (1.5 in most of Europe) became 15.0, a 10x error with no warning -- so anything that is not
 # this shape keeps its commas and simply fails to parse as a float.
 _THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d*)?$")
+
+
+logger = logging.getLogger(__name__)
 
 
 def _strip_thousands_separators(text: str) -> str:
@@ -33,7 +37,8 @@ def is_float(string: Any) -> bool:
     try:
         float(_strip_thousands_separators(str(string)))
         return True
-    except ValueError:
+    except ValueError as exc:
+        logger.debug("is_float: value is not a float literal: %s: %s", type(exc).__name__, exc)
         return False
 
 

@@ -183,13 +183,12 @@ class TestCountTokens:
     async def test_uses_anthropic_api_when_available(self):
         p = _provider()
         fake_result = SimpleNamespace(input_tokens=42)
-        fake_client = SimpleNamespace(messages=SimpleNamespace(count_tokens=AsyncMock(return_value=fake_result)))
 
         class _Ctx:
             """The client is used as an async context manager now, so it is closed after the count (PROV-31)."""
 
             async def __aenter__(self):
-                return fake_client
+                return SimpleNamespace(messages=SimpleNamespace(count_tokens=AsyncMock(return_value=fake_result)))
 
             async def __aexit__(self, *exc):
                 return None

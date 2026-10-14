@@ -83,7 +83,8 @@ try:
             """Wrap ``message_parser.parse_message`` so unknown SDK message types (e.g. ``rate_limit_event``) return None instead of raising ``MessageParseError``."""
             try:
                 return _orig_parse(data)
-            except _mp.MessageParseError:
+            except _mp.MessageParseError as exc:
+                logger.warning("_patched_parse: SDK message parse failed, message dropped: %s: %s", type(exc).__name__, exc)
                 return None
         _mp.parse_message = _patched_parse
         _cc_client.parse_message = _patched_parse

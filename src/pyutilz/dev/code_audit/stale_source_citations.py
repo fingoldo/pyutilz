@@ -33,7 +33,8 @@ def _docstring_lines(src: str) -> set[int]:
     """
     try:
         tree = ast.parse(src)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError) as exc:
+        logger.warning("_docstring_lines: source does not parse, no docstring lines collected: %s: %s", type(exc).__name__, exc)
         return set()
     lines: set[int] = set()
     for node in walk_tree(tree):
@@ -53,7 +54,8 @@ def _comment_and_docstring_tokens(src: str) -> Iterator[tuple[int, str]]:
                 yield tok.start[0], tok.string
             elif tok.type == tokenize.STRING and tok.start[0] in docstrings:
                 yield tok.start[0], tok.string
-    except (tokenize.TokenError, IndentationError, SyntaxError):
+    except (tokenize.TokenError, IndentationError, SyntaxError) as exc:
+        logger.warning("_comment_and_docstring_tokens: tokenize failed, comments skipped: %s: %s", type(exc).__name__, exc)
         return
 
 

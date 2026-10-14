@@ -4,6 +4,7 @@ Shared-gate counterpart: py_ci_shared.sentinel_or_fallback reports value-or-fall
 list of setting names (max_tokens, seed, timeout...). This scanner is the general shape with heuristics.
 """
 from __future__ import annotations
+import logging
 
 import ast
 from pathlib import Path
@@ -11,6 +12,9 @@ from pathlib import Path
 from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- default-via-or trap (wave 14) --------------------------------------
+
+
+logger = logging.getLogger(__name__)
 
 
 def _is_trivial_default(value: ast.AST) -> bool:
@@ -201,7 +205,8 @@ def _expr_repr(node: ast.AST) -> "str | None":
     _unparse = getattr(ast, "unparse", None) or ast.dump
     try:
         return " ".join(_unparse(node).split())
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError) as exc:
+        logger.debug("_expr_repr: expression cannot be unparsed: %s: %s", type(exc).__name__, exc)
         return None
 
 

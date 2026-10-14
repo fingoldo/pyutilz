@@ -190,7 +190,8 @@ class OpenRouterEndpointsMixin:
                 return None
             try:
                 return float(v)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                logger.debug("_to_float: credits value is not numeric: %s: %s", type(exc).__name__, exc)
                 return None
 
         granted = _to_float(data.get("total_credits"))

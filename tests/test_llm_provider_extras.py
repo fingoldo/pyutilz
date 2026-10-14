@@ -167,10 +167,8 @@ class TestAnthropicProviderExtras:
     async def test_count_tokens_uses_native_api(self):
         p = self._make()
         p.client = MagicMock()
-        result = MagicMock(input_tokens=42)
-
         async def _count_tokens(**kwargs):
-            return result
+            return MagicMock(input_tokens=42)
 
         p.client.messages = MagicMock()
         p.client.messages.count_tokens = AsyncMock(side_effect=_count_tokens)

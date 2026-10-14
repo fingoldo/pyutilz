@@ -203,9 +203,11 @@ def get_connection_from_pool(dsn: str, pool_max: int = 8, _recovering: bool = Fa
         raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
     conn = pool.getconn()
     key = _conn_key(conn)
+    now = time.monotonic()
     with _conn_last_used_lock:
         last_used = _conn_last_used.get(key, 0.0)
-    if time.monotonic() - last_used > _HEALTH_CHECK_IDLE_SEC:
+        _conn_last_used[key] = now
+    if now - last_used > _HEALTH_CHECK_IDLE_SEC:
         try:
             _ensure_connection(conn)
         except (psycopg2.OperationalError, psycopg2.InterfaceError):
@@ -219,8 +221,6 @@ def get_connection_from_pool(dsn: str, pool_max: int = 8, _recovering: bool = Fa
                 if _recovering:
                     raise
                 return get_connection_from_pool(dsn, pool_max, _recovering=True)
-    with _conn_last_used_lock:
-        _conn_last_used[key] = time.monotonic()
     try:
         _maybe_register_vector(pool, conn)
     except Exception:

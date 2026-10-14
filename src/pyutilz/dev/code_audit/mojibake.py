@@ -32,7 +32,8 @@ def _is_roundtrip_mojibake(run: str) -> bool:
         return False
     try:
         recovered = run.encode("cp1251").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError):
+    except (UnicodeEncodeError, UnicodeDecodeError) as exc:
+        logger.debug("_is_roundtrip_mojibake: run does not round-trip through cp1251: %s: %s", type(exc).__name__, exc)
         return False
     return bool(recovered) and recovered != run
 

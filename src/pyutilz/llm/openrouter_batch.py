@@ -183,7 +183,8 @@ def _created_at(batch: Mapping[str, Any]) -> float | None:
     if isinstance(raw, str):
         try:
             return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
-        except ValueError:
+        except ValueError as exc:
+            logger.debug("_created_at: timestamp is not ISO-8601: %s: %s", type(exc).__name__, exc)
             return None
     return None
 

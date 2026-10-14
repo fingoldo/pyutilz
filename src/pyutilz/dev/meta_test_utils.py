@@ -182,11 +182,13 @@ def public_top_level_symbols(path: Path) -> list[tuple[str, int]]:
     """
     try:
         src = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("public_top_level_symbols: file unreadable, no symbols collected: %s: %s", type(exc).__name__, exc)
         return []
     try:
         tree = ast.parse(src)
-    except SyntaxError:
+    except SyntaxError as exc:
+        logger.warning("public_top_level_symbols: file does not parse, no symbols collected: %s: %s", type(exc).__name__, exc)
         return []
     out: list[tuple[str, int]] = []
     for node in tree.body:
@@ -245,7 +247,8 @@ def capture_signature(obj: object) -> str:
     """
     try:
         sig = inspect.signature(obj)  # type: ignore[arg-type]  # obj is intentionally untyped object; non-callables are caught below and yield "<no-signature>"
-    except (ValueError, TypeError, RuntimeError):  # audit-exempt: non_neutral_except_fallback -- placeholder for an uninspectable callable, shown in the output rather than substituted as a measurement
+    except (ValueError, TypeError, RuntimeError) as exc:  # audit-exempt: non_neutral_except_fallback -- placeholder for an uninspectable callable, shown in the output rather than substituted as a measurement
+        logger.debug("capture_signature: callable has no inspectable signature: %s: %s", type(exc).__name__, exc)
         return "<no-signature>"
     params = []
     for name, p in sig.parameters.items():
@@ -455,10 +458,12 @@ def _count_deferred_in_file(py: Path, prefixes: tuple[str, ...], out: dict[str, 
     try:
         src = py.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("_count_deferred_in_file: file unreadable, reported as an error string: %s: %s", type(exc).__name__, exc)
         return f"{py}: {exc}"
     try:
         tree = ast.parse(src)
-    except SyntaxError:
+    except SyntaxError as exc:
+        logger.warning("_count_deferred_in_file: file does not parse, not counted: %s: %s", type(exc).__name__, exc)
         return None
     _count_deferred_in_tree(tree, py.stem, prefixes, out)
     return None
@@ -547,7 +552,8 @@ def safe_import(module_path: str) -> Optional[object]:
     than aborting on the first broken module."""
     try:
         return importlib.import_module(module_path)
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("safe_import: module not importable: %s: %s", type(exc).__name__, exc)
         return None
 
 
@@ -785,7 +791,8 @@ def _is_a_commit_this_repo_has(cite: str, repo_root: Path) -> bool:
         done = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, `cite` validated as hex above
             ["git", "cat-file", "-e", f"{cite}^{{commit}}"], cwd=repo_root, capture_output=True, timeout=15, check=False
         )
-    except (OSError, subprocess.SubprocessError):  # audit-exempt: non_neutral_except_fallback -- git unavailable means the commit cannot be verified; False is the honest answer to the predicate
+    except (OSError, subprocess.SubprocessError) as exc:  # audit-exempt: non_neutral_except_fallback -- git unavailable means the commit cannot be verified; False is the honest answer to the predicate
+        logger.warning("_is_a_commit_this_repo_has: git unavailable, commit cannot be verified: %s: %s", type(exc).__name__, exc)
         return False
     return done.returncode == 0
 

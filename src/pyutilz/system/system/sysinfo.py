@@ -120,7 +120,8 @@ def _query_nvcc_version() -> _List[str]:
         # genuinely on PATH. Line-ending-agnostic pattern too: real nvcc output uses bare
         # "\n" on Linux/macOS, not "\r\n".
         return re.findall(r", V(\S+)", _decode_child_output(subprocess.check_output([_resolve_binary("nvcc"), "--version"])))  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
-    except Exception:
+    except Exception as exc:
+        logger.debug("_query_nvcc_version: nvcc not runnable: %s: %s", type(exc).__name__, exc)
         return [""]
 
 

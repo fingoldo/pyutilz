@@ -1,5 +1,6 @@
 """(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
 from __future__ import annotations
+import logging
 
 import ast
 from pathlib import Path
@@ -32,6 +33,9 @@ from ._base import walk_tree, Finding, is_cached, is_test_file, _DEFAULT_EXCLUDE
 _CHEAP_CALLEES = frozenset(
     {"dict", "list", "set", "tuple", "str", "int", "float", "bool", "len", "range", "sorted", "update", "append", "extend", "copy", "add", "setdefault", "get", "format", "join"}
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _is_literal_data_factory(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -104,10 +108,11 @@ def _call_signature(call: ast.Call) -> str | None:
     try:
         args_repr = ", ".join(_unparse(a) for a in call.args)
         kwargs_repr = ", ".join(f"{kw.arg}={_unparse(kw.value)}" for kw in call.keywords)
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError) as exc:
         # ast.unparse raises ValueError on a handful of unsupported/exotic node shapes; a
         # pathologically deep expression could hit RecursionError. Neither is a scanner bug --
         # skip just this one call site rather than crash the whole scan.
+        logger.debug("_call_signature: call site cannot be unparsed, skipped: %s: %s", type(exc).__name__, exc)
         return None
     parts = ", ".join(p for p in (args_repr, kwargs_repr) if p)
     return f"{call.func.id}({parts})"

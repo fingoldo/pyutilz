@@ -145,7 +145,8 @@ def _per_token_cost_pair_or_none(model: str) -> "tuple[float, float] | None":
     try:
         in_per_1m = float(pricing.get("prompt", "0") or "0") * 1_000_000
         out_per_1m = float(pricing.get("completion", "0") or "0") * 1_000_000
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug("_per_token_cost_pair_or_none: pricing is not numeric: %s: %s", type(exc).__name__, exc)
         return None
     return (in_per_1m, out_per_1m)
 
@@ -168,7 +169,8 @@ def _cache_read_cost_per_1m_or_none(model: str) -> "float | None":
         return None
     try:
         return float(raw) * 1_000_000
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug("_cache_read_cost_per_1m_or_none: pricing is not numeric: %s: %s", type(exc).__name__, exc)
         return None
 
 
@@ -186,7 +188,8 @@ def _cache_write_cost_per_1m_or_none(model: str) -> "float | None":
         return None
     try:
         return float(raw) * 1_000_000
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug("_cache_write_cost_per_1m_or_none: pricing is not numeric: %s: %s", type(exc).__name__, exc)
         return None
 
 

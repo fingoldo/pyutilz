@@ -93,12 +93,11 @@ class TestGenerateRequestBody:
             input_tokens=10, output_tokens=5,
             cache_creation_input_tokens=0, cache_read_input_tokens=0,
         )
-        raw = MagicMock()
-        raw.parse.return_value = response
-        raw.headers = {}
-
         async def _create(**kwargs):
             captured.update(kwargs)
+            raw = MagicMock()
+            raw.parse.return_value = response
+            raw.headers = {}
             return raw
 
         p.client = MagicMock()

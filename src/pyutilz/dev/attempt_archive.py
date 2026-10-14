@@ -237,7 +237,8 @@ def _int_or_none(value: Any) -> Optional[int]:
     """``value`` as an int, or ``None`` when it is missing or not a number."""
     try:
         return None if value is None else int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug("_int_or_none: value is not an integer: %s: %s", type(exc).__name__, exc)
         return None
 
 
@@ -245,7 +246,8 @@ def _float_or_none(value: Any) -> Optional[float]:
     """``value`` as a float, or ``None`` when it is missing or not a number."""
     try:
         return None if value is None else float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug("_float_or_none: value is not a float: %s: %s", type(exc).__name__, exc)
         return None
 
 
@@ -431,7 +433,8 @@ def _is_stream_interruption(error: BaseException) -> bool:
     """True for ``pyutilz.llm.exceptions.LLMStreamInterruptedError``, imported lazily so this module needs no LLM stack."""
     try:
         from pyutilz.llm.exceptions import LLMStreamInterruptedError
-    except ImportError:  # pragma: no cover - the llm extra is not installed
+    except ImportError as exc:  # pragma: no cover - the llm extra is not installed
+        logger.debug("_is_stream_interruption: llm extra not installed: %s: %s", type(exc).__name__, exc)
         return False
     return isinstance(error, LLMStreamInterruptedError)
 

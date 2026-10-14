@@ -76,7 +76,7 @@ class S3Backend(RemoteBackend):
                     # than no remote); it just lacks the explicit timeouts.
                     self._client = boto3.client("s3")
             except Exception as e:  # boto3 absent / no creds / config error
-                logger.debug("S3Backend unavailable (%s); kernel cache stays local-only", e)
+                logger.warning("S3Backend unavailable (%s); kernel cache stays local-only", e)
                 self._unavailable = True
         return self._client
 

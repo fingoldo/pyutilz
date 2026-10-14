@@ -492,7 +492,7 @@ def _is_picklable(fn: Callable[..., list[Finding]]) -> bool:
     except (pickle.PicklingError, AttributeError, TypeError, ValueError) as exc:  # audit-exempt: non_neutral_except_fallback -- _is_picklable predicate: False is the answer and the caller runs the scanner in-process
         # A lambda, a closure, or a bound method of an unpicklable object: it cannot cross to a
         # worker, so run_all keeps it in this process rather than failing the run.
-        logger.debug("scanner %r cannot be sent to a worker process (%s); running it in-process", getattr(fn, "__name__", fn), exc)
+        logger.warning("scanner %r cannot be sent to a worker process (%s); running it in-process", getattr(fn, "__name__", fn), exc)
         picklable = False
     return picklable
 

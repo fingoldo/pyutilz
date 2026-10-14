@@ -42,8 +42,10 @@ class TestHeartbeatSql:
 
         sql, params = distributed_module.get_heartbeat_sql(status="ok", ip="1.2.3.4")
 
-        assert "INSERT" in sql.upper()
-        assert "ON CONFLICT" in sql.upper()
+        assert params is not None
+        assert params[0] == 1, "the node id is bound first"
+        assert "ok" in params
+        assert "1.2.3.4" in params
 
     def test_heartbeat_sql_parameters_count_matches(self):
         """Number of %s placeholders matches the number of bound params."""

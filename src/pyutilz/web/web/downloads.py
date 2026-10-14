@@ -163,6 +163,7 @@ def _try_attempt(
     try:
         return _download_attempt(url, filename, timeout, chunk_size, headers, exit_codes), None
     except Exception as e:
+        logger.debug("_try_attempt: download attempt failed, error returned to caller: %s: %s", type(e).__name__, e)
         return False, e
 
 

@@ -6,8 +6,11 @@ number in it was set by a measurement that a guess had already got wrong. Mixed 
 """
 
 from __future__ import annotations
+import logging
 
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _separate_reasoning_budget(body: dict[str, Any]) -> float:
@@ -85,7 +88,8 @@ class DerivedTimeoutMixin:
             return base
         try:
             tokens = float(requested)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.warning("_timeout_for: requested timeout is not a number, base timeout used: %s: %s", type(exc).__name__, exc)
             return base
         if tokens <= 0:
             ceiling = getattr(self, "max_output_tokens", None)

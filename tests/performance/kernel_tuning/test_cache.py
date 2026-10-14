@@ -552,15 +552,18 @@ class TestAsyncSweepHwBusyGate:
         ps_mod = mock.MagicMock()
         ps_mod.cpu_percent.return_value = cpu_pct if cpu_pct is not None else 0.0
 
+        # One mock per module, shared by every import of it: the test reads call counts off the object it gets back.
+        mods = {"GPUtil": gpu_mod, "psutil": ps_mod}
+
         def _imp(name, *a, **k):
             if name == "GPUtil":
                 if gpu_load is None:
                     raise ImportError("no GPUtil")
-                return gpu_mod
+                return mods[name]
             if name == "psutil":
                 if cpu_pct is None:
                     raise ImportError("no psutil")
-                return ps_mod
+                return mods[name]
             return real_import(name, *a, **k)
 
         monkeypatch.setattr(builtins, "__import__", _imp)

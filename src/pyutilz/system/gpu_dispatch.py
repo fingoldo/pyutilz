@@ -343,7 +343,8 @@ def _free_bytes_via_cupy(device_id: Optional[int], include_pool: bool = False) -
     try:
         import cupy as cp
         from cupy.cuda.runtime import CUDARuntimeError
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("_free_bytes_via_cupy: cupy not importable: %s: %s", type(exc).__name__, exc)
         return None
     try:
         # memGetInfo counts memory CACHED in cupy's pool as used; cupy serves allocations from that cache first. The
@@ -519,7 +520,8 @@ def query_cuda_device_attribute(name_or_code: "str | int", device_id: int = 0) -
     try:
         from numba import cuda
         from numba.cuda.cudadrv import driver as _drv
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("query_cuda_device_attribute: numba driver not importable: %s: %s", type(exc).__name__, exc)
         return None
 
     code: "int | None"
@@ -533,7 +535,8 @@ def query_cuda_device_attribute(name_or_code: "str | int", device_id: int = 0) -
                 from numba.cuda.cudadrv import enums
 
                 code = int(getattr(enums, f"CU_DEVICE_ATTRIBUTE_{key}"))
-            except (ImportError, AttributeError, TypeError, ValueError):
+            except (ImportError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("query_cuda_device_attribute: attribute code cannot be resolved: %s: %s", type(exc).__name__, exc)
                 return None
     try:
         cuda.select_device(device_id)

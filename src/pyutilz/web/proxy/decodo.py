@@ -174,7 +174,8 @@ def _safe_float(val: Any) -> float:
     """Coerce ``val`` to float, returning 0.0 on any conversion failure."""
     try:
         return float(val)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        _log.debug("_safe_float: value is not numeric, 0.0 used: %s: %s", type(exc).__name__, exc)
         return 0.0
 
 
@@ -182,7 +183,8 @@ def _safe_int(val: Any, default: int = 0) -> int:
     """Coerce ``val`` to int, returning ``default`` on any conversion failure."""
     try:
         return int(val)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        _log.debug("_safe_int: value is not an integer, default used: %s: %s", type(exc).__name__, exc)
         return default
 
 

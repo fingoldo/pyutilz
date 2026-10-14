@@ -5,6 +5,7 @@ in a comment. This scanner is narrower (backticked private calls) but also flags
 """
 
 from __future__ import annotations
+import logging
 
 import ast
 import io
@@ -13,6 +14,7 @@ import threading
 import tokenize
 from collections import OrderedDict
 from pathlib import Path
+from typing import Optional
 
 from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
@@ -46,6 +48,9 @@ _LINE_CITATION = re.compile(r"\b(?:at |on )?line[s]? (\d+)\b", re.IGNORECASE)
 # matched nothing and, being non-empty, also made the empty-symbol-table bail-out unreachable.
 
 
+logger = logging.getLogger(__name__)
+
+
 def _defined_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]:
     """Every function, class, and method name defined anywhere in the tree, plus imported names."""
     names: set[str] = set()
@@ -76,23 +81,35 @@ _COMMENT_TEXTS_CACHE_MAX_ENTRIES = 20000
 _COMMENT_TEXTS_LOCK = threading.Lock()
 
 
+def _cached_comment_texts(cache_key: tuple) -> Optional[list[tuple[str, int]]]:
+    """The memoised comment texts for *cache_key*, refreshing its LRU position, or None on a miss."""
+    with _COMMENT_TEXTS_LOCK:
+        try:
+            cached = _COMMENT_TEXTS_CACHE[cache_key]
+        except KeyError as exc:
+            logger.debug("_cached_comment_texts: cache miss (%s: %s)", type(exc).__name__, exc)
+            return None
+        _COMMENT_TEXTS_CACHE.move_to_end(cache_key)
+        return cached
+
+
 def _comment_texts(py: Path) -> list[tuple[str, int]]:
     """(text, first line of the text) for every comment and docstring in the file."""
     out: list[tuple[str, int]] = []
     try:
         stat = py.stat()
-    except OSError:
+    except OSError as exc:
+        logger.warning("_comment_texts: stat failed, file skipped by the comment scan: %s: %s", type(exc).__name__, exc)
         return out
     cache_key = (str(py), stat.st_mtime_ns, stat.st_size)
-    with _COMMENT_TEXTS_LOCK:
-        cached = _COMMENT_TEXTS_CACHE.get(cache_key)
-        if cached is not None:
-            _COMMENT_TEXTS_CACHE.move_to_end(cache_key)
-            return cached
+    cached = _cached_comment_texts(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         source = py.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        logger.warning("_comment_texts: read failed, file skipped by the comment scan: %s: %s", type(exc).__name__, exc)
         return out
 
     try:

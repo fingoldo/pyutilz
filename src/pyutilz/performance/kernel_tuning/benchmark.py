@@ -58,7 +58,8 @@ def _busy_threshold(threshold: Optional[float]) -> float:
         return float(threshold)
     try:
         return float(os.environ.get("PYUTILZ_KERNEL_SWEEP_HW_BUSY", DEFAULT_HW_BUSY_THRESHOLD))
-    except ValueError:
+    except ValueError as exc:
+        logger.warning("_busy_threshold: PYUTILZ_KERNEL_SWEEP_HW_BUSY is not a number, default used: %s: %s", type(exc).__name__, exc)
         return DEFAULT_HW_BUSY_THRESHOLD
 
 
@@ -145,7 +146,8 @@ def _resolve_gpu_sync(concurrency: int) -> Callable[[], None]:
         return synchronize_gpu_if_available
     try:
         import cupy as _cp
-    except Exception:
+    except Exception as exc:
+        logger.debug("_resolve_gpu_sync: cupy unavailable, using the supplied synchronize: %s: %s", type(exc).__name__, exc)
         return synchronize_gpu_if_available
 
     def _event_sync() -> None:

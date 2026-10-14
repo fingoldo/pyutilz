@@ -111,7 +111,8 @@ def _parse_retry_after(res: Any) -> Optional[float]:
         return None
     try:
         seconds = float(str(raw).strip())
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug("_parse_retry_after: Retry-After is not numeric: %s: %s", type(exc).__name__, exc)
         return None
     if seconds < 0:
         return None

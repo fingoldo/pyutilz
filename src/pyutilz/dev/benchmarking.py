@@ -99,7 +99,8 @@ def _preserve_axis_value(value):
     try:
         if float(value) == int(value):
             return int(value)
-    except (TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError, OverflowError) as exc:
+        logger.debug("_preserve_axis_value: axis value is not an int, keeping it unchanged: %s: %s", type(exc).__name__, exc)
         return value
     logger.warning("benchmarking: axis value %r is not integral; keeping it as-is in the emitted region bound.", value)
     return value
@@ -490,7 +491,8 @@ def _timed_ms(fn: "Callable", synchronize_gpu: bool) -> float:
         if synchronize_gpu:
             synchronize_gpu_if_available()
         return (timer() - t0) * 1e3
-    except Exception:
+    except Exception as exc:
+        logger.warning("_timed_ms: timed call raised, candidate scored as infinitely slow: %s: %s", type(exc).__name__, exc)
         return float("inf")
 
 

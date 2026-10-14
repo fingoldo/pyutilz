@@ -88,7 +88,7 @@ def _normalized_source(fn: Callable) -> str:
     try:
         src = textwrap.dedent(inspect.getsource(original))
     except (OSError, TypeError) as e:  # audit-exempt: non_neutral_except_fallback -- no source available for this callable; identity fallback is logged at debug on the next line
-        logger.debug("code_versioning: no source for %r (%s); identity fallback", fn, e)
+        logger.warning("code_versioning: no source for %r (%s); identity fallback", fn, e)
         try:
             sig = str(inspect.signature(original))
         except (ValueError, TypeError):

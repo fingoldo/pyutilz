@@ -46,7 +46,8 @@ def remove_nas(obj: _Any) -> _Any:
     elif isinstance(obj, str):
         try:
             return float(obj)
-        except ValueError:
+        except ValueError as exc:
+            logger.debug("remove_nas: value is not numeric, kept as-is: %s: %s", type(exc).__name__, exc)
             return obj
     else:
         return obj

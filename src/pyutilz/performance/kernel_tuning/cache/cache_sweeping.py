@@ -90,17 +90,20 @@ class _CacheSweepClaimMixin(_CacheState):
             # giving the same single-winner guarantee as O_EXCL but with the content already in place.
             os.link(tmp, marker)
             return True
-        except FileExistsError:  # audit-exempt: non_neutral_except_fallback -- marker already claimed by another process; False is the lock-predicate answer
+        except FileExistsError as exc:  # audit-exempt: non_neutral_except_fallback -- marker already claimed by another process; False is the lock-predicate answer
+            logger.debug("_try_create_marker: claim marker already held by another process: %s: %s", type(exc).__name__, exc)
             return False
         except OSError as e:  # audit-exempt: non_neutral_except_fallback -- hardlinks unsupported on this filesystem; logged, falls back to the O_EXCL path
             # Hardlinks unsupported on this fs (rare): fall back to the legacy O_EXCL-then-write path,
             # which still serialises winners; the empty-marker steal window reappears only there.
-            logger.debug("kernel_tuning_cache: marker link unsupported (%s); O_EXCL fallback", e)
+            logger.warning("kernel_tuning_cache: marker link unsupported (%s); O_EXCL fallback", e)
             try:
                 fd2 = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)  # audit-exempt: resource_handle_safety -- raw fd is closed in the enclosing finally block of this function
-            except FileExistsError:  # audit-exempt: non_neutral_except_fallback -- lost the race to another process holding the claim; False is the answer
+            except FileExistsError as exc:  # audit-exempt: non_neutral_except_fallback -- lost the race to another process holding the claim; False is the answer
+                logger.debug("_try_create_marker: fallback claim held by another process: %s: %s", type(exc).__name__, exc)
                 return False
-            except OSError:  # audit-exempt: non_neutral_except_fallback -- cannot create the fallback marker; treated as owner, the documented degrade mode
+            except OSError as exc:  # audit-exempt: non_neutral_except_fallback -- cannot create the fallback marker; treated as owner, the documented degrade mode
+                logger.warning("_try_create_marker: fallback marker cannot be created, treated as owner: %s: %s", type(exc).__name__, exc)
                 return True
             try:
                 os.write(fd2, payload)

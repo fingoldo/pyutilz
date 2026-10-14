@@ -106,7 +106,8 @@ def _decoded_json(text: str) -> Optional[str]:
 
     try:
         return jsonlib.dumps(jsonlib.loads(text))
-    except ValueError:
+    except ValueError as exc:
+        logger.debug("_decoded_json: text is not valid JSON: %s: %s", type(exc).__name__, exc)
         return None
 
 

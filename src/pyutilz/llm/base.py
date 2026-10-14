@@ -255,7 +255,8 @@ def _parse_fenced_object(text: str, provider_name: str) -> dict[str, Any] | None
         return None
     try:
         return _require_json_object(jsonlib.loads(fence_match.group(1)), provider_name)
-    except jsonlib.JSONDecodeError:
+    except jsonlib.JSONDecodeError as exc:
+        logger.debug("_parse_fenced_object: fenced block is not valid JSON: %s: %s", type(exc).__name__, exc)
         return None
 
 

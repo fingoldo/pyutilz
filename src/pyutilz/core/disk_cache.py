@@ -329,7 +329,8 @@ def _scan_cache_entries(cache_dir: Path) -> Optional[tuple[Dict[Path, int], Dict
                 else:
                     payload_sizes[path] = st.st_size
                     mtimes[path] = st.st_mtime
-    except OSError:
+    except OSError as exc:
+        logger.warning("disk_cache: cache entry scan failed, reporting it as unavailable: %s: %s", type(exc).__name__, exc)
         return None
     return payload_sizes, sidecar_sizes, mtimes
 
@@ -471,14 +472,14 @@ class DiskCache:
             # put-time. Treat as a corrupt cache entry (third-party tampering, mid-rename crash on
             # a non-atomic FS, or just a truncated copy) and drop both files so the next put
             # rebuilds cleanly.
-            logger.debug("DiskCache: sidecar verification failed for %s: %s; removing", path, exc)
+            logger.warning("DiskCache: sidecar verification failed for %s: %s; removing", path, exc)
             self._drop_corrupt_entry(path)
             self.misses += 1
             return default
         except (pickle.UnpicklingError, EOFError, OSError) as exc:
             # Corrupt entry (e.g. mid-rename crash on a non-atomic FS). Drop the file so the next
             # put rebuilds cleanly.
-            logger.debug("DiskCache: corrupt entry %s (%s); removing", path, exc)
+            logger.warning("DiskCache: corrupt entry %s (%s); removing", path, exc)
             self._drop_corrupt_entry(path)
             self.misses += 1
             return default

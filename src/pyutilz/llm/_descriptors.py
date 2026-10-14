@@ -7,12 +7,15 @@ re-exports every name, so ``from pyutilz.llm.base import PerCallAttr`` keeps wor
 """
 
 from __future__ import annotations
+import logging
 
 import asyncio
 import contextvars
 import sys
 import weakref
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 
 class PerCallAttr:
@@ -102,7 +105,8 @@ def _running_loop() -> asyncio.AbstractEventLoop | None:
     """The running event loop, or None outside one."""
     try:
         return asyncio.get_running_loop()
-    except RuntimeError:
+    except RuntimeError as exc:
+        logger.debug("_running_loop: no running event loop: %s: %s", type(exc).__name__, exc)
         return None
 
 

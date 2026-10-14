@@ -34,7 +34,8 @@ def dumps_bytes(
         option |= orjson.OPT_SORT_KEYS
     if non_str_keys:
         option |= orjson.OPT_NON_STR_KEYS
-    return orjson.dumps(obj, default=default, option=option)
+    dumped: bytes = orjson.dumps(obj, default=default, option=option)
+    return dumped
 
 
 def dumps(

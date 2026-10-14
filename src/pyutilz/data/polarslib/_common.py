@@ -86,5 +86,6 @@ def concat_horizontal_ragged(frames: Any, **kwargs: Any) -> Any:
         # shim, so the checker is right about today and the code is right about tomorrow. The
         # ignore is scoped to this one argument; widening it would hide a real signature change.
         return pl.concat(frames, how="horizontal_extend", **kwargs)  # type: ignore[arg-type]
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        logger.warning("concat_horizontal_ragged: horizontal_extend failed, retrying with plain horizontal concat: %s: %s", type(exc).__name__, exc)
         return pl.concat(frames, how="horizontal", **kwargs)

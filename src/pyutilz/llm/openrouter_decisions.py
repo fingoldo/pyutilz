@@ -252,7 +252,8 @@ def parse_answer(qtype: str, item: Mapping[str, Any]) -> Optional[DecisionAnswer
             best = max(probs.items(), key=lambda kv: kv[1])[0]
             try:
                 idx = int(best)
-            except ValueError:
+            except ValueError as exc:
+                logger.warning("parse_answer: answer index is not an integer, answer is None: %s: %s", type(exc).__name__, exc)
                 return None
         elif expected is not None:
             idx = round(expected)

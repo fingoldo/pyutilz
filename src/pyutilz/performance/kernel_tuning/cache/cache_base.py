@@ -145,7 +145,8 @@ def _gpu_device_count() -> int:
             raise
     try:
         from numba import cuda as numba_cuda
-    except ImportError:
+    except ImportError as exc:
+        logger.debug("_gpu_device_count: numba not importable, zero GPUs: %s: %s", type(exc).__name__, exc)
         return 0
     try:
         return len(numba_cuda.list_devices())
@@ -219,7 +220,8 @@ def _vram_class(total_vram: object) -> str:
     """Total VRAM rounded up to a power-of-two GiB class (``vram8g``); GPUtil reports MiB, the summary key says GB, so both scales are accepted."""
     try:
         value = float(total_vram)  # type: ignore[arg-type]  # object from a loosely-typed summary dict; the except covers a non-numeric value
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning("_vram_class: total VRAM is not numeric, class reported as unknown: %s: %s", type(exc).__name__, exc)
         return "vramx"
     if value <= 0:
         return "vramx"
@@ -270,7 +272,8 @@ def _load_hw_fp_entries(path: str) -> Dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as f:
             data = jsonlib.loads(f.read())
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
+        logger.warning("_load_hw_fp_entries: hardware fingerprint file unreadable, entries discarded: %s: %s", type(exc).__name__, exc)
         return {}
     if not isinstance(data, dict) or data.get("schema_version") != _HW_FP_SCHEMA_VERSION:
         return {}
@@ -531,6 +534,7 @@ def _pid_alive(pid: int) -> bool:
             return True
     except OSError as e:
         # ESRCH => dead; EPERM => alive but not ours.
+        logger.debug("_pid_alive: liveness probe raised OSError: %s: %s", type(e).__name__, e)
         return getattr(e, "errno", None) != errno.ESRCH
     except Exception as e:
         logger.debug("Process-liveness probe for pid=%s failed unexpectedly (%s), assuming alive (never steal)", pid, e)
@@ -657,7 +661,8 @@ def _async_sweep_start_delay() -> float:
     """Seconds to wait after deciding an async sweep is needed before starting it (env ``PYUTILZ_KERNEL_SWEEP_START_DELAY``, default 10s)."""
     try:
         return max(0.0, float(os.environ.get("PYUTILZ_KERNEL_SWEEP_START_DELAY", "10.0")))
-    except ValueError:
+    except ValueError as exc:
+        logger.warning("_async_sweep_start_delay: PYUTILZ_KERNEL_SWEEP_START_DELAY is not a number, default used: %s: %s", type(exc).__name__, exc)
         return 10.0
 
 
@@ -667,7 +672,8 @@ def _async_sweep_idle_max_wait() -> float:
     default 120s. 0 -> proceed immediately (no idle wait)."""
     try:
         return max(0.0, float(os.environ.get("PYUTILZ_KERNEL_SWEEP_IDLE_MAX_WAIT", "120.0")))
-    except ValueError:
+    except ValueError as exc:
+        logger.warning("_async_sweep_idle_max_wait: PYUTILZ_KERNEL_SWEEP_IDLE_MAX_WAIT is not a number, default used: %s: %s", type(exc).__name__, exc)
         return 120.0
 
 

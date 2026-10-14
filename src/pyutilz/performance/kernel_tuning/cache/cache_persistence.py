@@ -349,7 +349,8 @@ class _CachePersistenceMixin(_CacheState):
         """
         try:
             files = [p for p in _glob.glob(os.path.join(kdir, "*.json"))]
-        except OSError:
+        except OSError as exc:
+            logger.debug("_gc_kernel_dir: kernel directory cannot be listed, GC skipped: %s: %s", type(exc).__name__, exc)
             return
         if len(files) <= keep:
             return

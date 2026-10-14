@@ -4,9 +4,29 @@ Split out of the historical flat ``pyutilz.core.pythonlib`` module; re-exported 
 package ``__init__`` to preserve the public import surface.
 """
 
-from typing import Iterable, Union
+from typing import Iterable, Optional, Union
 
 from ._common import importlib, logger, subprocess, sys
+
+
+def _package_present(import_name: str) -> Optional[bool]:
+    """Whether ``import_name`` resolves, or None when the check itself raised.
+
+    find_spec raises ModuleNotFoundError for a DOTTED name whose parent is missing ("nosuch.child"). The caller
+    treats that as not installed, and keeps checking the other packages instead of aborting the whole call, as
+    the function's documented "failures are logged, not raised" contract requires.
+    """
+    try:
+        return importlib.util.find_spec(import_name) is not None
+    except Exception as exc:  # audit-exempt: non_neutral_except_fallback -- a raising find_spec means not installed
+        logger.debug("find_spec raised for %s, so it is treated as unchecked: %s", import_name, type(exc).__name__)
+        return None
+
+
+def _warn_unchecked(unchecked_packages: list[str]) -> None:
+    """Log, once, the packages whose presence check raised: they are installed as if missing."""
+    if unchecked_packages:
+        logger.warning("Could not check whether these packages are installed, so they are treated as missing: %s", unchecked_packages)
 
 
 def ensure_installed(packages: Union[str, Iterable[str]], sep: str = " ") -> None:
@@ -24,19 +44,15 @@ def ensure_installed(packages: Union[str, Iterable[str]], sep: str = " ") -> Non
             else:
                 packages = [packages]
         missing_packages = []
+        unchecked_packages: list[str] = []
         for pkg in packages:
             import_name = known_abbreviations.get(pkg, pkg)
-            try:
-                found = importlib.util.find_spec(import_name) is not None
-            except Exception as e:  # audit-exempt: non_neutral_except_fallback -- find_spec raising means not installed; found=False errs toward installing, as documented above
-                # find_spec raises ModuleNotFoundError for a DOTTED name whose parent is missing
-                # ("nosuch.child"). Outside the try that aborted the whole call at the CHECK stage,
-                # so none of the earlier packages got installed -- against this function's
-                # documented "failures are logged, not raised" contract.
-                logger.debug("Failed to check presence of package %s: %s", pkg, e)
-                found = False
-            if not found:
+            present = _package_present(import_name)
+            if present is None:
+                unchecked_packages.append(pkg)
+            if not present:
                 missing_packages.append(pkg)
+        _warn_unchecked(unchecked_packages)
         if missing_packages:
             mes = f"Installing missing packages: {missing_packages}"
             logger.info(mes)

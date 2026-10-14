@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import threading
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
@@ -33,22 +34,14 @@ def test_get_connection_retries_on_operational_error():
     mock_conn.cursor.return_value.__enter__ = lambda s: mock_cursor
     mock_conn.cursor.return_value.__exit__ = lambda s, *a: None
 
-    call_count = 0
-
-    def getconn_side_effect():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise psycopg2.OperationalError("connection refused")
-        return mock_conn
-
     with ExitStack() as stack:
         MockPool = stack.enter_context(patch("pyutilz.database.psycopg2_pool.psycopg2.pool.ThreadedConnectionPool"))
         stack.enter_context(patch("pyutilz.database.psycopg2_pool.register_vector", None))
         stack.enter_context(patch("pyutilz.database.psycopg2_pool.time.sleep"))
 
         pool_instance = MagicMock()
-        pool_instance.getconn.side_effect = getconn_side_effect
+        # First getconn fails, every later one hands out the same connection.
+        pool_instance.getconn.side_effect = itertools.chain([psycopg2.OperationalError("connection refused")], itertools.repeat(mock_conn))
         MockPool.return_value = pool_instance
 
         conn = get_connection("postgresql://test:test@localhost/test", max_retries=3)  # pragma: allowlist secret

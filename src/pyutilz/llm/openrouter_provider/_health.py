@@ -177,7 +177,8 @@ def _normalize_uptime(value: Any, is_percentage: bool = True) -> float | None:
         return None
     try:
         v = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.debug("_normalize_uptime: uptime is not numeric: %s: %s", type(exc).__name__, exc)
         return None
     if v < 0.0 or v > 100.0:
         logger.warning(
@@ -410,7 +411,8 @@ def _price_per_1m(r: dict, pricing_key: str) -> float:
     """
     try:
         return float((r.get("pricing") or {}).get(pricing_key, "0") or "0") * 1_000_000
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning("_price_per_1m: pricing is not numeric, endpoint ranked as infinitely expensive: %s: %s", type(exc).__name__, exc)
         return float("inf")
 
 

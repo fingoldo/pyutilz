@@ -26,17 +26,15 @@ from pyutilz.text.strings import remove_json_defaults
 
 from typing import Any, Optional, Tuple
 
-PIL: Any
 try:
     import PIL.Image  # module-level PIL binding; the handle-closing tests stub and inspect it
 except ImportError:  # optional extra 'imaging': absent in a core-only install
-    PIL = None
+    PIL = None  # type: ignore[assignment]
 
-TAGS: Any
 try:
     from PIL.ExifTags import TAGS  # public re-export of Pillow's EXIF tag table, part of the module surface
 except ImportError:  # optional extra 'imaging': absent in a core-only install
-    TAGS = None
+    TAGS = None  # type: ignore[assignment]
 
 
 def ensure_bytes_converted(obj: dict) -> dict:

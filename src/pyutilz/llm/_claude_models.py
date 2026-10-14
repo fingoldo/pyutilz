@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,8 @@ def _listing_spec(entry: dict) -> ClaudeModelSpec | None:
     try:
         input_per_1m = float(pricing["prompt"]) * _1M
         output_per_1m = float(pricing["completion"]) * _1M
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.warning("_listing_spec: listing entry has unusable pricing, entry dropped: %s: %s", type(exc).__name__, exc)
         return None
     top = entry.get("top_provider") or {}
     stated_max = top.get("max_completion_tokens")
@@ -228,4 +229,4 @@ def claude_model_spec(model: str, *, provider_label: str = "Claude") -> ClaudeMo
             UNKNOWN_CLAUDE_MODEL.max_output,
             UNKNOWN_CLAUDE_MODEL.context_window,
         )
-    return UNKNOWN_CLAUDE_MODEL
+    return replace(UNKNOWN_CLAUDE_MODEL)

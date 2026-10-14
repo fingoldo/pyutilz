@@ -68,7 +68,7 @@ def register_default_cache(path: str) -> bool:
         logger.debug("kernel_tuning_cache: registered %d default kernels from %s", len(payload.get("kernels", {})), path)
         return True
     except FileNotFoundError:  # audit-exempt: non_neutral_except_fallback -- no default cache file means nothing to register; False is the documented return value
-        logger.debug("kernel_tuning_cache: no default cache at %s", path)
+        logger.warning("kernel_tuning_cache: no default cache at %s", path)
         fac._DEFAULT_CACHE = None
         return False
     except Exception as e:
@@ -311,7 +311,11 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
         Keyed by kernel name and validated by entry IDENTITY, so replacing an entry (``update``,
         ``evict``, ``reset``, a reload) invalidates the plan automatically.
         """
-        cached = self._plan_cache.get(kernel_name)
+        with self._lock:
+            try:
+                cached = self._plan_cache[kernel_name]
+            except KeyError:
+                cached = None
         if cached is not None and cached[0] is entry:
             return cached[1]  # type: ignore[no-any-return]
         declared_axes = list(entry.get("axes") or [])
@@ -332,7 +336,8 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
                         break
             payload = {k: v for k, v in region.items() if k not in constraint_keys}
             plan.append((tuple(constraints), payload))
-        self._plan_cache[kernel_name] = (entry, plan, frozenset(known_axes))
+        with self._lock:
+            self._plan_cache[kernel_name] = (entry, plan, frozenset(known_axes))
         return plan
 
     def _invalidate_plan(self, kernel_name: Optional[str] = None) -> None:

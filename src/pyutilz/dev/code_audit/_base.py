@@ -1,6 +1,7 @@
 """(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
 
 from __future__ import annotations
+import logging
 
 import ast
 import os
@@ -38,6 +39,9 @@ _SRC_LINES_CACHE: "OrderedDict[tuple[str, int, int], list[str]]" = OrderedDict()
 # Guards both caches: a hit is move_to_end-then-read and a miss is insert-then-evict, and a scan run from a thread
 # pool interleaves them (a popitem between another thread's membership test and its read raised KeyError).
 _CACHE_LOCK = threading.Lock()
+
+
+logger = logging.getLogger(__name__)
 
 
 def clear_parse_cache() -> None:
@@ -283,13 +287,18 @@ def _safe_parse(path: Path) -> Optional[ast.Module]:
     """
     try:
         stat = path.stat()
-    except OSError:
+    except OSError as exc:
+        logger.warning("_safe_parse: stat failed, file skipped by the code audit: %s: %s", type(exc).__name__, exc)
         return None
     cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
     with _CACHE_LOCK:
-        if cache_key in _PARSE_CACHE:
+        try:
+            tree = _PARSE_CACHE[cache_key]
+        except KeyError:
+            pass
+        else:
             _PARSE_CACHE.move_to_end(cache_key)
-            return _PARSE_CACHE[cache_key]
+            return tree
 
     try:
         src = path.read_text(encoding="utf-8")
@@ -347,17 +356,22 @@ def _read_src_lines(path: Path) -> list[str]:
     """
     try:
         stat = path.stat()
-    except OSError:
+    except OSError as exc:
+        logger.warning("_read_src_lines: stat failed, file skipped by the code audit: %s: %s", type(exc).__name__, exc)
         return []
     cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
     with _CACHE_LOCK:
-        cached = _SRC_LINES_CACHE.get(cache_key)
-        if cached is not None:
+        try:
+            cached = _SRC_LINES_CACHE[cache_key]
+        except KeyError:
+            pass
+        else:
             _SRC_LINES_CACHE.move_to_end(cache_key)
             return cached
     try:
         src = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        logger.warning("_read_src_lines: read failed, file skipped by the code audit: %s: %s", type(exc).__name__, exc)
         return []
     lines = split_src_lines(src)
     with _CACHE_LOCK:

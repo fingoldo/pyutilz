@@ -250,7 +250,8 @@ def _error_object(resp: httpx.Response) -> dict[str, Any]:
     """The ``error`` object of an OpenAI error body, or an empty dict when the body is not one."""
     try:
         body = resp.json()
-    except (ValueError, httpx.ResponseNotRead):
+    except (ValueError, httpx.ResponseNotRead) as exc:
+        logger.debug("_error_object: error response body is not JSON: %s: %s", type(exc).__name__, exc)
         return {}
     error = body.get("error") if isinstance(body, dict) else None
     return error if isinstance(error, dict) else {}

@@ -67,7 +67,8 @@ def parse_ip_response(text: str) -> str:
             # otherwise "?" -- the same sentinel get_ip() already uses for "unreachable" -- so the
             # caller correctly treats this the same as every other unusable-response case.
             return body if _IP_SHAPE_RE.match(body) else "?"
-        except (_JSONDecodeError, ValueError):
+        except (_JSONDecodeError, ValueError) as exc:
+            _log.debug("parse_ip_response: body is not JSON, parsed as plain text: %s: %s", type(exc).__name__, exc)
             return body if _IP_SHAPE_RE.match(body) else "?"
     # Same shape guard as the JSON branch above, which previously covered only that half: a
     # gateway or captive intermediary answering with an HTML error page ("<html>...503 Service

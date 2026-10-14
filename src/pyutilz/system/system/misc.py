@@ -45,7 +45,8 @@ def run_from_ipython() -> bool:
     """Return True if the current process is running inside an IPython/Jupyter session, False otherwise."""
     try:
         return bool(__IPYTHON__)  # type: ignore[name-defined]  # IPython-injected global, only exists inside an IPython/Jupyter session
-    except NameError:
+    except NameError as exc:
+        logger.debug("run_from_ipython: not running under IPython: %s: %s", type(exc).__name__, exc)
         return False
 
 
@@ -309,11 +310,13 @@ def _cpu_initial_conditions_ok(min_cpu_free_ram_gb: float) -> bool:
 
 def _gpu_initial_conditions_ok(min_gpu_free_ram_gb: float, gpu_ids: list) -> bool:
     """Verify the requested minimum free GPU RAM does not exceed each monitored GPU's total RAM."""
+    if min_gpu_free_ram_gb <= 0:
+        return True  # no minimum requested: every GPU passes the check, so there is nothing to verify
     try:
         import GPUtil
     except ImportError:
-        logger.warning("GPUtil not available, skipping GPU checks")
-        return True
+        logger.warning("GPUtil not available, so the requested GPU free RAM (%s GB) cannot be verified", min_gpu_free_ram_gb)
+        return False
 
     gpus = GPUtil.getGPUs()
     for gpu in gpus:
@@ -346,7 +349,8 @@ def _gpu_conditions_met(max_gpu_load_percent: float, min_gpu_free_ram_gb: float,
     """Return True if current GPU load and free RAM satisfy the configured thresholds for every monitored GPU, logging a debug message when they don't."""
     try:
         import GPUtil
-    except ImportError:
+    except ImportError as exc:
+        logger.warning("_gpu_conditions_met: GPUtil not available, GPU conditions skipped: %s: %s", type(exc).__name__, exc)
         return True  # Skip GPU checks if GPUtil not available
 
     gpus = GPUtil.getGPUs()

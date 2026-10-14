@@ -24,6 +24,7 @@ Python 3.8 compatible: annotations are resolved with ``typing.get_type_hints`` a
 """
 
 from __future__ import annotations
+import logging
 
 import argparse
 import ast
@@ -42,6 +43,9 @@ if TYPE_CHECKING:  # pydantic is an optional extra; runtime imports are lazy, in
 __all__ = ["model_from_signature", "render_model_source", "signature_drift", "signature_parameters", "SignatureParameter", "main"]
 
 _SKIP_KINDS = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+
+
+logger = logging.getLogger(__name__)
 
 
 class SignatureParameter:
@@ -82,7 +86,8 @@ def _resolved(annotation: Any, fn: Callable[..., Any]) -> Any:
         holder.__annotations__ = {"value": annotation}
         try:
             return typing.get_type_hints(holder, getattr(fn, "__globals__", {}))["value"]
-        except Exception:
+        except Exception as exc:
+            logger.debug("_resolved: annotation cannot be resolved, kept as written: %s: %s", type(exc).__name__, exc)
             return annotation
     return annotation
 
@@ -164,7 +169,8 @@ def _same_default(a: Any, b: Any) -> bool:
     """Equality of two defaults that never raises (arrays and exotic objects fall back to identity)."""
     try:
         return bool(a == b)
-    except Exception:
+    except Exception as exc:
+        logger.debug("_same_default: defaults cannot be compared, identity used instead: %s: %s", type(exc).__name__, exc)
         return a is b
 
 
