@@ -344,6 +344,11 @@ def capture_module_surface(mod: object) -> dict[str, str]:
         # the public snapshot of any module doing `from typing import TYPE_CHECKING`.
         if getattr(typing, name, _TYPING_ABSENT) is obj:
             continue
+        # ``from __future__ import annotations`` binds ``annotations`` to a ``__future__._Feature`` instance in every
+        # module that uses it. It is a language switch, not pyutilz API, and whether it shows up depends on which
+        # modules a process has imported, so it is left out of the surface.
+        if type(obj).__module__ == "__future__":
+            continue
         # Skip CLASSES re-exported from outside pyutilz; their identity
         # (typing.Any class-vs-_SpecialForm) flips across Python versions
         # and isn't part of our public API. Don't filter callables /

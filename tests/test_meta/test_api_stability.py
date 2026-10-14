@@ -43,6 +43,20 @@ def _refresh_requested() -> bool:
 # Signature / surface capture moved to ``pyutilz.dev.meta_test_utils``;
 # imported as ``capture_signature`` / ``capture_module_surface`` above.
 
+# Aliases whose target module imports an optional package inside a top-level ``try`` block. The names it exposes then
+# depend on what the environment installed (the CI legs differ), so a snapshot of them is not reproducible. They are
+# recorded as excluded, which means a rename inside them is not guarded by this test.
+_OPTIONAL_DEPENDENT_ALIASES = {
+    "dashlib": "optional package flask",
+    "deltalakes": "optional package filelock",
+    "image": "optional package PIL (Pillow)",
+    "monitoring": "optional package requests",
+    "notebook_init": "optional package IPython",
+    "openai": "optional package tiktoken",
+    "redislib": "optional package redis",
+    "tokenizers": "optional packages spacy and nltk",
+}
+
 
 def _fresh_module_copy(mod):
     """Execute a fully separate copy of ``mod`` from its own import spec, without touching
@@ -86,6 +100,9 @@ def _build_snapshot() -> dict:
     # snapshot committed to git. Deliberately NOT ``importlib.reload`` -- see
     # ``_fresh_module_copy``'s docstring for the identity-corruption bug that caused.
     for alias, real_path in sorted(pyutilz._MODULE_ALIASES.items()):
+        if alias in _OPTIONAL_DEPENDENT_ALIASES:
+            snapshot["alias_surfaces"][alias] = {"_excluded": _OPTIONAL_DEPENDENT_ALIASES[alias]}
+            continue
         try:
             mod = importlib.import_module(real_path)
         except ImportError:

@@ -1,7 +1,6 @@
 {
   "alias_surfaces": {
     "benchmarking": {
-      "annotations": "value",
       "benchmark_algos_by_runtime": "callable(implementations:any:0:, algo_name:any:1:'', n_reps:any:1:2, verbose:any:1:0, synchronize_gpu:any:1:True, algo_kwargs:**kw:0:)",
       "logger": "value",
       "sweep_backend_crossover": "callable(variants:any:0:, sizes:any:0:, make_inputs:any:0:, primary_axis:any:0:, reference:kw:1:None, extra_region_keys:kw:1:None, repeats:kw:1:15, equiv_atol:kw:1:1e-06, equiv_rtol:kw:1:1e-06, synchronize_gpu:kw:1:True, decision_key:kw:1:'backend_choice', ranking:kw:1:'robust', verbose:kw:1:0)",
@@ -48,11 +47,7 @@
       "version_main": "value"
     },
     "dashlib": {
-      "AG_GRID_LOCALE_RU": "value",
-      "create_tabs": "callable(tabsName:any:0:, tabsList:any:0:, draw_tab_content_function:any:0:, content:any:1:'', prefix:any:1:'tab', roles_separator:any:1:',', tabsClassName:any:1:None, contentClassName:any:1:None, activeLabelClassName:any:1:None, use_cardstyle:any:1:False, show_loading:any:1:True)",
-      "get_active_tab_var_name": "callable(tabsName:any:0:, prefix:any:1:'tab')",
-      "logger": "value",
-      "session": "callable<no-signature>"
+      "_excluded": "optional package flask"
     },
     "db": {
       "EnsurePgTableExists": "callable(sTable:any:0:, sKeyFieldName:any:1:'name', sIdFieldName:any:1:'id', sAutocreateIdTypeName:any:1:None)",
@@ -125,9 +120,7 @@
       "weekofmonth": "callable(date:any:0:)"
     },
     "deltalakes": {
-      "is_local_path": "callable(path:any:0:)",
-      "logger": "value",
-      "safe_delta_write": "callable(path:any:0:, delta_op_func:any:0:, lock_timeout:kw:1:1200, lock_suffix:kw:1:'.lock')"
+      "_excluded": "optional package filelock"
     },
     "distributed": {
       "Container": "class:pyutilz.system.distributed.Container",
@@ -162,11 +155,7 @@
       "text_to_graphql": "callable(text:any:0:)"
     },
     "image": {
-      "TAGS": "value",
-      "ensure_bytes_converted": "callable(obj:any:0:)",
-      "get_image_properties": "callable(img:any:0:, skip_unknown_exif_tags:any:1:True, filesize:any:1:None, allow_truncated:any:1:False, skip_empty_exif:any:1:None)",
-      "logger": "value",
-      "remove_json_defaults": "callable(json_obj:any:0:, attr_values:any:1:None, warn_if_not_default:any:1:False, obj_id:any:1:'')"
+      "_excluded": "optional package PIL (Pillow)"
     },
     "logging": {
       "EXTERNAL_IP": "value",
@@ -229,27 +218,10 @@
       "logger": "value"
     },
     "monitoring": {
-      "API_TIMEOUT_SEC": "value",
-      "EXIT_FLUSH_BUDGET_SEC": "value",
-      "RETRY_INITIAL_DELAY_SEC": "value",
-      "RETRY_MAX_AGE_SEC": "value",
-      "RETRY_MAX_DELAY_SEC": "value",
-      "annotations": "value",
-      "job_completed": "callable(job_id:any:0:, status:any:1:0, data:any:1:None, provider:any:1:'healthchecks.io', api_key:any:1:None, blocking:any:1:True, retry:any:1:True)",
-      "log_duration": "callable(threshold:any:1:1.0, logger_name:any:1:None, max_arg_size:any:1:1000)",
-      "logger": "value",
-      "monitored": "callable(job_id:any:1:None, status:any:1:0, log_data:any:1:True, should_have_data:any:1:False, duration_field:any:1:'duration', duration_rounding:any:1:4, provider:any:1:'healthchecks.io', api_key:any:1:None)",
-      "timeout_wrapper": "callable(timeout:any:1:15, report_actual_duration:any:1:False)"
+      "_excluded": "optional package requests"
     },
     "notebook_init": {
-      "import_common_packages": "callable()",
-      "init_notebook": "callable(include_imports:any:1:True, inject_globals:any:1:False, use_simple_extensions:any:1:True)",
-      "load_jupyter_extensions": "callable()",
-      "load_jupyter_extensions_minimal": "callable()",
-      "logger": "value",
-      "main": "callable()",
-      "setup_jupyter_display": "callable()",
-      "setup_polars_config": "callable()"
+      "_excluded": "optional package IPython"
     },
     "numbalib": {
       "arr2str": "callable(arr:any:0:)",
@@ -266,10 +238,7 @@
       "smart_ratios": "callable(a:any:0:, b:any:0:, span_correction:any:1:0.0, na_fill:any:1:nan)"
     },
     "openai": {
-      "annotations": "value",
-      "count_tokens": "callable(text:any:0:, model:any:1:None)",
-      "num_tokens_from_messages": "callable(messages:any:0:, model:any:1:'gpt-3.5-turbo-0613')",
-      "num_tokens_from_string": "callable(string:any:0:, encoding_name:any:0:)"
+      "_excluded": "optional package tiktoken"
     },
     "pandaslib": {
       "Array": "callable(typecode_or_type:any:0:, size_or_initializer:any:0:, lock:kw:1:True)",
@@ -407,13 +376,7 @@
       "weekofmonth": "callable(date:any:0:)"
     },
     "redislib": {
-      "DatabaseConnectionError": "class:pyutilz.database.exceptions.DatabaseConnectionError",
-      "logger": "value",
-      "random": "callable()",
-      "rc": "value",
-      "rclose": "callable()",
-      "rconnect": "callable(redis_host:any:0:, redis_port:any:0:, redis_db_name:any:0:, redis_db_pwd:any:0:, decode_responses:any:1:True)",
-      "rexecute": "callable(method_name:any:0:, args:*args:0:, max_retries:kw:1:None, kwargs:**kw:0:)"
+      "_excluded": "optional package redis"
     },
     "serialization": {
       "DEFAULT_MAX_DECOMPRESSED_BYTES": "value",
@@ -428,11 +391,10 @@
       "HAS_NUMBA": "value",
       "SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD": "value",
       "SentenceSimilarityIndex": "class:pyutilz.text.similarity._numba_api.SentenceSimilarityIndex",
-      "annotations": "value",
       "contigous_strings_similarity": "callable(a:any:0:, b:any:0:)",
       "levenshtein_strings_similarity": "callable(a:any:0:, b:any:0:)",
       "logger": "value",
-      "normalize_sentence": "callable(sentence:any:0:, bSports:any:1:False, replace_symbols:any:1:('.', ',', '/', '-', '\u00ab', '\u00bb'), placeholder:any:1:' ', abbreviations:any:1:None)",
+      "normalize_sentence": "callable(sentence:any:0:, bSports:any:1:False, replace_symbols:any:1:('.', ',', '/', '-', '«', '»'), placeholder:any:1:' ', abbreviations:any:1:None)",
       "pack_sentence": "callable(words:any:0:)",
       "sentences_similarity": "callable(SentenceA:any:0:, SentenceB:any:0:, cMinLenTHreshold:any:1:1, min_word_similarity:any:1:0.5, required_coverage:any:1:None, required_matched_words:any:1:None, coverage_side:any:1:'max', stop_words:any:1:None)",
       "sentences_similarity_numba": "callable(SentenceA:any:0:, SentenceB:any:0:, cMinLenTHreshold:any:1:1, min_word_similarity:any:1:0.5, required_coverage:any:1:None, required_matched_words:any:1:None, coverage_side:any:1:'max', stop_words:any:1:None)",
@@ -565,19 +527,7 @@
       "write_config_file": "callable(file:any:0:, object:any:0:, section:any:1:'MAIN', variables:any:1:None, encryption:any:1:'xor', mode:any:1:'append')"
     },
     "tokenizers": {
-      "AdvancedTokenizer": "class:pyutilz.text.tokenizers.AdvancedTokenizer",
-      "ensure_space_after_comma": "callable(text:any:0:)",
-      "fix_broken_sentences": "callable(text:any:0:, token:any:1:'\\n')",
-      "fix_duplicate_tokens": "callable(text:any:0:)",
-      "fix_html": "callable(text:any:0:, common_linebreak:any:1:'\\n')",
-      "fix_quotations": "callable(text:any:0:, common_quotation:any:1:\"'\")",
-      "fix_spaces": "callable(text:any:0:, tokens:any:1:None)",
-      "logger": "value",
-      "merge_punctuation_signs": "callable(sent:any:0:)",
-      "nlp": "value",
-      "remove_videos": "callable(text:any:0:, token:any:1:'[[VIDEOID:', token2:any:1:']]')",
-      "sentencize_text": "callable(text:any:0:, desc:any:1:None, verbose:any:1:False)",
-      "vars": "value"
+      "_excluded": "optional packages spacy and nltk"
     }
   },
   "module_aliases": {
