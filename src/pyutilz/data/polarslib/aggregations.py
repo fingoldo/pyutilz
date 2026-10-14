@@ -222,10 +222,7 @@ def _boolean_feature_exprs(af: Callable, fpref: str, boolean_fields: list, field
             import polars_ds as pds
 
             exprs.extend(
-                [
-                    pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_lziv")
-                    for field in boolean_fields
-                ]
+                [pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_lziv") for field in boolean_fields]
             )
     return exprs
 
