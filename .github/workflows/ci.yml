@@ -211,7 +211,18 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check out py-ci-shared at the pinned release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: fingoldo/py-ci-shared
+          ref: c7988d7d79392724bd13b3306ccc61387935dcab  # v1.22.10  # pragma: allowlist secret
+          path: py-ci-shared
+          persist-credentials: false
+
       - name: Run ruff C901 at the configured threshold
+        env:
+          # pyproject's ruff `extend` reads the shared base config from this checkout.
+          PY_CI_SHARED_DIR: ${{ github.workspace }}/py-ci-shared
         run: |
           python -m pip install "ruff==0.16.1"
           python -m ruff check --select C901 --no-cache src scripts tests
