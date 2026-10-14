@@ -84,11 +84,17 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Pin pandas to ${{ matrix.version }}
-        # numpy stays below 2.5 on every leg: the pinned pandas must still import against the numpy the tests were written for.
+        # pandas 1.x was built against numpy 1.x and fails with "numpy.dtype size changed" on numpy 2, so the 1.x legs cap numpy below 2;
+        # the others stay below 2.5, the newest numpy the tests were written for.
         env:
           PANDAS_VERSION: ${{ matrix.version }}
         run: |
-          pip install "pandas==${PANDAS_VERSION}" "numpy<2.5"
+          pip install "pandas==${PANDAS_VERSION}"
+          if [[ "${PANDAS_VERSION}" == 1.* ]]; then
+            pip install "numpy<2"
+          else
+            pip install "numpy<2.5"
+          fi
 
       - name: Show installed versions
         run: |
