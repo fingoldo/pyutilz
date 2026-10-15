@@ -120,7 +120,9 @@ def _attempt(
         logger.warning("Error while sending heartbeat to %s on monitor %s: %s", provider, job_id, e)
         return True  # no retry can install the missing package
     except Exception as e:
-        logger.warning("Error while sending heartbeat to %s on monitor %s: %s", provider, job_id, e)
+        # X-01: requests/urllib3 error text embeds the request URL, and for healthchecks.io / cronitor.io
+        # that URL carries the api_key in its path. Log the exception class only, never its message.
+        logger.warning("Error while sending heartbeat to %s on monitor %s: %s (message omitted: may contain the ping URL with its key)", provider, job_id, type(e).__name__)
         return False
 
 

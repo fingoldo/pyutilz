@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Tuple
 if TYPE_CHECKING:
     import requests
 
+from ..exceptions import UnsafeURLError
+from ..url_guard import require_http_url
 from ._common import _error_log_throttle, logger
 
 # See ipinfo.py for why the parent is reached through `import <parent> as _facade`.
@@ -48,10 +50,20 @@ def download_in_parallel(
     # request_timeout=: grequests.get() previously had no timeout at all -- a single stalled URL
     # (server accepts the connection but never responds) blocked grequests.map() from ever
     # returning, hanging the whole batch regardless of how many OTHER urls had already succeeded.
-    rs = (grequests.get(sub_url, verify=True, allow_redirects=True, headers=headers, timeout=request_timeout) for sub_url in urls_to_process)
-    logger.info("Started crawling! nlinks=%d", len(urls_to_process))
+    # X-16: a non-http(s) URL is reported as errored and never requested.
+    fetchable: List = []
+    for sub_url in urls_to_process:
+        try:
+            require_http_url(sub_url)
+        except UnsafeURLError:  # noqa: PERF203 -- per-URL validation, one check per entry is intentional
+            logger.warning("download_in_parallel: skipping non-http(s) URL %r", sub_url)
+            errored_urls.append(sub_url)
+        else:
+            fetchable.append(sub_url)
+    rs = (grequests.get(sub_url, verify=True, allow_redirects=True, headers=headers, timeout=request_timeout) for sub_url in fetchable)
+    logger.info("Started crawling! nlinks=%d", len(fetchable))
     # pbar=tqdmu(urls_to_process)
-    for resp, sub_url in zip(grequests.map(rs, size=nparallel_downloads), urls_to_process):
+    for resp, sub_url in zip(grequests.map(rs, size=nparallel_downloads), fetchable):
         n_processed = n_processed + 1
         _handle_parallel_response(resp, sub_url, func, errored_urls, _MAX_LOGGED_ERRORS)
         if (n_processed % report_each) == 0:
@@ -126,6 +138,9 @@ def download_to_file(
     Returns:
         True when ``filename`` holds the requested content, False otherwise.
     """
+    # X-16: only http/https are fetched. A file:// or ftp:// URL built from external data must not be read or
+    # fetched. Raises UnsafeURLError before any request is made. Redirect targets are not re-checked (see audit).
+    require_http_url(url)
     if not rewrite_existing and os.path.exists(filename):
         logger.debug("Skipping download of %s: %s already exists and rewrite_existing=False", url, filename)
         return True

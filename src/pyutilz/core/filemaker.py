@@ -22,6 +22,7 @@ from typing import Optional
 from time import sleep
 from http import HTTPStatus
 from base64 import b64encode
+from urllib.parse import urlsplit
 
 from pyutilz import web
 from pyutilz.core.pythonlib import get_attr
@@ -29,7 +30,7 @@ from pyutilz.core.pythonlib import get_attr
 filemaker_url, filemaker_username, filemaker_password = None, None, None
 
 
-def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: str) -> None:
+def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: str, allow_insecure_http: bool = False) -> None:
     """Store FileMaker connection credentials in module globals and open a session.
 
     Must be called once before any other function; subsequent calls re-authenticate.
@@ -38,13 +39,19 @@ def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: 
         m_filemaker_url: Base URL of the FileMaker server.
         m_filemaker_username: Account name used to authenticate.
         m_filemaker_password: Password for the account.
+        allow_insecure_http: Accept an ``http://`` URL. Default False (X-14): the account name and
+            password are sent as Basic auth, so a plain-http URL exposes them on the wire.
 
     Raises:
+        ValueError: ``m_filemaker_url`` is not https and ``allow_insecure_http`` is False. Nothing is stored.
         RuntimeError: no session token could be obtained. The token was previously discarded, so
             a failed init() returned normally while ``web.connect``'s Basic-auth headers stayed in
             place -- every later post_filemaker_record then 401'd with a misleading ValueError.
     """
     global filemaker_url, filemaker_username, filemaker_password
+    scheme = urlsplit(m_filemaker_url.strip()).scheme.lower()
+    if scheme != "https" and not (allow_insecure_http and scheme == "http"):
+        raise ValueError(f"filemaker init: refusing non-https URL (scheme {scheme!r}); credentials would be sent in clear text")
     filemaker_url = m_filemaker_url
     filemaker_username = m_filemaker_username
     filemaker_password = m_filemaker_password
@@ -77,7 +84,8 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
         if res is None:
             logger.warning("No response while getting filemaker session token")
         elif res.status_code != HTTPStatus.OK:
-            logger.warning("Error %s while getting filemaker session token: %s", res.status_code, res.text)
+            # X-14: the body is truncated; an error page can echo request details, so keep the log line short.
+            logger.warning("Error %s while getting filemaker session token: %s", res.status_code, str(res.text)[:200])
         else:
             res = res.json()
             response_field = get_attr(res, "response", {})

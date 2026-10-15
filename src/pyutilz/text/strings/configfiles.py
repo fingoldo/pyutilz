@@ -131,6 +131,10 @@ def write_config_file(
     ``encryption="xor"``, base64-encoded before being written. When ``mode="append"`` and
     the file already exists, its existing contents are read first and merged with the new
     section/variables before the file is overwritten. Returns True on success, None on failure.
+
+    WARNING (X-13): ``encryption="xor"`` (the default) is base64 ENCODING, not encryption. Anyone who can read
+    the file recovers every value, including passwords. Do not store secrets here unless the file itself is
+    protected by filesystem permissions. Changing the default is a behaviour change pending owner sign-off.
     """
     import os
     import configparser

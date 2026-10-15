@@ -353,16 +353,32 @@ class AdvancedTokenizer:
 
         with gzip.open(f"{file_name}.pickle", "wb") as handle:
             pickle.dump(whole, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # X-06: record a sha256 sidecar so load_tokens(..., verify_sidecar=True) can detect a swapped file.
+        from pyutilz.core.safe_pickle import write_sidecar
 
-    def load_tokens(self, name: str, tokens: dict):
+        write_sidecar(f"{file_name}.pickle")
+
+    def load_tokens(self, name: str, tokens: dict, verify_sidecar: bool = False):
         """
         Loads stat variables previously saved by save_tokens_to_file() from "{name}.pickle" and copies
         each present module-level var into the given tokens dict.
+
+        ``verify_sidecar`` (default False, unchanged behaviour for existing callers) makes the load refuse
+        a file whose ``.sha256`` sidecar is missing or does not match (``PickleVerificationError``). Pass True
+        whenever the file lives in a directory another user or process can write. The default is False because
+        dumps written before save_tokens_to_file() started writing sidecars have none.
         """
         import pickle, gzip  # nosec B403 - pickle is only used below to load back this class's own dump_tokens() output; the actual pickle.load() call at line 243 already carries a nosec B301 justification for the same trust assumption
 
-        with gzip.open(f"{name}.pickle", "rb") as handle:
-            whole = pickle.load(handle)  # deserialize-ok: reads back this class's own dump_tokens() output at a caller-named path, same trust as the writer  # nosec B301 - round-trip of this class's own dump_tokens() output; name is caller-supplied, same trust level as the write side
+        path = f"{name}.pickle"
+        if verify_sidecar:
+            from pyutilz.core.safe_pickle import PickleVerificationError, verify_sidecar as _verify_sidecar
+
+            if not _verify_sidecar(path):
+                raise PickleVerificationError(f"load_tokens: refusing to unpickle {path!r}; sha256 sidecar missing or mismatch.")
+
+        with gzip.open(path, "rb") as handle:
+            whole = pickle.load(handle)  # deserialize-ok: reads back this class's own save_tokens_to_file() output at a caller-named path; the file is unverified unless verify_sidecar=True  # nosec B301 - round-trip of this class's own save_tokens_to_file() output; name is caller-supplied, see verify_sidecar
 
         for var in vars:
             if var in whole:

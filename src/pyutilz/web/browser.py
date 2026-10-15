@@ -25,7 +25,7 @@ import os
 # Typing
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Dict, Optional, Set, Tuple, cast
 
 if TYPE_CHECKING:
     # Type-checking-only: selenium is an optional [web] extra and every runtime import of it in
@@ -85,7 +85,7 @@ data_dir: Optional[str] = None  # "chrome-data"
 logout_signs = "Sign-In"
 successful_login_signs = ()  # Define as empty tuple, to be overridden by user
 login_input_name = "email"
-password_input_name = "password"  # nosec B105 - this is the HTML form field NAME/selector used to locate the password input element, not a literal credential value (the actual secret is the module-level `pwd` variable, supplied by the caller)
+password_input_name = "password"  # nosec B105 - this is the HTML form field NAME/selector used to locate the password input element, not a literal credential value (the actual secret is the module-level `pwd` variable, supplied by the caller)  # pragma: allowlist secret
 use_real_useragent = True
 # None = decide automatically (see _should_disable_sandbox): only a uid-0 process, where Chrome
 # refuses to start otherwise, gets --no-sandbox. Set True/False via init() to force either way.
@@ -282,6 +282,26 @@ def _remove_if_exists(path: str) -> None:
         os.remove(path)
 
 
+# Proxy-auth plugin zips written by _add_authenticated_proxy and not yet removed (R-05).
+_PROXY_PLUGIN_FILES: Set[str] = set()
+_proxy_plugin_atexit_registered: bool = False
+
+
+def _remove_proxy_plugin(path: str) -> None:
+    """Forget and delete one proxy-auth plugin zip; a failed removal is logged at debug and left to the atexit backstop."""
+    _PROXY_PLUGIN_FILES.discard(path)
+    try:
+        _remove_if_exists(path)
+    except OSError as e:  # nosec B110 - best-effort cleanup; the process-wide atexit backstop retries removal of anything still tracked
+        logger.debug("Could not remove temporary proxy-auth plugin file %s: %s", path, e)
+
+
+def _remove_leftover_proxy_plugins() -> None:
+    """atexit backstop: delete every proxy-auth plugin zip that was not removed explicitly."""
+    for path in list(_PROXY_PLUGIN_FILES):
+        _remove_proxy_plugin(path)
+
+
 def _add_authenticated_proxy(options: Any, proxy_server: dict) -> str:
     """Write a proxy-auth Chrome extension zip for ``proxy_server`` and add it to ``options``; returns the zip path."""
     import zipfile
@@ -326,7 +346,13 @@ def _add_authenticated_proxy(options: Any, proxy_server: dict) -> str:
     plugin_fd, pluginfile = tempfile.mkstemp(suffix=".zip", prefix="pyutilz_proxy_auth_")
     os.close(plugin_fd)
     os.chmod(pluginfile, 0o600)
-    atexit.register(_remove_if_exists, pluginfile)
+    # R-05: one process-wide atexit hook removes every plugin file still tracked here. Registering a
+    # callback per call accumulated one per LoginAndGetCookies retry until process exit.
+    _PROXY_PLUGIN_FILES.add(pluginfile)
+    global _proxy_plugin_atexit_registered
+    if not _proxy_plugin_atexit_registered:
+        atexit.register(_remove_leftover_proxy_plugins)
+        _proxy_plugin_atexit_registered = True
 
     with zipfile.ZipFile(pluginfile, "w") as zp:
         zp.writestr("manifest.json", manifest_json)
@@ -405,15 +431,11 @@ def start_selenium() -> "WebDriver":
     if _should_disable_sandbox():
         options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # Regression fix: a fixed, well-known CDP debug port (9222) with no address restriction let
-    # ANY other local process/user on a shared host connect to http://localhost:9222/json and
-    # attach to this already-authenticated Selenium session (reading cookies, injecting JS),
-    # and collided if two start_selenium() calls ran concurrently on one machine. port=0 lets
-    # Chrome pick an OS-assigned ephemeral port (nothing in this codebase reads it back --
-    # Selenium's own control channel is negotiated separately by the driver, not via this CDP
-    # port); the explicit address bind additionally blocks any non-loopback interface.
-    options.add_argument("--remote-debugging-port=0")
-    options.add_argument("--remote-debugging-address=127.0.0.1")
+    # X-02: no --remote-debugging-port is passed. Selenium's control channel to chromedriver does not use
+    # the CDP HTTP endpoint, so nothing here needs it. Earlier "port=0 + 127.0.0.1" settings did NOT close
+    # the hole: loopback is shared by every local user, and Chrome writes DevToolsActivePort into the
+    # profile dir, so another local user or process could still attach to the logged-in session.
+    # Do not re-add a debugging port without a per-user, mode-0700 --user-data-dir.
 
     kwargs["options"] = options
     # if not data_dir:
@@ -421,15 +443,14 @@ def start_selenium() -> "WebDriver":
     #    path=os.path.join(path, 'chromedriver')
     #    kwargs["path"]=path
 
-    browser = webdriver.Chrome(**kwargs)
-
-    if pluginfile is not None:
-        # Primary cleanup (atexit above is only the defensive backstop): Chrome has now started
-        # and read the extension zip during driver startup, so the temp file's job is done.
-        try:
-            os.remove(pluginfile)
-        except OSError as e:  # nosec B110 - best-effort cleanup; the atexit-registered fallback above still covers this file if removal fails here (e.g. a transient Windows sharing violation)
-            logger.debug("Could not remove temporary proxy-auth plugin file %s: %s", pluginfile, e)
+    # R-05: remove the proxy-auth zip on both success and failure. Previously the removal ran only after
+    # webdriver.Chrome() returned, so a driver startup error left a credential-bearing file behind.
+    try:
+        browser = webdriver.Chrome(**kwargs)
+    finally:
+        if pluginfile is not None:
+            # Chrome has read the extension during driver startup (or startup failed), so the zip is no longer needed.
+            _remove_proxy_plugin(pluginfile)
 
     return browser
 

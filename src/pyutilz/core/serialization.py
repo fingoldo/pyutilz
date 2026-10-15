@@ -191,8 +191,7 @@ def _unpickle_payload(obj: bytes, compression: Optional[int], max_output_bytes: 
             # fall back to treating obj as raw (uncompressed) pickle bytes.
             logger.warning("Data seems to be not compressed; reading as raw pickle")
             data = obj
-    return pickle.loads(data)  # deserialize-ok: in-memory bytes/file-like input is the caller's own data; file paths get the sidecar check when verify_sidecar=True  # nosec B301 - opt-in sidecar verification (verify_sidecar=True) covers the file-path case;
-    # in-memory bytes/file-like input is the caller's own data, produced within the same process
+    return pickle.loads(data)  # deserialize-ok: in-memory bytes are the caller's own data; file paths are sidecar-checked ONLY when verify_sidecar=True (default False, X-03: unverified), and file-like input is never checked  # nosec B301 - unverified by default for file paths (see unserialize's verify_sidecar); callers reading a path another user can write must pass verify_sidecar=True
 
 
 def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9, verify_sidecar: bool = False, max_output_bytes: Optional[int] = DEFAULT_MAX_DECOMPRESSED_BYTES) -> Any:

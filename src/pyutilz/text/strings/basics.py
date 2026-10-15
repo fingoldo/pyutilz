@@ -109,6 +109,10 @@ def underscorize_variable(var: Sequence) -> str:
 def get_hash(data: Any, algo: Optional[str] = "md5", base: Optional[int] = 64, return_binary: Optional[bool] = False) -> Any:
     """Hashes str/bytes-like `data` with `algo` and returns it base-N encoded (or as a hex/raw digest when base is falsy).
 
+    NOT for security (X-17): the default ``algo="md5"`` is collision-broken. Do not use this function for tokens,
+    signatures, integrity checks or password-like values; pass ``algo="sha256"`` or use hashlib/hmac directly.
+    Changing the default to sha256 would change every stored digest, so it stays md5 pending owner sign-off.
+
     Args:
         data: str/bytes-like value to hash (or an object exposing ``getquoted()``, e.g. a psycopg2 adapted value).
         algo: hashlib algorithm name (e.g. "md5", "sha256").

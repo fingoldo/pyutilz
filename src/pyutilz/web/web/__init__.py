@@ -69,7 +69,7 @@ min_idle_interval_minutes: Optional[int] = None
 failed_dict: Optional[dict] = None
 min_failed_idle_interval_minutes: Optional[int] = None
 
-IP_PROVIDERS = ["https://api.ipify.org/", "https://ident.me/", "http://icanhazip.com/"]
+IP_PROVIDERS = ["https://api.ipify.org/", "https://ident.me/", "https://icanhazip.com/"]  # X-15: https so a MITM cannot substitute the IP
 cur_max_ip_queries: int = -1
 proxy_server: Optional[str] = None
 was_blocked = False
@@ -104,6 +104,8 @@ COUNTRY_PROVIDERS: List[dict] = [
     {"url": "https://ipapi.co/{ip}/json/", "code": "country_code", "name": "country_name", "continent": "continent_code"},
     # `fields=` is required, not decoration: ip-api's DEFAULT response omits `continent` entirely, so the
     # unqualified URL silently returned a blank continent for every lookup this provider answered.
+    # X-15 (WON'T FIX for now, see audit disposition): ip-api.com's free tier is HTTP-only; https needs a paid key.
+    # The lookup carries no secret; the risk is a forged geo record, accepted until a https provider is chosen.
     {
         "url": "http://ip-api.com/json/{ip}?fields=status,country,countryCode,continent,query",
         "code": "countryCode",

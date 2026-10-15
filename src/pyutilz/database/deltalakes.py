@@ -32,18 +32,49 @@ def is_local_path(path: str) -> bool:
     return False
 
 
+def _lock_dir() -> str:
+    """Per-user directory for lock files, created mode 0700 under the temp dir (X-12).
+
+    A predictable lock name directly in the shared temp dir let another local user pre-create it as a
+    symlink or hold it to block writers. On POSIX the directory must be owned by the current user and
+    must not be a symlink, otherwise a RuntimeError is raised rather than locking inside a foreign dir.
+    """
+    if hasattr(os, "getuid"):
+        suffix = str(os.getuid())  # type: ignore[attr-defined]  # POSIX only, guarded by hasattr
+    else:
+        suffix = os.environ.get("USERNAME", "user")
+    base = os.path.join(tempfile.gettempdir(), f"pyutilz-delta-locks-{suffix}")
+    os.makedirs(base, mode=0o700, exist_ok=True)
+    if os.path.islink(base):
+        raise RuntimeError(f"safe_delta_write: lock directory {base!r} is a symlink; refusing to lock inside it")
+    if hasattr(os, "getuid"):
+        st = os.stat(base)
+        if st.st_uid != os.getuid():  # type: ignore[attr-defined]  # POSIX only, guarded by hasattr
+            raise RuntimeError(f"safe_delta_write: lock directory {base!r} is owned by another user; refusing to use it")
+        os.chmod(base, 0o700)
+    return base
+
+
 def safe_delta_write(path: str, delta_op_func: Callable[[], Any], *, lock_timeout: int = 1200, lock_suffix: str = ".lock") -> Any:
     """
     Wraps any Delta Lake operation (write_deltalake, merge+execute) with local file locking.
 
+    Lock files live in a per-user, mode-0700 directory under ``tempfile.gettempdir()``.
+
     Args:
         path: Delta table path.
         delta_op_func: A function that performs the actual Delta operation.
-        lock_timeout: How many seconds to wait for the lock before skipping.
+        lock_timeout: Seconds to wait for the lock. When it expires, a ``TimeoutError`` is raised
+            (the operation is not run); no value is returned in that case.
         lock_suffix: Suffix for the lock filename.
 
     Returns:
         Whatever ``delta_op_func`` returns.
+
+    Raises:
+        ImportError: ``path`` is local and the optional ``filelock`` package is not installed.
+        TimeoutError: the lock was not acquired within ``lock_timeout`` seconds (A-04).
+        Exception: any exception raised by ``delta_op_func`` is re-raised unchanged.
 
     Examples:
         🔁 For .merge().when_not_matched_insert_all().execute():
@@ -91,7 +122,7 @@ def safe_delta_write(path: str, delta_op_func: Callable[[], Any], *, lock_timeou
         # to prevent. normcase() is a no-op on POSIX (case-sensitive filesystems) and lowercases +
         # backslash-normalizes on Windows, so both spellings collapse to one lock file everywhere.
         path_hash = hashlib.sha256(os.path.normcase(os.path.abspath(path)).encode("utf-8")).hexdigest()
-        lock_file = os.path.join(tempfile.gettempdir(), f"{path_hash}{lock_suffix}")
+        lock_file = os.path.join(_lock_dir(), f"{path_hash}{lock_suffix}")
         lock = FileLock(lock_file)
 
         try:
