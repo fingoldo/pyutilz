@@ -389,7 +389,7 @@ def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
     return dict(_SCANNERS)
 
 
-def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]") -> Optional[list[Finding]]:
+def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]") -> Optional[tuple[list[Finding], Optional[str]]]:
     """Module-level (picklable) trampoline for ``ProcessPoolExecutor`` -- runs one scanner and
     returns its findings. A bound/local closure can't be pickled for the cross-process call, so
     this indirection is required, not just style.
@@ -402,6 +402,7 @@ def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, fro
 
     Returns ``None`` when the scanner ran out of memory: every worker holds its own parse of the corpus, so a scanner that
     fits alone can fail beside its siblings, and ``run_all`` re-runs it in-process after the pool has released them.
+    Otherwise returns ``(findings, error)`` as :func:`_run_scanner` does.
     """
     name, fn, root, exclude_dirs = args
     if fn is None:
@@ -415,22 +416,26 @@ def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, fro
         return None
 
 
-def _run_scanner(name: str, fn: Callable[..., list[Finding]], root: Path, exclude_dirs: frozenset[str], *, reraise_memory_error: bool = False) -> list[Finding]:
-    """Run one scanner, converting a raised exception into a logged warning and zero findings.
+def _run_scanner(
+    name: str, fn: Callable[..., list[Finding]], root: Path, exclude_dirs: frozenset[str], *, reraise_memory_error: bool = False
+) -> tuple[list[Finding], Optional[str]]:
+    """Run one scanner, returning ``(findings, error)``; ``error`` is None unless the scanner raised.
 
-    One scanner tripping over one pathological file must not delete the other 88 scanners' output,
-    which is what an exception escaping into ``pool.map`` (or the sequential loop) did.
+    A raised exception is logged as a WARNING and reported through ``error`` (``"ExcType: message"``), with no
+    findings. One scanner tripping over one pathological file must not delete the other 88 scanners' output,
+    which is what an exception escaping into ``pool.map`` (or the sequential loop) did. The ``error`` value lets
+    :func:`run_all_checked` tell the caller that the check never ran, which an empty list alone cannot say.
     """
     try:
-        return fn(root, exclude_dirs=exclude_dirs)
+        return fn(root, exclude_dirs=exclude_dirs), None
     except MemoryError:
         if reraise_memory_error:
             raise
         logger.warning("code_audit scanner %r failed; its findings are missing from this run", name, exc_info=True)
-        return []
-    except Exception:
+        return [], "MemoryError"
+    except Exception as exc:
         logger.warning("code_audit scanner %r failed; its findings are missing from this run", name, exc_info=True)
-        return []
+        return [], f"{type(exc).__name__}: {exc}"
 
 
 # Below this many scanners, process-pool startup (import pyutilz + its scanner modules in
@@ -544,8 +549,11 @@ def _select_scanners(checks: Optional[Iterable[str]]) -> list[str]:
     return selected
 
 
-def _run_scanners_parallel(selected: list[str], root: Path, exclude_dirs: frozenset[str]) -> list[Finding]:
-    """Run the selected scanners across a process pool; any the pool cannot take are run in this process."""
+def _run_scanners_parallel(selected: list[str], root: Path, exclude_dirs: frozenset[str]) -> tuple[list[Finding], dict[str, str]]:
+    """Run the selected scanners across a process pool; any the pool cannot take are run in this process.
+
+    Returns the findings and a ``{scanner name: error}`` map of the scanners that raised.
+    """
     import concurrent.futures
 
     # See _MIN_SCANNERS_PER_WORKER: cap by physical cores AND by "enough scanners per
@@ -566,16 +574,23 @@ def _run_scanners_parallel(selected: list[str], root: Path, exclude_dirs: frozen
         else:
             local_only.append(name)
     out: list[Finding] = []
+    failed: dict[str, str] = {}
     if tasks:
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
-            for (name, *_), findings in zip(tasks, pool.map(_run_one, tasks)):
-                if findings is None:
+            for (name, *_), result in zip(tasks, pool.map(_run_one, tasks)):
+                if result is None:
                     local_only.append(name)
                 else:
+                    findings, error = result
                     out.extend(findings)
+                    if error is not None:
+                        failed[name] = error
     for name in local_only:
-        out.extend(_run_scanner(name, _SCANNERS[name], root, exclude_dirs))
-    return out
+        findings, error = _run_scanner(name, _SCANNERS[name], root, exclude_dirs)
+        out.extend(findings)
+        if error is not None:
+            failed[name] = error
+    return out, failed
 
 
 def run_all(
@@ -587,6 +602,23 @@ def run_all(
     """Run every (or selected) scanner against ``root`` and return all
     findings in encounter order. Sort by (severity, check, file, line)
     for stable rendering at the call site.
+
+    A scanner that raises contributes no findings and only a WARNING log here; a caller that must not read
+    that as "clean" should use :func:`run_all_checked`, which also returns the failed scanners.
+    """
+    findings, _failed = run_all_checked(root, checks=checks, exclude_dirs=exclude_dirs, parallel=parallel)
+    return findings
+
+
+def run_all_checked(
+    root: Path,
+    checks: Optional[Iterable[str]] = None,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+    parallel: bool = True,
+) -> tuple[list[Finding], dict[str, str]]:
+    """Like :func:`run_all`, but returns ``(findings, failed)`` where ``failed`` maps each scanner that raised
+    to its ``"ExcType: message"`` error. A non-empty ``failed`` means that check's findings are unknown, so a
+    gate must treat the run as incomplete rather than as a clean pass.
 
     ``parallel`` (default True): each scanner does its own full-corpus file walk + AST-walk
     over the (parse-cached) tree, and with ~60 registered scanners this is almost entirely
@@ -602,15 +634,20 @@ def run_all(
     selected = _select_scanners(checks)
 
     out: list[Finding] = []
+    failed: dict[str, str] = {}
     if parallel and len(selected) >= _MIN_SCANNERS_FOR_PARALLEL:
-        out.extend(_run_scanners_parallel(selected, root, exclude_dirs))
+        par_findings, failed = _run_scanners_parallel(selected, root, exclude_dirs)
+        out.extend(par_findings)
     else:
         for name in selected:
-            out.extend(_run_scanner(name, _SCANNERS[name], root, exclude_dirs))
+            findings, error = _run_scanner(name, _SCANNERS[name], root, exclude_dirs)
+            out.extend(findings)
+            if error is not None:
+                failed[name] = error
 
     # Unknown severities rank -1, i.e. ABOVE P0: a stray value is loud, never silently last.
     out.sort(key=lambda f: (severity_rank(f.severity), f.check, f.file, f.line))
-    return out
+    return out, failed
 
 
 def __getattr__(name: str) -> dict[str, Callable[..., list[Finding]]]:

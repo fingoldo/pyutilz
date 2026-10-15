@@ -112,6 +112,9 @@ class AttemptRecord:
     # record is written asynchronously, so this is also True for a call that succeeded and simply has not been
     # filed yet; only a 404 that persists later means the generation never finished.
     generation_record_missing: Optional[bool] = None
+    # True when the stats fetch itself failed (not a 404): the upstream timings are unknown, not absent. None when
+    # stats were not requested, so a caller can tell "unavailable because the fetch failed" from "not asked for".
+    stats_fetch_failed: Optional[bool] = None
     error: Optional[str] = None
     # Set only for an ``interrupted`` attempt, from the ``LLMStreamInterruptedError``: the upstream's error code and
     # whether it names a transient fault, so a summary can tell a retryable upstream hiccup from a fatal one.
@@ -408,14 +411,16 @@ class _Archiver:
             if status == 404:
                 return {"generation_record_missing": True}
             logger.warning("could not fetch generation stats for %s: %s: %s", generation_id, type(exc).__name__, exc)
-            return {}
+            return {"stats_fetch_failed": True}
         if not isinstance(stats, dict):
-            return {}
+            logger.warning("generation stats for %s came back as %s, not a dict; recorded as a failed fetch", generation_id, type(stats).__name__)
+            return {"stats_fetch_failed": True}
         return {
             "latency_ms": _int_or_none(stats.get("latency")),
             "generation_time_ms": _int_or_none(stats.get("generation_time")),
             "cancelled": stats.get("cancelled") if isinstance(stats.get("cancelled"), bool) else None,
             "generation_record_missing": False,
+            "stats_fetch_failed": False,
         }
 
     async def keep(self, text: Optional[str], started: float, started_at: str, error: Optional[BaseException] = None, first_token_at: Optional[float] = None) -> None:

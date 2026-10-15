@@ -34,6 +34,8 @@ S3_BUCKET_NAME: _Optional[str] = None  # To be configured by user
 
 # pause between polls of a model artifact that is not ready yet.
 _POLL_SLEEP_SECONDS = 10
+# consecutive failed downloads of one object before get_from_s3_or_cache gives up and raises.
+_MAX_DOWNLOAD_ATTEMPTS = 5
 
 def _gcp_storage_bucket(bucket_name, acc_file):
     """Open a GCS bucket handle using a service-account JSON key file.
@@ -133,6 +135,7 @@ def get_from_s3_or_cache(local_object_path: str, s3_object_path: str, temp_dir: 
     """
     if S3_BUCKET_NAME is None:
         raise ValueError("pyutilz.cloud.cloud.S3_BUCKET_NAME must be configured before calling get_from_s3_or_cache()")
+    download_failures = 0
     while not exists(local_object_path):
         bDownload = True
         if s3_object_path.endswith(".zip") and exists(local_object_path + ".zip"):
@@ -140,13 +143,25 @@ def get_from_s3_or_cache(local_object_path: str, s3_object_path: str, temp_dir: 
             bDownload = False
 
         if bDownload:
-            _download_model_from_s3(local_object_path, s3_object_path, S3_BUCKET_NAME)
+            try:
+                _download_model_from_s3(local_object_path, s3_object_path, S3_BUCKET_NAME)
+            except Exception as e:
+                # A persistent error (bad IAM perms, always-corrupt object) must end in an exception, not an endless poll.
+                download_failures += 1
+                if download_failures >= _MAX_DOWNLOAD_ATTEMPTS:
+                    raise RuntimeError(f"Giving up on {s3_object_path!r} from bucket {S3_BUCKET_NAME!r} after {download_failures} failed downloads") from e
+                sleep(_POLL_SLEEP_SECONDS)
+            else:
+                download_failures = 0
         else:
             _unpack_local_zip(local_object_path, s3_object_path, temp_dir)
 
 
 def _download_model_from_s3(local_object_path: str, s3_object_path: str, bucket: str) -> None:
-    """Download ``s3_object_path`` from ``bucket`` (to ``<local>.zip`` for a zip key) when it exists, else warn and sleep."""
+    """Download ``s3_object_path`` from ``bucket`` (to ``<local>.zip`` for a zip key) when it exists, else warn and sleep.
+
+    A failed download is logged at ERROR and re-raised; the caller owns the retry budget and the pause.
+    """
     # If file exists in our s3
     if s3_file_exists(s3_object_path, bucket):
         # Load model from our s3
@@ -162,7 +177,7 @@ def _download_model_from_s3(local_object_path: str, s3_object_path: str, bucket:
             # and "corrupt zip", both `sleep(10)`). Matching them here closes the same
             # busy-loop risk class already fixed in those two branches.
             logger.error("Error while downloading model %s from bucket %s: %s", s3_object_path, S3_BUCKET_NAME, e)
-            sleep(_POLL_SLEEP_SECONDS)
+            raise
         else:
             logger.info("Downloaded model %s from bucket %s", s3_object_path, S3_BUCKET_NAME)
     else:

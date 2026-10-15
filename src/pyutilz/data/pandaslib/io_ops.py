@@ -158,11 +158,14 @@ def _collect_frames(
         fnames.append(filename)
         tmp_df = getattr(pd, read_fcn)(filename)
 
-        # deep=True (byte-accurate for object/string columns) -- a shallow .memory_usage() call
-        # undercounts object-dtype columns by 30x+ (pointer size only), making the resave-trigger
-        # comparison below unreliable for exactly the string-heavy dataframes this function
-        # batch-processes.
-        old_size = get_df_memory_consumption(tmp_df, deep=True) / 1024**3
+        # deep=True (byte-accurate for object/string columns) is what the resave-trigger comparison in
+        # _optimize_and_maybe_resave needs: a shallow memory_usage() undercounts object-dtype columns by
+        # 30x+. Deep accounting visits every object cell (~0.3-1 s per 1M-row string frame), so it is paid
+        # only when the optimisation decision actually uses it; the plain log line uses the shallow figure.
+        if optimize:
+            old_size = get_df_memory_consumption(tmp_df, deep=True) / 1024**3
+        else:
+            old_size = get_df_memory_consumption(tmp_df, deep=False) / 1024**3
         logger.info("Merging %s with %s rows of size %.1f Gb", filename, len(tmp_df), old_size)
 
         if optimize:
@@ -190,21 +193,26 @@ def _flush_and_cleanup(
     set_index: Optional[str],
     delete_after: bool,
 ) -> Optional[pd.DataFrame]:
-    """Concatenate and flush ``lst`` to ``joint_file_name``, then optionally delete the source files; None on failure."""
-    try:
-        res = _facade.concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
-        if res is not None:
-            logger.info("Final df size (%s rows)", len(res))
-        if delete_after:
-            for _i, filename in enumerate(fnames):
-                try:
-                    os.remove(filename)
-                except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; a failed remove (e.g. permissions/in-use) shouldn't abort the already-computed result  # noqa: PERF203 -- per-iteration fault isolation is intentional
-                    logger.debug("Failed to remove source file %s after concat: %s", filename, e)
-        return res
-    except Exception as e:  # nosec B110 - best-effort concat-and-flush across the file list; on failure the function simply returns None (no result to salvage) rather than crashing the caller
-        logger.debug("Failed to concat and flush df list: %s", e)
-        return None
+    """Concatenate and flush ``lst`` to ``joint_file_name``, then optionally delete the source files.
+
+    A failed concat-and-flush is re-raised: the caller must not be able to read a write failure as "nothing merged".
+    A failed source-file removal is not fatal (the merged result exists), but it is logged at WARNING with the count
+    of files left behind.
+    """
+    res = _facade.concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
+    if res is not None:
+        logger.info("Final df size (%s rows)", len(res))
+    if delete_after:
+        left_behind: list[str] = []
+        for filename in fnames:
+            try:
+                os.remove(filename)
+            except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; a failed remove (e.g. permissions/in-use) shouldn't abort the already-computed result  # noqa: PERF203 -- per-iteration fault isolation is intentional
+                logger.debug("Failed to remove source file %s after concat: %s", filename, e)
+                left_behind.append(filename)
+        if left_behind:
+            logger.warning("%d source file(s) could not be removed after the concat and are still on disk, e.g. %s", len(left_behind), left_behind[0])
+    return res
 
 
 def read_stats_from_multiple_files(
@@ -235,6 +243,7 @@ def read_stats_from_multiple_files(
     frame, holding either the source filename or ``sentinel_fcn(filename)``. Collected frames are merged via
     ``concat_and_flush_df_list`` into ``joint_file_name`` (optionally indexed by ``set_index``); source files are
     deleted afterwards if ``delete_after`` is True. Returns the merged dataframe, or None if nothing was merged.
+    A failed concat-and-flush raises; it is never reported as None.
     """
     lst, fnames = _collect_frames(
         folder,
@@ -252,8 +261,7 @@ def read_stats_from_multiple_files(
         sentinel_fcn,
     )
     if len(lst) > 0:
-        # Nothing collected, or the concat-and-flush failed: an explicit None, so the documented
-        # "None if nothing was merged" is a statement in the code and not a fall-off.
+        # A concat-and-flush failure propagates out of _flush_and_cleanup; None here means only "nothing collected".
         return _flush_and_cleanup(lst, fnames, joint_file_name, write_fcn, write_extension, set_index, delete_after)
     return None
 

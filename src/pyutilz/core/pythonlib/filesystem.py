@@ -79,13 +79,10 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs: Any) -> Any:
     """
     Load plicked object, dataframe, Catboost model, based on file presence and name.
     """
-    is_here = False
     fpath = abspath(fpath)
-    try:
-        is_here = exists(fpath)
-    except Exception as e:  # nosec B110 - best-effort existence check; any OS-level error (e.g. invalid path chars) is treated as "not found" via the is_here default below
-        logger.debug("Failed to check existence of %s: %s", fpath, e)
-    if not is_here:
+    # No try here: an error from the existence check (permissions, invalid path) must reach the caller as itself,
+    # not be reported as a FileNotFoundError for a file that may well exist.
+    if not exists(fpath):
         logger.warning("File %s not found!", fpath)
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), fpath)
     else:

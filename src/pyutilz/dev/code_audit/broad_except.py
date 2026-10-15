@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Optional
 
 from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
@@ -52,19 +53,64 @@ def _has_debug_only_log_call(stmts: list[ast.stmt]) -> bool:
     return False
 
 
+def _is_default_literal(node: Optional[ast.expr]) -> bool:
+    """True for a value that is a bare default: no value, a constant (None/True/False/number/str), or an empty container."""
+    if node is None or isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
+        return not (node.keys if isinstance(node, ast.Dict) else node.elts)
+    return False
+
+
+def _returns_or_assigns_default(stmts: list[ast.stmt]) -> bool:
+    """True if ``stmts`` return a bare default, or assign one at their own level (``x = None``, ``out[k] = inf``)."""
+    for s in stmts:
+        for n in ast.walk(s):
+            if isinstance(n, ast.Return) and _is_default_literal(n.value):
+                return True
+        if isinstance(s, ast.Assign) and _is_default_literal(s.value):
+            return True
+    return False
+
+
+def _is_debug_log_stmt(stmt: ast.stmt) -> bool:
+    """True if ``stmt`` is a bare ``<something>.debug(...)`` call."""
+    return isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call) and isinstance(stmt.value.func, ast.Attribute) and stmt.value.func.attr == "debug"
+
+
+def _is_tolerated_stmt(s: ast.stmt, debug_only: bool) -> bool:
+    """True if ``s`` may sit in a silent handler: pass/continue/break, or, when the handler's only log is debug, the debug
+    call itself and a bare-default return or assignment."""
+    if isinstance(s, (ast.Pass, ast.Continue, ast.Break)):
+        return True
+    if not debug_only:
+        return False
+    if _is_debug_log_stmt(s):
+        return True
+    if isinstance(s, ast.Assign):
+        return _is_default_literal(s.value)
+    return isinstance(s, ast.Return) and _is_default_literal(s.value)
+
+
 def _is_silent_swallow(handler: ast.ExceptHandler) -> bool:
     """True if the handler body is silent: only pass/continue/return/break
-    AND has no log call (of any level, including debug) AND has no re-raise."""
+    AND has no log call (of any level, including debug) AND has no re-raise.
+
+    A debug-only log does not make a handler visible when the handler then hands a default back to the caller
+    (``except Exception as e: logger.debug(...); return False``): the caller decides on that default, so the
+    handler is silent in every production log. Such a handler is silent too.
+    """
     if _has_log_call(handler.body):
         return False
-    if _has_debug_only_log_call(handler.body):
-        return False
     if _has_raise(handler.body):
+        return False
+    debug_only = _has_debug_only_log_call(handler.body)
+    if debug_only and not _returns_or_assigns_default(handler.body):
         return False
     # If body contains a meaningful side-effect (assign, function call other
     # than logger), it's NOT a silent swallow.
     for s in handler.body:
-        if isinstance(s, (ast.Pass, ast.Continue, ast.Break)):
+        if _is_tolerated_stmt(s, debug_only):
             continue
         if isinstance(s, ast.Return):
             # Only a value-less `return` (or an explicit `return None`/`return False`) is silent.

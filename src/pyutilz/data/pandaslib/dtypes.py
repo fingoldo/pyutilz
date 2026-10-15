@@ -164,9 +164,8 @@ def _promote_column_to_category(
                 df[col] = df[col].astype(new_dtypes[col])
 
     except Exception as e3:
-        if verbose:
-            logger.warning(f"Could not convert to category column {col}: {e3}")
-        pass  # to avoid stumbling on lists like [1]
+        # Unconditional: the column keeps its original dtype, so the memory optimisation was skipped and the caller must be able to see it.
+        logger.warning(f"Could not convert to category column {col}, leaving its dtype unchanged: {e3}")  # e.g. lists like [1] are unhashable
 
 
 def _bucket_fields(df: pd.DataFrame, skip_columns: Sequence, old_dtypes: Dict[Any, str]) -> tuple:
@@ -533,6 +532,28 @@ def get_df_memory_consumption(df: Any, max_cols: int = 0, deep: bool = True) -> 
         raise TypeError(f"Unsupported dataframe type: {type(df)}")
 
 
+#: Float32 keeps a 24-bit mantissa, so every integer with magnitude up to 2**24 is exact and larger ones may not be.
+FLOAT32_EXACT_INT_LIMIT = 2**24
+
+
+def _int_cols_beyond_float32_mantissa(df: pd.DataFrame, cols: Sequence[Any]) -> list:
+    """Return the integer columns in ``cols`` whose non-null values exceed ``FLOAT32_EXACT_INT_LIMIT`` in magnitude."""
+    lossy: list = []
+    for col in cols:
+        series = df[col]
+        hi, lo = series.max(), series.min()
+        if pd.notna(hi) and pd.notna(lo) and (int(hi) > FLOAT32_EXACT_INT_LIMIT or int(lo) < -FLOAT32_EXACT_INT_LIMIT):
+            lossy.append(col)
+    return lossy
+
+
+def _warn_lossy_float32_int_columns(df: pd.DataFrame, cols: Sequence[Any]) -> None:
+    """WARNING naming the integer columns in ``cols`` whose values a float32 cast would not represent exactly."""
+    lossy = _int_cols_beyond_float32_mantissa(df, cols)
+    if lossy:
+        logger.warning("ensure_dataframe_float32_convertability: integer column(s) %s have values beyond 2**24 -- Float32 cast will lose exact-integer precision.", lossy)
+
+
 def ensure_dataframe_float32_convertability(
     df: Union[pd.DataFrame, pl.DataFrame],
     verbose: bool = False,
@@ -548,15 +569,19 @@ def ensure_dataframe_float32_convertability(
     Supports both Pandas (NumPy or PyArrow backend) and Polars DataFrames. Always returns a NEW
     object and never mutates the input in place, for either backend -- the caller must capture
     the return value regardless of which backend it passed in.
+
+    Lossy contract: integer columns (int32/int64/uint32/uint64, NumPy or PyArrow backed) are cast to float32 too,
+    which is exact only up to 2**24 in magnitude. Integer columns with larger values are still converted, but a
+    WARNING names them, so an id column such as 16777217 does not silently become 16777216.0.
     """
 
     if isinstance(df, pl.DataFrame):
-        # Convert integer and float64-like types to float32
         # Imported here rather than at module scope: pandaslib must stay usable without paying
         # polarslib's import-time setup, and this is the only polars-specific branch in the file.
-        from pyutilz.data.polarslib import polars_castable_int_dtypes
+        # cast_f64_to_f32 is the polars mirror of this function and carries the same 2**24 warning.
+        from pyutilz.data.polarslib.columns import cast_f64_to_f32
 
-        df = df.with_columns(pl.col([*polars_castable_int_dtypes(), pl.Float64]).cast(pl.Float32))
+        df = cast_f64_to_f32(df)
 
     elif isinstance(df, pd.DataFrame):
         df = df.copy()
@@ -568,11 +593,14 @@ def ensure_dataframe_float32_convertability(
         if len(numeric_cols) > 0:
             if verbose:
                 logger.info("Converting %s numeric columns to float32", len(numeric_cols))
+            _warn_lossy_float32_int_columns(df, df.select_dtypes(include=["uint32", "int32", "int64", "uint64"]).columns)
             df[numeric_cols] = df[numeric_cols].astype(np.float32)
 
         # --- PyArrow-backed dtypes ---
         if arrow_backed.any():
             from pandas.api.types import is_integer_dtype, is_float_dtype
+
+            _warn_lossy_float32_int_columns(df, [col for col in df.columns[arrow_backed] if is_integer_dtype(df[col].dtype)])
 
             for col in df.columns[arrow_backed]:
                 pa_dtype = df[col].dtype
@@ -595,6 +623,9 @@ def convert_float64_to_float32(df: pd.DataFrame) -> pd.DataFrame:
     Returns a NEW frame and never mutates the input, matching that sibling's documented contract
     -- it used to downcast the caller's own columns in place while presenting a return-value API,
     so a frame kept as the float64 reference silently lost its float64 originals.
+
+    Lossy by design: float32 rounds to about 7 significant digits and overflows beyond ~3.4e38. Integer columns are not
+    touched here; use ensure_dataframe_float32_convertability for that, which warns about integers beyond 2**24.
     """
     df = df.copy()
     float64_cols = df.select_dtypes(include=["float64"]).columns

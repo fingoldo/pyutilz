@@ -613,13 +613,17 @@ def get_suspiciously_constant_columns(df: pd.DataFrame) -> list:
         susp_columns: list = df.columns[df.nunique(dropna=False) <= 1].tolist()
     except Exception:
         susp_columns = []
+        skipped: list = []
         for col in df.columns:
             try:
                 if df[col].nunique(dropna=False) <= 1:
                     susp_columns.append(col)
             except TypeError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this column, check the rest)
                 # Skip the column if a TypeError (e.g. unhashable type) occurs.
-                continue
+                skipped.append(col)
+        if skipped:
+            # A skipped column is absent from the result, which a caller reads as "not constant": say so, once.
+            logger.warning("get_suspiciously_constant_columns: could not check %d column(s) (unhashable values), so they are not reported: %s", len(skipped), skipped)
     return susp_columns
 
 

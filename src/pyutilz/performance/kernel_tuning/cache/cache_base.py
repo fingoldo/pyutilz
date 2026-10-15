@@ -537,7 +537,8 @@ def _pid_alive(pid: int) -> bool:
         logger.debug("_pid_alive: liveness probe raised OSError: %s: %s", type(e).__name__, e)
         return getattr(e, "errno", None) != errno.ESRCH
     except Exception as e:
-        logger.debug("Process-liveness probe for pid=%s failed unexpectedly (%s), assuming alive (never steal)", pid, e)
+        # WARNING, not DEBUG: the caller then waits out its lock timeout, and this line is the only hint of why.
+        logger.warning("Process-liveness probe for pid=%s failed unexpectedly (%s: %s), assuming alive (never steal)", pid, type(e).__name__, e)
         return True  # never steal on an unexpected probe failure
 
 

@@ -94,8 +94,12 @@ def check_cpu_flag(flag: str = "avx2") -> bool:
         import cpuinfo
 
         info = cpuinfo.get_cpu_info()
-    except Exception as e:  # nosec B110 - best-effort optional CPU-flag probe; py-cpuinfo absent or raising just reports flag unsupported
-        logger.debug("Failed to probe CPU flag %r: %s", flag, e)
+    except ImportError as e:
+        logger.debug("CPU flag probe: py-cpuinfo not importable, flag %r reported unsupported: %s", flag, e)
+        return False
+    except Exception as e:  # nosec B110 - best-effort optional CPU-flag probe; a raising probe just reports flag unsupported
+        # The caller silently takes the non-SIMD path on False, so a real probe failure is a WARNING, as in is_cuda_available.
+        logger.warning("Failed to probe CPU flag %r (%s: %s); reporting it as unsupported.", flag, type(e).__name__, e)
         return False
     flags = info.get("flags") if isinstance(info, dict) else None
     if flags is None:

@@ -29,6 +29,18 @@ def _warn_unchecked(unchecked_packages: list[str]) -> None:
         logger.warning("Could not check whether these packages are installed, so they are treated as missing: %s", unchecked_packages)
 
 
+def _install_each(packages_to_install: list[str]) -> list[str]:
+    """Pip-install each package in turn, isolating failures; return the ones that did not install (each logged at WARNING)."""
+    failed_packages: list[str] = []
+    for pkg in packages_to_install:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])  # nosec B603 - sys.executable is the running interpreter's own path (not attacker-controlled), and pkg names come from ensure_installed's own `packages` argument (developer-supplied dependency list), not from untrusted/network input. Using `sys.executable -m pip` (rather than a bare "pip" resolved via PATH search order) guarantees installation into the running interpreter's own environment and avoids Windows' CWD-before-PATH executable search order picking up an attacker-planted pip.exe/pip.bat.
+        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one failed install shouldn't abort the rest)
+            logger.warning("Failed to install package %s: %s", pkg, e)
+            failed_packages.append(pkg)
+    return failed_packages
+
+
 def ensure_installed(packages: Union[str, Iterable[str]], sep: str = " ") -> None:
     """Installs any packages from `packages` that are not importable yet, via pip.
 
@@ -56,11 +68,11 @@ def ensure_installed(packages: Union[str, Iterable[str]], sep: str = " ") -> Non
         if missing_packages:
             mes = f"Installing missing packages: {missing_packages}"
             logger.info(mes)
-            for pkg in missing_packages:
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])  # nosec B603 - sys.executable is the running interpreter's own path (not attacker-controlled), and pkg names come from ensure_installed's own `packages` argument (developer-supplied dependency list), not from untrusted/network input. Using `sys.executable -m pip` (rather than a bare "pip" resolved via PATH search order) guarantees installation into the running interpreter's own environment and avoids Windows' CWD-before-PATH executable search order picking up an attacker-planted pip.exe/pip.bat.
-                except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one failed install shouldn't abort the rest)
-                    logger.debug("Failed to install package %s: %s", pkg, e)
+            failed_packages = _install_each(missing_packages)
+            if failed_packages:
+                # Still logged, not raised (the documented contract): the WARNING names every package left uninstalled,
+                # so a later ImportError can be traced back to this call.
+                logger.warning("ensure_installed: these packages are still not installed: %s", failed_packages)
 
 
 # from pyutilz.core.pythonlib import ensure_installed  # lint: disable=ungrouped-imports,disable=wrong-import-order
