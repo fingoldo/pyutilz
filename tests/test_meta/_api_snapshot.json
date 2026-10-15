@@ -140,10 +140,11 @@
       "filemaker_username": "value",
       "get_attr": "callable(obj:any:0:, attr_name:any:0:, default_value:any:1:<unstable-default>, unwanted_value:any:1:None, _unset:kw:1:<unstable-default>)",
       "get_session_token": "callable(username:any:1:None, password:any:1:None, max_retries:any:1:10, sleep_int_seconds:any:1:10)",
-      "init": "callable(m_filemaker_url:any:0:, m_filemaker_username:any:0:, m_filemaker_password:any:0:)",
+      "init": "callable(m_filemaker_url:any:0:, m_filemaker_username:any:0:, m_filemaker_password:any:0:, allow_insecure_http:any:1:False)",
       "logger": "value",
       "post_filemaker_record": "callable(filemaker_url:any:0:, layout:any:0:, data:any:0:, num_attempts:any:1:3)",
-      "simplify_types": "callable(obj:any:0:, sep:any:1:',')"
+      "simplify_types": "callable(obj:any:0:, sep:any:1:',')",
+      "urlsplit": "callable(url:any:0:, scheme:any:1:'', allow_fragments:any:1:True)"
     },
     "graphql": {
       "beautify_gql_query": "callable(query:any:0:, join_token_find:any:1:'}\\n}', join_token_replace:any:1:'}}')",
