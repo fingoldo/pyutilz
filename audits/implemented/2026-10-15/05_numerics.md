@@ -26,4 +26,4 @@ Verdict: no P0 or P1 defects found in the sampled numeric code. The most importa
 - N-05: WON'T FIX. zero-sum weights falling back to nans_filler is the documented contract of add_weighted_aggregates
 - N-06: RESOLVED. zero counts skipped in entropy
 - N-07: RESOLVED. docstring states the no-NaN contract of the njit kernels; kernels unchanged
-- N-08: DEFERRED. needs a test matrix across polars release lines; only 1.41.2 installed
+- N-08: RESOLVED. Decimal columns are read through a Float64 view for the clipping quartiles (polars 1.0 has no quantile on Decimal); the polars 1.0.0 matrix set passes.

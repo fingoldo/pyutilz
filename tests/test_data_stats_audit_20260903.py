@@ -93,8 +93,15 @@ class TestPolarsDsExpressionsRespectSubgroupF02:
         res = df.group_by("g").agg(exprs).to_dicts()[0]
         assert res["side_buy_px_linreg"] != res["side_sell_px_linreg"]
         # buy = (10, 20) -> slope 10; sell = (100, 200) -> slope 100.
-        assert res["side_buy_px_linreg"][0] == pytest.approx(10.0)
-        assert res["side_sell_px_linreg"][0] == pytest.approx(100.0)
+        # polars 1.0 wraps the raw aggregate one list deeper than later releases ([[k, b]] vs [k, b]); the slope is the first
+        # value either way, so the test reads it past any wrapping instead of pinning one shape.
+        def _slope(value):
+            while isinstance(value, list):
+                value = value[0]
+            return value
+
+        assert _slope(res["side_buy_px_linreg"]) == pytest.approx(10.0)
+        assert _slope(res["side_sell_px_linreg"]) == pytest.approx(100.0)
 
     def test_othersvals_at_extremums_differ_per_subgroup(self):
         df = pl.DataFrame(

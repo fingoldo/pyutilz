@@ -202,6 +202,9 @@ def _compute_binning_stats(
             quantile_cols = all_num_cols
         else:
             quantile_cols = cs.by_name(existing_target_columns)
+        # polars 1.0 has no quantile for Decimal (N-08): the quartiles are read off a Float64 view when the frame has Decimal columns.
+        if _decimal_columns(df):
+            quantile_cols = quantile_cols.cast(pl.Float64)
         stats_expr.extend(
             [
                 quantile_cols.quantile(0.25).name.suffix("_q1"),

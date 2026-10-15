@@ -58,7 +58,7 @@ One row per finding. Statuses: RESOLVED (fixed; regression test where a test can
 | **WON'T FIX** | P3 | `N-05` | The weighted mean divides by `sum(weights)` and then relies on the caller's `nans_filler` to repair the result. Zero-sum |
 | **RESOLVED** | P3 | `N-06` | `entropy()` calls `math.log2(proba / normalization_factor)` for every count, so a zero count (`Counter` can hold explici |
 | **RESOLVED** | P3 | `N-07` | The kernels are `@njit(fastmath=True)`, which assumes no NaN or inf. The NaN filter lives only in `normality_verdict` (` |
-| **DEFERRED** | P3 | `N-08` | The Decimal to Float64 cast is justified by a comment about polars versions ("older polars refuses ..."). The result dep |
+| **RESOLVED** | P3 | `N-08` | The Decimal to Float64 cast is justified by a comment about polars versions ("older polars refuses ..."). The result dep |
 | **RESOLVED** | P2 | `P-01` | `_trim_all` rebuilds every port's outcome list on every `report_success`, `report_error` and pick, under the pool-wide l |
 | **RESOLVED** | P1 | `P-02` | Sampling appends to unbounded Python lists for the monitor's whole lifetime (about 10 lists, one entry per sample). |
 | **RESOLVED** | P2 | `P-03` | `_collect_frames` keeps every loaded frame in `lst` and calls `get_df_memory_consumption(deep=True)` on each one. Deep m |
