@@ -3,6 +3,8 @@ Test suite for serialization.py
 Tests cover serialize/unserialize with various formats and str_to_class utility.
 """
 
+import os
+
 import pytest
 import pickle
 
@@ -233,16 +235,23 @@ class TestUnserializeSidecarVerification:
     NOT swallowed into a generic None return, so callers can tell "tampered/corrupt" apart from
     every other failure mode in this function."""
 
-    def test_default_false_loads_without_a_sidecar(self, tmp_path):
-        p = tmp_path / "no_sidecar.pkl"
+    def test_default_round_trips_a_file_serialize_wrote(self, tmp_path):
+        p = tmp_path / "round_trip.pkl"
         serialize({"a": 1}, fname=str(p))
         assert unserialize(str(p)) == {"a": 1}
 
-    def test_verify_sidecar_true_without_sidecar_raises(self, tmp_path):
+    def test_default_refuses_a_file_without_a_sidecar(self, tmp_path):
         p = tmp_path / "no_sidecar.pkl"
         serialize({"a": 1}, fname=str(p))
+        os.remove(str(p) + ".sha256")
         with pytest.raises(PickleVerificationError):
-            unserialize(str(p), verify_sidecar=True)
+            unserialize(str(p))
+
+    def test_verify_sidecar_false_loads_a_legacy_file_without_a_sidecar(self, tmp_path):
+        p = tmp_path / "legacy.pkl"
+        serialize({"a": 1}, fname=str(p))
+        os.remove(str(p) + ".sha256")
+        assert unserialize(str(p), verify_sidecar=False) == {"a": 1}
 
     def test_verify_sidecar_true_with_matching_sidecar_loads(self, tmp_path):
         from pyutilz.core.safe_pickle import write_sidecar
@@ -253,13 +262,10 @@ class TestUnserializeSidecarVerification:
         assert unserialize(str(p), verify_sidecar=True) == {"a": 1}
 
     def test_verify_sidecar_true_with_stale_sidecar_raises(self, tmp_path):
-        from pyutilz.core.safe_pickle import write_sidecar
-
         p = tmp_path / "stale_sidecar.pkl"
         serialize({"a": 1}, fname=str(p))
-        write_sidecar(str(p))
-        # Overwrite the payload after the sidecar was written -- digest now stale.
-        serialize({"a": 2}, fname=str(p))
+        # Overwrite the payload behind serialize()'s back, so the sidecar it wrote no longer matches the bytes.
+        p.write_bytes(b"not the bytes the sidecar was written for")
         with pytest.raises(PickleVerificationError):
             unserialize(str(p), verify_sidecar=True)
 
