@@ -123,7 +123,9 @@ def cast_f64_to_f32(df: _PlFrameT) -> _PlFrameT:
     if isinstance(df, pl.DataFrame):
         int_cols = df.select(pl.col(*int_types)).columns
         if int_cols:
-            overflow = df.select([pl.col(c).abs().max().gt(2**24).alias(c) for c in int_cols]).row(0)
+            # min() and max() separately: abs() on Int64 wraps -2**63 back to itself (negative), so abs().max()
+            # would miss the most negative value and never flag it.
+            overflow = df.select([(pl.col(c).max().gt(2**24) | pl.col(c).min().lt(-(2**24))).alias(c) for c in int_cols]).row(0)
             lossy = [c for c, is_lossy in zip(int_cols, overflow) if is_lossy]
             if lossy:
                 logger.warning("cast_f64_to_f32: integer column(s) %s have values beyond 2**24 -- Float32 cast will lose exact-integer precision.", lossy)

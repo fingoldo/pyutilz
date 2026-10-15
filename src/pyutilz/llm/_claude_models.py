@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from dataclasses import dataclass, replace
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,8 @@ def resolve_claude_model(model: str) -> tuple[str, ClaudeModelSpec] | None:
 #: OpenRouter lookups already made, by the normalised model name; None is a name the catalogue does not list.
 _OPENROUTER_LOOKUPS_MAX_SIZE = 256
 _openrouter_specs: dict[str, tuple[str, ClaudeModelSpec] | None] = {}
+# Guards the check-evict-insert sequence below: two threads racing at the size cap would otherwise evict the same key.
+_openrouter_specs_lock = threading.Lock()
 
 
 def _normalised_name(model: str) -> str:
@@ -165,8 +168,11 @@ def _openrouter_claude_spec(name: str) -> tuple[str, ClaudeModelSpec] | None:
     snapshot suffix. Variants such as ``:batch`` and aliases such as ``~anthropic/claude-haiku-latest`` are NOT the model's own
     price and never match. A failed catalogue fetch is a miss for this call only: the fetch itself is not cached on failure.
     """
-    if name in _openrouter_specs:
+    try:
+        # EAFP, not `in` + index: another thread may evict the key between the two steps.
         return _openrouter_specs[name]
+    except KeyError:
+        pass
     from pyutilz.llm.openrouter_provider._catalogue import _fetch_models_catalogue  # lazy: the catalogue module imports this package
 
     try:
@@ -185,9 +191,11 @@ def _openrouter_claude_spec(name: str) -> tuple[str, ClaudeModelSpec] | None:
         if spec is not None:
             found = (listing_id, spec)
             break
-    if len(_openrouter_specs) >= _OPENROUTER_LOOKUPS_MAX_SIZE:
-        _openrouter_specs.pop(next(iter(_openrouter_specs)))  # bounded FIFO: evict the oldest name, which costs at most one re-lookup
-    _openrouter_specs[name] = found
+    with _openrouter_specs_lock:
+        if len(_openrouter_specs) >= _OPENROUTER_LOOKUPS_MAX_SIZE and name not in _openrouter_specs:
+            # bounded FIFO: evict the oldest name, which costs at most one re-lookup
+            _openrouter_specs.pop(next(iter(_openrouter_specs)), None)
+        _openrouter_specs[name] = found
     return found
 
 

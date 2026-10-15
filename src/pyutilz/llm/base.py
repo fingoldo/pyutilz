@@ -241,6 +241,9 @@ def _require_json_object(obj: Any, provider_name: str) -> dict[str, Any]:
     raise JSONParsingError(f"Expected a JSON object from {provider_name}, got {type(obj).__name__}")
 
 
+_FENCE_OPENER_RE = re.compile(r"```(?:json)?\s*\n?(?=[\[{])")
+
+
 def _parse_fenced_object(text: str, provider_name: str) -> dict[str, Any] | None:
     """The object inside a markdown JSON fence, or None when there is no fence or its payload does not decode.
 
@@ -249,12 +252,23 @@ def _parse_fenced_object(text: str, provider_name: str) -> dict[str, Any] | None
     clean object. Only the decode error is swallowed -- _require_json_object's raise still propagates, so a
     fenced top-level array remains a hard error exactly as before.
     """
-    # The outer fences delimit the payload unambiguously, so we extract via regex (only the wrapper is regex; the JSON itself is parsed properly).
-    fence_match = re.search(r"```(?:json)?\s*\n?(\{.*?\}|\[.*?\])\s*\n?```", text, re.DOTALL)
-    if not fence_match:
+    # Linear-time extraction. The former single regex, a lazy `\{.*?\}` followed by a closing fence, rescanned the
+    # whole text from every opener when no closer followed, so many unclosed fences cost O(n^2). Only the FIRST
+    # opener that starts a JSON object or array can match: if it has no closer, no later opener does either.
+    opener = _FENCE_OPENER_RE.search(text)
+    if opener is None:
+        return None
+    start = opener.end()
+    closer_at = text.find("```", start)
+    while closer_at != -1:
+        body = text[start:closer_at].rstrip()
+        if body.endswith("}" if text[start] == "{" else "]"):
+            break
+        closer_at = text.find("```", closer_at + 3)
+    else:
         return None
     try:
-        return _require_json_object(jsonlib.loads(fence_match.group(1)), provider_name)
+        return _require_json_object(jsonlib.loads(body), provider_name)
     except jsonlib.JSONDecodeError as exc:
         logger.debug("_parse_fenced_object: fenced block is not valid JSON: %s: %s", type(exc).__name__, exc)
         return None

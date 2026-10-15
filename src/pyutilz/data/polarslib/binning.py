@@ -5,6 +5,8 @@ Split out of the historical flat ``pyutilz.data.polarslib`` module; re-exported
 from the package ``__init__`` to preserve the public import surface.
 """
 
+import math
+
 from ._common import (
     Any,
     Dict,
@@ -371,6 +373,13 @@ def _bin_expression(
 ) -> pl.Expr:
     """Expression mapping ``col`` onto ``num_bins`` uniform integer bin ids between ``min_val`` and ``max_val``."""
     col_expr, min_val, max_val = _float_binning_inputs(clip_expr, min_val, max_val, col in cols_with_decimals)
+    # An infinite bound (a -inf/+inf observed value on a column that was not clipped) makes bin_width inf and
+    # every (x - min) / bin_width a NaN, which then folds silently into bin 0. Refuse rather than bin garbage.
+    if not (math.isfinite(float(min_val)) and math.isfinite(float(max_val))):
+        raise ValueError(
+            f"Cannot bin column {col!r}: its observed bounds [{min_val}, {max_val}] are not finite. "
+            "Enable clean_features/clean_targets so Tukey clipping bounds the infinite values, or drop them first."
+        )
     bin_width = (max_val - min_val) / num_bins
     if fill_nulls and (col in cols_with_nulls):
         col_expr = col_expr.fill_null(min_val)

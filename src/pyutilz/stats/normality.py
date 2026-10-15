@@ -61,7 +61,10 @@ except Exception:
 
 @njit(cache=True, fastmath=True)
 def phi_cdf(z: float) -> float:
-    """Standard Normal CDF Phi(z) = 0.5 * erfc(-z / sqrt(2))."""
+    """Standard Normal CDF Phi(z) = 0.5 * erfc(-z / sqrt(2)).
+
+    Precondition: ``z`` must be finite. The kernel is compiled with ``fastmath=True``, which assumes no NaN/inf.
+    """
     return 0.5 * math.erfc(-z * 0.7071067811865475)
 
 
@@ -74,6 +77,8 @@ def log_phi_cdf(z: float) -> float:
     log(Phi(z)) ~ -z^2/2 - log(-z) - 0.5*log(2*pi) for z << 0 (matches
     Abramowitz & Stegun 26.2.12 truncated to leading term, accurate to
     O(1/z^2) for z < -5).
+
+    Precondition: ``z`` must be finite. The kernel is compiled with ``fastmath=True``, which assumes no NaN/inf.
     """
     if z < -5.0:
         return -0.5 * z * z - math.log(-z) - 0.9189385332046727  # 0.5 ln(2 pi)
@@ -99,6 +104,9 @@ def dagostino_k2(x: np.ndarray) -> tuple:
 
     n >= 20 required for the finite-sample transforms; returns NaN
     stat/p on smaller samples.
+
+    Precondition: every element of ``x`` must be finite. The kernel is compiled with ``fastmath=True``, which assumes
+    no NaN/inf, so non-finite input gives undefined results rather than an error. ``normality_verdict`` filters first.
     """
     n = x.size
     if n < 20:
@@ -191,6 +199,8 @@ def anderson_darling_normal(x: np.ndarray) -> tuple:
     p approximation (Stephens 1986, piecewise polynomial). Calibrated
     up to A* ~ 5; beyond that we saturate p=0 since rejection is
     certain at any sensible alpha.
+
+    Precondition: every element of ``x`` must be finite (``fastmath=True``; NaN/inf give undefined results).
     """
     n = x.size
     if n < 8:

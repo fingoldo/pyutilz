@@ -14,12 +14,18 @@ logger = logging.getLogger(__name__)
 
 import psutil
 import threading
+from collections import deque
+
 import numpy as np
 
 from pyutilz.system.system import get_own_memory_usage, get_nvidia_smi_info
 from pyutilz.system.psutil_compat import get_cpu_freq_current_mhz, missing_psutil_functions
 from pyutilz.core.pythonlib import to_float
-from typing import Any as _Any, List as _List, Optional
+from typing import Any as _Any, Deque as _Deque, Optional
+
+# Samples kept per series. At the default 1 Hz this is about 28 hours; older samples are dropped so a monitor that runs for
+# weeks no longer grows without bound. Statistics then cover the most recent max_samples samples.
+DEFAULT_MAX_SAMPLES = 100_000
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Hardware Utilization Monitor
@@ -48,30 +54,36 @@ class UtilizationMonitor:
     Args:
         sleep_interval_seconds: Sampling interval (default 1.0 second)
         gpu_ids: List of GPU IDs to monitor (empty = all GPUs)
+        max_samples: Maximum samples retained per series (default DEFAULT_MAX_SAMPLES); the oldest are dropped first.
     """
 
     def __init__(
         self,
         sleep_interval_seconds: float = 1.0,
         gpu_ids: Optional[list] = None,
+        max_samples: int = DEFAULT_MAX_SAMPLES,
     ):
         if gpu_ids is None:
             gpu_ids = []
-        self.cpu_utilizaton: _List[_Any] = []
-        self.cpu_clocks: _List[_Any] = []
+        if max_samples < 1:
+            raise ValueError(f"max_samples must be >= 1, got {max_samples}")
+        self.max_samples = max_samples
+        # Bounded series: deque(maxlen=...) evicts the oldest sample on append, so memory stays flat for a long-running monitor.
+        self.cpu_utilizaton: _Deque[_Any] = deque(maxlen=max_samples)
+        self.cpu_clocks: _Deque[_Any] = deque(maxlen=max_samples)
 
-        self.own_ram_used: _List[_Any] = []
-        self.total_ram_used: _List[_Any] = []
-        self.total_ram_free: _List[_Any] = []
+        self.own_ram_used: _Deque[_Any] = deque(maxlen=max_samples)
+        self.total_ram_used: _Deque[_Any] = deque(maxlen=max_samples)
+        self.total_ram_free: _Deque[_Any] = deque(maxlen=max_samples)
 
-        self.mean_gpu_ram_free: _List[_Any] = []
-        self.mean_gpu_ram_used: _List[_Any] = []
+        self.mean_gpu_ram_free: _Deque[_Any] = deque(maxlen=max_samples)
+        self.mean_gpu_ram_used: _Deque[_Any] = deque(maxlen=max_samples)
 
-        self.mean_gpu_clocks: _List[_Any] = []
-        self.mean_gpu_utilizaton: _List[_Any] = []
+        self.mean_gpu_clocks: _Deque[_Any] = deque(maxlen=max_samples)
+        self.mean_gpu_utilizaton: _Deque[_Any] = deque(maxlen=max_samples)
 
-        self.mean_gpu_power_draw: _List[_Any] = []
-        self.mean_gpu_temp: _List[_Any] = []
+        self.mean_gpu_power_draw: _Deque[_Any] = deque(maxlen=max_samples)
+        self.mean_gpu_temp: _Deque[_Any] = deque(maxlen=max_samples)
 
         self.gpu_ids = gpu_ids
         self.sleep_interval_seconds = sleep_interval_seconds

@@ -89,11 +89,13 @@ def get_entropy_stats(stream: Any, model_order: int = 2) -> Tuple[Dict[Any, Coun
 def entropy(stats: Counter, normalization_factor: float = 1.0) -> float:
     """
     Computes Shannon entropy (in bits) of the counts in stats, normalizing each count by normalization_factor before treating it as a probability.
+    Entries that are zero (or negative) contribute nothing, as ``0 * log(0)`` is 0 by convention.
     """
     # abs(), not a bare negation: a single-symbol distribution has p == 1.0 and log2(1) == 0.0, so
     # the negation produced -0.0 for a quantity documented as non-negative (it serializes as the
     # literal "-0.0" in JSON/CSV and fails naive repr/string comparisons downstream).
-    return abs(sum(proba / normalization_factor * math.log2(proba / normalization_factor) for proba in stats.values()))
+    # Zero counts (a Counter can hold explicit zeros) are skipped: log2(0) raises a math domain error.
+    return abs(sum(proba / normalization_factor * math.log2(proba / normalization_factor) for proba in stats.values() if proba > 0))
 
 
 def entropy_rate(conditional_stats: Dict[Any, Counter], stats: Counter) -> float:

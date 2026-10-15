@@ -14,23 +14,23 @@
 [![docs](https://github.com/fingoldo/pyutilz/actions/workflows/docs.yml/badge.svg?branch=master&event=push)](https://fingoldo.github.io/pyutilz/)
 [![CodeQL](https://github.com/fingoldo/pyutilz/actions/workflows/codeql.yml/badge.svg?branch=master&event=push)](https://github.com/fingoldo/pyutilz/actions/workflows/codeql.yml?query=branch%3Amaster)
 
-A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core installs nine hard dependencies -- `numba`, `numpy`, `joblib`, `portalocker`, `psutil`, `pandas`, `tqdm`, `pympler` (plus `tomli` below Python 3.11) -- because `pyutilz.core.pythonlib` and `pyutilz.system.system`, the modules nearly every other subpackage imports, use them unconditionally at import time; `pyproject.toml` records the rationale per dependency. Everything heavier than that (scipy, Pillow, selenium, the cloud SDKs, the LLM SDKs, spaCy, ...) is opt-in through an extras group, so you install only the domains you actually use.
+A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core installs nine hard dependencies -- `orjson`, `numba`, `numpy`, `joblib`, `portalocker`, `psutil`, `pandas`, `tqdm`, `pympler` (plus `tomli` below Python 3.11) -- because `pyutilz.core.pythonlib` and `pyutilz.system.system`, the modules nearly every other subpackage imports, use them unconditionally at import time; `pyproject.toml` records the rationale per dependency. Everything heavier than that (scipy, Pillow, selenium, the cloud SDKs, the LLM SDKs, spaCy, ...) is opt-in through an extras group, so you install only the domains you actually use.
 
 ## Installation
 
 ```bash
 pip install pyutilz[all,dev]          # full install (recommended -- see the note below)
 
-pip install pyutilz                   # core only: numba, numpy, joblib, portalocker, psutil, pandas, tqdm, pympler
+pip install pyutilz                   # core only: orjson, numba, numpy, joblib, portalocker, psutil, pandas, tqdm, pympler
 pip install pyutilz[dataframes]       # pandas + pyarrow + polars
 pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql + redis
 pip install pyutilz[web]              # selenium + undetected-chromedriver + requests + grequests + fake-useragent + curl-cffi
 pip install pyutilz[cloud]            # boto3 + google-cloud-storage
 pip install pyutilz[nlp]              # spacy (>=3.10 only) + nltk + tiktoken + jellyfish + beautifulsoup4 + inflect + emoji-data-python
-pip install pyutilz[llm]              # anthropic + google-genai (>=3.9 only) + httpx + tenacity + pydantic + pydantic-settings + tiktoken
+pip install pyutilz[llm]              # anthropic + google-genai (>=1.51, Python 3.10+ only) + httpx + tenacity + pydantic + pydantic-settings + tiktoken
 pip install pyutilz[system]           # scipy + Pillow + py-cpuinfo + GPUtil + xmltodict + jellyfish
 pip install pyutilz[stats]            # documented empty alias -- pyutilz.stats needs only core numpy
-pip install pyutilz[speedups]         # orjson -- drop-in accelerator, every use site falls back to stdlib json without it
+pip install pyutilz[speedups]         # empty alias kept for install compatibility -- orjson is already a core dependency
 pip install pyutilz[dash]             # flask + dash + dash-bootstrap-components (pyutilz.dev.dashlib)
 pip install pyutilz[prefect]          # prefect, requests (pyutilz.system.scheduling.prefect)
 pip install pyutilz[tensorflow]       # tensorflow (system.parallel.set_tf_gpu only)

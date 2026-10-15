@@ -58,8 +58,11 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
     The next call retries; once a fetch succeeds the result is cached for
     ``_MODELS_CATALOGUE_TTL_SECONDS`` (see :func:`_catalogue_is_fresh`).
     """
-    if _catalogue_is_fresh():
-        return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # _pkg() is a runtime module lookup, so its module-global catalogue attribute is untyped
+    # Read the global once: another thread may set it to None (the refresh path, under _MODELS_LOCK) between a
+    # freshness check and a second read, and returning that second read would hand the caller None.
+    snapshot = _pkg()._MODELS_CATALOGUE
+    if snapshot is not None and _catalogue_is_fresh():
+        return snapshot  # type: ignore[no-any-return]  # _pkg() is a runtime module lookup, so its module-global catalogue attribute is untyped
     try:
         asyncio.get_running_loop()
     except RuntimeError:

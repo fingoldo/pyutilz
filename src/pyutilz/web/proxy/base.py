@@ -12,8 +12,9 @@ import random
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -38,16 +39,22 @@ class _PortStats:
     __slots__ = ("outcomes",)
 
     def __init__(self) -> None:
-        # List of (monotonic_time, is_error: bool)
-        self.outcomes: List[tuple] = []
+        # Deque of (monotonic_time, is_error: bool), oldest first, so trim() can pop stale entries from the left.
+        self.outcomes: Deque[tuple] = deque()
 
     def record(self, now: float, is_error: bool) -> None:
         """Append an outcome ``(now, is_error)`` to the sliding-window history."""
         self.outcomes.append((now, is_error))
 
     def trim(self, cutoff: float) -> None:
-        """Drop outcomes recorded at or before ``cutoff``, keeping only entries within the window."""
-        self.outcomes = [o for o in self.outcomes if o[0] > cutoff]
+        """Drop outcomes recorded at or before ``cutoff``, keeping only entries within the window.
+
+        Outcomes are appended in time order, so the stale ones are a prefix: popping from the left costs
+        O(removed) instead of rebuilding the whole list on every call (this runs under the pool-wide lock).
+        """
+        outcomes = self.outcomes
+        while outcomes and outcomes[0][0] <= cutoff:
+            outcomes.popleft()
 
     @property
     def total(self) -> int:
