@@ -433,13 +433,17 @@ class TestCreateTsFeaturesPolars:
         assert isinstance(result, pl.DataFrame)
 
     def test_closed_default_dynamic(self, mock_clean):
-        # line 597: closed defaults to "left" for non-rolling
+        # line 597: closed defaults to "left" for non-rolling. Hourly rows 0..49 with 10h windows every 5h, labelled from
+        # 2023-12-31 22:00. Left-closed, the first window [22:00, 08:00) holds rows 00:00..07:00 = 8 rows; a right-closed
+        # default would take 00:00..08:00 = 9 rows. The assertion pins both the default and the boundary it implies.
         df = self._make_ts_df()
-        result = create_ts_features_polars(
-            df, index_column="ts", period="10h", every="5h",
-            numaggs=["mean"], engine="cpu",
-        )
-        assert isinstance(result, pl.DataFrame)
+        kwargs = dict(index_column="ts", period="10h", every="5h", numaggs=["mean"], engine="cpu")
+        default = create_ts_features_polars(df, **kwargs)
+        explicit_left = create_ts_features_polars(df, closed="left", **kwargs)
+        assert default.equals(explicit_left)
+        first = default.sort("ts").row(0, named=True)
+        assert first["ts"] == datetime(2023, 12, 31, 22, 0)
+        assert first["nrecs"] == 8
 
     def test_dtype_float32(self, mock_clean):
         # line 648-649: Float32 cast path

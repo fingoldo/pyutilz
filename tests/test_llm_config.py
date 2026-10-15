@@ -1,6 +1,7 @@
 """Tests for pyutilz.llm.config."""
 
 import importlib
+import importlib.util
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from unittest.mock import patch
 
@@ -26,8 +27,17 @@ class TestSettingsTTLEnvVar:
     process restart. ``_SETTINGS_TTL_SECONDS`` is read from ``PYUTILZ_LLM_SETTINGS_TTL_SECONDS``
     at import time, mirroring ``_retry.py``'s ``PYUTILZ_LLM_MAX_RETRIES`` pattern."""
 
-    def _reload(self):
-        return importlib.reload(config_module)
+    @staticmethod
+    def _reload():
+        """Return an independent copy of config_module built from its spec.
+
+        ``importlib.reload`` would rebind the shared module's names in place (``_UNSET_ENV_FILE`` included), so
+        the copy is executed without touching ``sys.modules`` or the shared object; nothing needs restoring after.
+        """
+        spec = importlib.util.find_spec(config_module.__name__)
+        fresh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fresh)
+        return fresh
 
     def test_default_ttl_is_60(self, monkeypatch):
         monkeypatch.delenv("PYUTILZ_LLM_SETTINGS_TTL_SECONDS", raising=False)
@@ -51,12 +61,9 @@ class TestSettingsTTLEnvVar:
         reloaded = self._reload()
         assert reloaded._UNSET_ENV_FILE is marker_before
         settings = bound_before()
-        assert isinstance(settings, reloaded.LLMSettings)
-        assert reloaded._cached_env_file is None
-
-    def teardown_method(self):
-        # Restore the un-monkeypatched module state for subsequent test files.
-        importlib.reload(config_module)
+        assert isinstance(settings, config_module.LLMSettings)
+        # bound_before() caches into the SHARED module, which is what the cache-reset contract is about.
+        assert config_module._cached_env_file is None
 
 
 class TestGetLlmSettingsCaching:

@@ -45,9 +45,14 @@ def pkg(tmp_path, monkeypatch):
     (root / "__init__.py").write_text("")
     (root / "big.py").write_text(SOURCE, encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
-    yield root
+    # A carvepkg module left by an earlier test would shadow this test's fresh package: hide it for this test only.
     for name in [m for m in sys.modules if m.startswith("carvepkg")]:
-        del sys.modules[name]
+        monkeypatch.delitem(sys.modules, name)
+    yield root
+    # Modules this test imports were absent when the fixture ran, so monkeypatch has no saved value to restore for
+    # them. Drop them here so the next test starts clean.
+    for name in [m for m in sys.modules if m.startswith("carvepkg")]:
+        sys.modules.pop(name, None)
 
 
 def test_carved_module_pulls_dependencies_and_source_reexports(pkg):

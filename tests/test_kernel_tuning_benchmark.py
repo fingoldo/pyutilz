@@ -53,9 +53,26 @@ def test_concurrency_runs_all_threads():
 
 
 def test_slower_backend_measures_higher():
-    fast = time_backend(lambda _: None, lambda: (0,), n_iters=5, warmup=1)
-    slow = time_backend(lambda _: time.sleep(0.01), lambda: (0,), n_iters=5, warmup=1)
-    assert slow > fast
+    """The reported value is the median of the timed calls, read through an injected clock.
+
+    Each backend advances the fake clock by its cost (1ms and 10ms), so the medians are exact. A broken measurement
+    (a constant, the wrong statistic, or timing the warmup) changes the reported values and fails here.
+    """
+    clock = {"t": 0.0}
+
+    def fast(_):
+        clock["t"] += 0.001
+
+    def slow(_):
+        clock["t"] += 0.010
+
+    def timer():
+        return clock["t"]
+
+    fast_ms = time_backend(fast, lambda: (0,), n_iters=5, warmup=1, timer=timer)
+    slow_ms = time_backend(slow, lambda: (0,), n_iters=5, warmup=1, timer=timer)
+    assert fast_ms == pytest.approx(1.0)
+    assert slow_ms == pytest.approx(10.0)
 
 
 def test_benchmark_backends_returns_per_backend_medians():

@@ -230,15 +230,24 @@ class TestSelectionAndRouting:
     def _inp(d):
         return (np.arange(d["n"], dtype=float),)
 
-    def test_benchmarker_picks_faster_equivalent(self):
-        # 'fast' and 'slow' give the SAME output; 'slow' sleeps 5ms -> 'fast' must win.
-        import time
-        from pyutilz.dev.benchmarking import sweep_backend_grid
+    def test_benchmarker_picks_faster_equivalent(self, monkeypatch):
+        # 'fast' and 'slow' give the SAME output. A scripted clock makes 'slow' cost 5ms and 'fast' 0.1ms per call,
+        # so the ranking is exact and independent of host load. 'slow' is listed first, so a rule that picks the
+        # first-listed backend (or the reference) fails here.
+        from pyutilz.dev import benchmarking as bench
 
-        regions = sweep_backend_grid(
-            {"slow": lambda x: (time.sleep(0.005) or x.sum()), "fast": lambda x: x.sum()},
-            {"n": [10, 100]}, self._inp, reference="slow", repeats=3,
-        )
+        clock = {"t": 0.0}
+        monkeypatch.setattr(bench, "timer", lambda: clock["t"])
+
+        def slow(x):
+            clock["t"] += 5e-3
+            return x.sum()
+
+        def fast(x):
+            clock["t"] += 1e-4
+            return x.sum()
+
+        regions = bench.sweep_backend_grid({"slow": slow, "fast": fast}, {"n": [10, 100]}, self._inp, reference="slow", repeats=3)
         assert regions and all(r["backend_choice"] == "fast" for r in regions)
 
     def test_benchmarker_rejects_faster_but_divergent(self):

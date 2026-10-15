@@ -221,6 +221,13 @@ class TestGen3RegionMatching:
 import pyutilz.dev.benchmarking as bm
 
 
+def _scripted_clock(monkeypatch):
+    """Replace the benchmarking timer with a clock that moves only when a test backend advances it."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(bm, "timer", lambda: clock["t"])
+    return clock
+
+
 def _fake_cupy(ctx: int) -> mock.MagicMock:
     cp = mock.MagicMock(name="cupy")
     cp.cuda.runtime.getDeviceCount.return_value = 1
@@ -291,12 +298,16 @@ class TestGen5SweepEquivalence:
     def test_to_host_leaves_dicts_alone(self):
         assert bm._to_host({"a": 1}) == {"a": 1}
 
-    def test_crossover_candidate_survives_a_nan_reference(self):
-        """A faster candidate matching a NaN-bearing reference must win; before the fix the NaN scale gated it out."""
-        import time
+    def test_crossover_candidate_survives_a_nan_reference(self, monkeypatch):
+        """A faster candidate matching a NaN-bearing reference must win; before the fix the NaN scale gated it out.
+
+        A scripted clock charges the reference 20ms per call and the candidate nothing, so the winner depends only on
+        the selection rule, not on host timing.
+        """
+        clock = _scripted_clock(monkeypatch)
 
         def ref(x):
-            time.sleep(0.02)
+            clock["t"] += 0.02
             out = x.copy()
             out[0] = np.nan
             return out
@@ -309,11 +320,11 @@ class TestGen5SweepEquivalence:
         regions = bm.sweep_backend_crossover({"ref": ref, "cand": cand}, [10], lambda n: (np.arange(float(n)),), "n", repeats=2)
         assert regions[0]["backend_choice"] == "cand"
 
-    def test_crossover_does_not_crash_on_ragged_tuple_outputs(self):
-        import time
+    def test_crossover_does_not_crash_on_ragged_tuple_outputs(self, monkeypatch):
+        clock = _scripted_clock(monkeypatch)
 
         def slow(x):
-            time.sleep(0.02)
+            clock["t"] += 0.02
             return (x, x[:2])
 
         def fast(x):
@@ -322,11 +333,11 @@ class TestGen5SweepEquivalence:
         regions = bm.sweep_backend_crossover({"slow": slow, "fast": fast}, [10], lambda n: (np.arange(float(n)),), "n", repeats=2)
         assert regions[0]["backend_choice"] == "fast"
 
-    def test_grid_reference_returning_a_dict_is_compared_not_skipped(self):
-        import time
+    def test_grid_reference_returning_a_dict_is_compared_not_skipped(self, monkeypatch):
+        clock = _scripted_clock(monkeypatch)
 
         def slow(x):
-            time.sleep(0.02)
+            clock["t"] += 0.02
             return {"a": x, "b": x[:1]}
 
         def fast(x):

@@ -147,8 +147,18 @@ def test_check_cpu_flag_missing_flags_key_warns(monkeypatch, caplog):
     assert any("no 'flags' key" in r.getMessage() for r in caplog.records)
 
 
-@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
-def test_check_cpu_flag_present_flag_is_reported():
+def test_check_cpu_flag_reports_present_and_absent_flags_from_fixed_flag_set(monkeypatch):
+    """Host-independent: a fixed flag list drives check_cpu_flag, so the result cannot depend on the CPU or on cpuinfo."""
+    import cpuinfo
+
+    monkeypatch.setattr(cpuinfo, "get_cpu_info", lambda: {"flags": ["sse4_2", "avx2"]})
+    assert check_cpu_flag("avx2") is True
+    assert check_cpu_flag("sse4_2") is True
+    assert check_cpu_flag("avx512f") is False
+
+
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02); host-dependent, kept as the real-hardware check
+def test_check_cpu_flag_present_flag_is_reported_on_this_host():
     import cpuinfo
 
     info = cpuinfo.get_cpu_info()

@@ -81,7 +81,9 @@ class TestAWriteThatStaysInsideItsReachPasses:
         before = _snap(store)
         store[T][0]["aspect_pair_correct"] = None
 
-        assert_only_target_changed(before, _snap(store), **DECLARED, may_clear={T: ["aspect_pair_correct"]})
+        changes = assert_only_target_changed(before, _snap(store), **DECLARED, may_clear={T: ["aspect_pair_correct"]})
+
+        assert [(c.table, c.key, sorted(c.columns)) for c in changes] == [(T, (1,), ["aspect_pair_correct"])]
 
     def test_an_ignored_column_is_not_a_change(self) -> None:
         store = _store()
@@ -91,7 +93,9 @@ class TestAWriteThatStaysInsideItsReachPasses:
         store[T][0].update(validation_status_id=2)
         store[T][1]["updated_at"] = "t1"
 
-        assert_only_target_changed(before, _snap(store), **DECLARED, ignore_columns=["updated_at"])
+        changes = assert_only_target_changed(before, _snap(store), **DECLARED, ignore_columns=["updated_at"])
+
+        assert [(c.table, c.key, sorted(c.columns)) for c in changes] == [(T, (1,), ["validation_status_id"])]
 
 
 class TestTheCheckCannotPassByDoingNothing:

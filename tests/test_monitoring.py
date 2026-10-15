@@ -54,40 +54,46 @@ class TestTimeoutWrapper:
         assert result == 20
 
     def test_timeout_wrapper_enforces_timeout(self):
-        """Test that timeout is enforced for slow functions"""
+        """The wrapper returns None while the wrapped call is still running, i.e. it did not wait for completion.
+
+        The wrapped function blocks on an event the test controls, so there is no wall-clock bound: if the timeout were
+        not enforced, the wrapper could only return after the event is released, and ``finished`` would already be set.
+        """
         from pyutilz.system.monitoring import timeout_wrapper
+
+        release = threading.Event()
+        finished = threading.Event()
 
         @timeout_wrapper(timeout=1)
         def slow_function():
-            time.sleep(10)
+            release.wait(timeout=30)  # safety net so a broken wrapper cannot hang the run forever
+            finished.set()
             return "should not reach here"
 
-        # Should return None when timeout occurs (decorator catches TimeoutError)
-        elapsed = []
-        for _ in range(3):
-            start = time.perf_counter()
+        try:
             result = slow_function()
-            elapsed.append(time.perf_counter() - start)
             assert result is None, "Should return None on timeout"
-        assert min(elapsed) < 2.0, f"Should timeout around 1s, best of 3 took {min(elapsed):.2f}s"
+            assert not finished.is_set(), "wrapper returned only after the wrapped call completed: timeout not enforced"
+        finally:
+            release.set()
 
     def test_timeout_wrapper_does_not_block_fast_functions(self):
-        """Test that fast functions complete before timeout"""
+        """A fast function's result is returned, and the wrapper does not sit out the (large) timeout first.
+
+        The timeout is 30s; a wrapper that waits for it returns the right value but takes ~30s. The check bounds the
+        call at half the timeout, a margin that only a timeout-length wait can exceed.
+        """
         from pyutilz.system.monitoring import timeout_wrapper
 
-        @timeout_wrapper(timeout=5)
+        @timeout_wrapper(timeout=30)
         def fast_function():
-            time.sleep(0.1)
             return "completed"
 
-        elapsed = []
-        for _ in range(3):
-            start = time.perf_counter()
-            result = fast_function()
-            elapsed.append(time.perf_counter() - start)
-            assert result == "completed"
-        # Should complete quickly, not wait for full timeout: best of 3 runs must beat a fraction of the 5s timeout.
-        assert min(elapsed) < 1.0, f"best of 3 runs took {min(elapsed):.2f}s"
+        start = time.perf_counter()
+        result = fast_function()
+        elapsed = time.perf_counter() - start
+        assert result == "completed"
+        assert elapsed < 15.0, f"wrapper waited {elapsed:.2f}s for a function that returns immediately"
 
     def test_timeout_wrapper_with_arguments(self):
         """Test that wrapped function receives arguments correctly"""
