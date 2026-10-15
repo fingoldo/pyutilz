@@ -74,17 +74,18 @@ def _conn_key(conn: Any) -> int:
 
 
 def _ensure_pool(dsn: str, pool_max: int = 8) -> psycopg2.pool.ThreadedConnectionPool:
-    """Lazily create the connection pool (thread-safe)."""
+    """Lazily create the connection pool (thread-safe).
+
+    The ``(_pool, _pool_dsn)`` pair is read and written only under ``_pool_lock`` (audit C-03):
+    a lock-free fast path could observe the two globals mid-update and raise a spurious
+    DSN-mismatch error, or return a pool that a concurrent reset had just cleared.
+    """
     global _pool, _pool_dsn
     # The DSN comparison MUST happen before returning an existing pool, otherwise a second DSN
     # silently receives connections to the first database.
-    if _pool is not None:
-        if _pool_dsn != dsn:
-            raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
-        return _pool
     with _pool_lock:
-        if _pool is not None:  # double-checked locking
-            if _pool_dsn != dsn:  # type: ignore[unreachable]  # mypy narrows the module global to None after the outer check and has no model for another thread setting it in between
+        if _pool is not None:
+            if _pool_dsn != dsn:
                 raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
             return _pool
         if _pool_dsn is not None and _pool_dsn != dsn:
@@ -94,10 +95,23 @@ def _ensure_pool(dsn: str, pool_max: int = 8) -> psycopg2.pool.ThreadedConnectio
         return _pool
 
 
-def _reset_pool() -> None:
-    """Close and discard the pool so the next access recreates it."""
+def _reset_pool(expected: Optional[Any] = None) -> None:
+    """Close and discard the pool so the next access recreates it.
+
+    With ``expected`` (a pool object, as passed by a per-call retry), the reset is a no-op when
+    another thread has already replaced that pool, or when any connection is still checked out
+    from it: closing a pool closes its checked-out connections too, which would fail other
+    threads' in-flight queries for one thread's transient error (audit C-02). The bad connection
+    the caller held has already been discarded, so the pool stays usable without the reset.
+    Without ``expected`` (``close_pool``) the pool is always torn down.
+    """
     global _pool, _pool_dsn
     with _pool_lock:
+        if expected is not None:
+            if _pool is not expected:
+                return
+            if getattr(_pool, "_used", None):
+                return
         if _pool is not None:
             try:
                 _pool.closeall()
@@ -177,7 +191,8 @@ def get_connection(dsn: str, pool_max: int = 8, max_retries: int = 3) -> Any:
                 delay = 2**attempt
                 logger.warning("DB connection failed (attempt %d/%d): %s -- retrying in %ds", attempt + 1, max_retries, sanitize_dsn(str(e)), delay)
                 time.sleep(delay)
-                _reset_pool()
+                if pool is not None:
+                    _reset_pool(expected=pool)
             else:
                 raise
     raise AssertionError("unreachable")  # loop always returns or raises

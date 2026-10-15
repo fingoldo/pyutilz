@@ -464,13 +464,22 @@ class DiskCache:
         recently-used. Touch failure is non-fatal.
         """
         path = self._key_path(key)
+        # Hold the per-key lock for the whole read (audit C-07): put() replaces the payload and then
+        # writes the sidecar under the same lock, so an unlocked reader could see a payload without
+        # its sidecar (or the old sidecar) and drop the entry that put() had just written.
+        with self._get_key_lock(key):
+            return self._read_locked(key, path, default)
+
+    def _read_locked(self, key: str, path: Path, default: Any) -> Any:
+        """Body of :meth:`get`; the caller holds the per-key lock."""
         if not path.exists():
             self.misses += 1
             return default
         try:
-            # Fail CLOSED by default: a cache file with no .sha256 sidecar is refused so a payload
-            # planted in the cache dir is never unpickled silently. See
-            # pyutilz.core.safe_pickle's allow-unverified env var for the opt-in.
+            # Fail CLOSED by default: a cache file with no .sha256 sidecar is refused. The sidecar is
+            # INTEGRITY ONLY (it is not keyed), so it does not stop a writer who can write both the
+            # payload and its sidecar into cache_dir (audit X-04). cache_dir must therefore be private
+            # to the owning user; see pyutilz.core.safe_pickle's allow-unverified env var for the opt-in.
             value = safe_load(str(path))
         except PickleVerificationError as exc:
             # Sidecar digest mismatch -- payload bytes diverged from the hash recorded at
@@ -515,7 +524,7 @@ class DiskCache:
         except OSError:
             pass
 
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: str, value: Any) -> bool:
         """Atomically write ``value`` under ``key`` and LRU-evict if over cap.
 
         Write strategy:
@@ -528,10 +537,15 @@ class DiskCache:
 
         Never raises: a write failure (unpicklable value, full volume) is logged at WARNING and
         counted in ``put_failures``; the value is simply not cached.
+
+        Returns True when the entry was stored and its sidecar written, False otherwise (audit
+        S-10), so a caller can tell a cached value from a dropped one without polling
+        ``put_failures``.
         """
         path = self._key_path(key)
         tmp_name = f"tmp_{uuid.uuid4().hex}.pkl"
         tmp_path = self.cache_dir / tmp_name
+        stored = False
         with self._get_key_lock(key):
             try:
                 # 0o600 at creation (not open()'s default 0o666 & ~umask): os.replace carries the
@@ -541,6 +555,7 @@ class DiskCache:
                 os.replace(tmp_path, path)
                 try:
                     write_sidecar(str(path))
+                    stored = True
                 except OSError as exc:
                     # A payload with no sidecar is refused (fail-closed) by the very next get(),
                     # so this is a real cache failure, not a cosmetic one.
@@ -553,13 +568,14 @@ class DiskCache:
                 # neither eviction nor total_size() accounts for.
                 self.put_failures += 1
                 logger.warning("DiskCache: put failed for key=%s: %s", key, exc)
-                return
+                return False
             finally:
                 try:
                     tmp_path.unlink()
                 except OSError:
                     pass
         self._evict_if_needed(protect=path)
+        return stored
 
     def _evict_if_needed(self, protect: Optional[Path] = None) -> None:
         """LRU-evict by payload mtime until total size <= max_size_bytes.

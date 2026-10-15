@@ -96,6 +96,14 @@ class TomlLiveConfig:
         On parse error or missing file, keeps previous data and logs a
         warning so that a typo never crashes a running pipeline.
         """
+        # Stat BEFORE reading: an edit landing between the read and the stat would otherwise be
+        # recorded as already seen and never reloaded (audit C-01). Recording the pre-read mtime
+        # means any later write carries a newer mtime and triggers the next reload.
+        pre_mtime: float | None
+        try:
+            pre_mtime = self._path.stat().st_mtime
+        except OSError:
+            pre_mtime = None
         try:
             raw = self._path.read_bytes()
             new_data = tomllib.loads(raw.decode())
@@ -121,18 +129,14 @@ class TomlLiveConfig:
             self._log.warning(
                 "Config parse error (keeping previous values): %s", exc,
             )
-            try:
-                self._mtime = self._path.stat().st_mtime
-            except OSError:
-                pass
+            if pre_mtime is not None:
+                self._mtime = pre_mtime
             return
 
         with self._lock:
             self._data = new_data
-        try:
-            self._mtime = self._path.stat().st_mtime
-        except OSError:
-            pass
+        if pre_mtime is not None:
+            self._mtime = pre_mtime
 
     def _maybe_reload(self) -> None:
         """Check mtime and reload if the file changed (debounced)."""
@@ -174,9 +178,9 @@ class TomlLiveConfig:
         returns the fallback instead of crashing.
         """
         self._maybe_reload()
-        # Avoid allocating a throwaway {} on every section miss -- use a
-        # module-level empty sentinel instead.
-        section_data = self._data.get(section)
+        # Read the reference under the lock (audit C-08); the section dict itself is only read below.
+        with self._lock:
+            section_data = self._data.get(section)
         val = section_data.get(key) if section_data is not None else None
         if val is not None:
             if isinstance(val, (list, dict)):
@@ -261,7 +265,9 @@ class TomlLiveConfig:
         non-deterministically, with no error and no way for either caller to know it lost.
         """
         with self._lock:
-            self._data = value
+            # Store a copy (audit C-08): keeping the caller's dict by reference let later
+            # mutations by the caller change the running config with no lock.
+            self._data = dict(value)
 
     # ── Change logging ─────────────────────────────────────────────────
 

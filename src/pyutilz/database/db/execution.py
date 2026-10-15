@@ -9,6 +9,7 @@ SQLAlchemy-engine raw-SQL escape hatches (``select``/``execute_alchemy``/``showc
 from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 from pyutilz.core import jsonlib
+from pyutilz.database.exceptions import SQLValidationError
 
 from ._common import (
     logger,
@@ -50,6 +51,13 @@ def get_table_fields(table: str, alias: str, prefix: str = "", suffix: str = "",
     excluded: Iterable[str] = excluding.split(",") if isinstance(excluding, str) else excluding
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table)
+    # alias, prefix and suffix are spliced into the returned select list (audit X-18), so they get
+    # the same identifier check as the table name. An empty prefix/suffix means "none".
+    validate_sql_identifier(alias)
+    if prefix:
+        validate_sql_identifier(prefix)
+    if suffix:
+        validate_sql_identifier(suffix)
     # Must use the CALLING thread's own cursor: the module-global `cur` can be rebound by another
     # thread between execute() and fetchall(), silently returning another table's description.
     local_cur = _facade.get_cursor(_facade.get_cursor_type(None, None))
@@ -222,6 +230,9 @@ def basic_db_execute(
             # if auto_commit: conn.commit()
 
         except (OperationalError, InterfaceError) as e:
+            # The named cursor declared for this attempt dies with the broken connection; close it
+            # on this branch too, not only on the InternalError and generic paths (audit R-03).
+            _close_local_named_cursor(cursor_name, local_cur)
             retry_count += 1
             if retry_count >= max_retries:
                 logger.error("Max retries (%s) exceeded for database operation (statement=%s)", max_retries, stmt_preview)
@@ -233,6 +244,7 @@ def basic_db_execute(
             continue  # Retry the operation
         except DuplicateTable as e:
             logger.warning("DuplicateTable (statement=%s): %s", stmt_preview, e)
+            _close_local_named_cursor(cursor_name, local_cur)  # audit R-03
             # conn.commit()
             # Empty list, not a bare `return`: a CREATE that collided produced no result set, which
             # is the case the docstring already documents as an empty list.
@@ -382,6 +394,22 @@ def _db_command_args_valid(mode: str, where_fields: Any, set_fields: Any) -> boo
     return True
 
 
+# One RETURNING item: "*", a column, or a table-qualified column/star. Used to validate `returning`
+# before it is spliced into SQL (audit X-07).
+_RETURNING_ITEM = r"(?:\*|[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\*))?)"
+_RETURNING_LIST_RE = re.compile(r"\s*" + _RETURNING_ITEM + r"(?:\s*,\s*" + _RETURNING_ITEM + r")*\s*\Z")
+
+
+def _validate_returning(returning: str) -> None:
+    """Reject a ``returning`` fragment that is not a plain column list (audit X-07).
+
+    ``returning`` is concatenated into the SQL text, so anything beyond identifiers, ``*`` and commas
+    (a semicolon, a comment marker, a subquery) is refused instead of being sent to the server.
+    """
+    if returning and not _RETURNING_LIST_RE.match(returning):
+        raise SQLValidationError(f"Invalid returning clause {returning!r}: expected '*' or a comma-separated list of column names.")
+
+
 def _build_dml_statement(
     mode: str,
     table_name: str,
@@ -413,6 +441,7 @@ def _build_dml_statement(
 
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table_name)
+    _validate_returning(returning)
 
     if mode == "select":
         # table_name validated above; where_fields/set_fields validated per-item in construct_templates_and_values;

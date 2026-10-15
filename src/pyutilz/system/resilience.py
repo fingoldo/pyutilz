@@ -13,10 +13,11 @@ import logging
 import random
 import threading
 import time
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +227,7 @@ class CircuitBreaker:
 
         self._lock = threading.Lock()
         with self._lock:
-            self.state = CircuitState()
+            self._state = CircuitState()
 
     def __getstate__(self) -> Dict[str, Any]:
         # threading.Lock is unpicklable; drop it and rebuild on unpickle.
@@ -238,6 +239,16 @@ class CircuitBreaker:
         self.__dict__.update(state)
         self._lock = threading.Lock()
 
+    @property
+    def state(self) -> CircuitState:
+        """Snapshot of the breaker state, copied under the lock (audit C-09).
+
+        The live object is private: mutating the returned snapshot does not change the breaker,
+        and ``reset()`` does not detach it. Change state only through the breaker's methods.
+        """
+        with self._lock:
+            return replace(self._state)
+
     def protect(self, func: _F) -> _F:
         """Decorator: wrap ``func`` so a tripped circuit raises :class:`CircuitOpenError` instead
         of attempting the call."""
@@ -246,51 +257,51 @@ class CircuitBreaker:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             """Call ``func`` unless the circuit is OPEN, tracking success/failure into the circuit's state."""
             with self._lock:
-                if self.state.is_open:
+                if self._state.is_open:
                     if self._should_attempt_reset():
                         logger.info("Circuit %s entering HALF_OPEN state", self.name)
-                        self.state.is_open = False
-                        self.state.is_half_open = True
-                        self.state.half_open_successes = 0
+                        self._state.is_open = False
+                        self._state.is_half_open = True
+                        self._state.half_open_successes = 0
                     else:
                         raise CircuitOpenError(f"Circuit {self.name} is OPEN (too many failures). Will retry in {self._time_until_reset():.0f}s")
 
-                self.state.total_calls += 1
+                self._state.total_calls += 1
 
             try:
                 result = func(*args, **kwargs)
 
                 with self._lock:
-                    if self.state.is_half_open:
-                        self.state.half_open_successes += 1
-                        if self.state.half_open_successes >= self.half_open_successes_to_close:
+                    if self._state.is_half_open:
+                        self._state.half_open_successes += 1
+                        if self._state.half_open_successes >= self.half_open_successes_to_close:
                             logger.info("Circuit %s CLOSED (recovered)", self.name)
-                            self.state.is_half_open = False
-                            self.state.failure_count = 0
-                            self.state.half_open_successes = 0
+                            self._state.is_half_open = False
+                            self._state.failure_count = 0
+                            self._state.half_open_successes = 0
                     else:
                         # CLOSED: any success breaks the failure run, so the counter really does
                         # mean "consecutive failures".
-                        self.state.failure_count = 0
+                        self._state.failure_count = 0
 
                 return result
 
             except Exception:
                 with self._lock:
-                    self.state.failure_count += 1
-                    self.state.total_failures += 1
-                    self.state.last_failure_time = datetime.now(timezone.utc)
+                    self._state.failure_count += 1
+                    self._state.total_failures += 1
+                    self._state.last_failure_time = datetime.now(timezone.utc)
 
-                    if self.state.is_half_open:
+                    if self._state.is_half_open:
                         # The probe call failed: the service has not recovered, so re-open at once
                         # rather than letting probes trickle through until the threshold is hit.
-                        self.state.is_half_open = False
-                        self.state.half_open_successes = 0
-                        self.state.is_open = True
+                        self._state.is_half_open = False
+                        self._state.half_open_successes = 0
+                        self._state.is_open = True
                         logger.error("Circuit %s re-OPEN: probe call failed while HALF_OPEN", self.name)
-                    elif self.state.failure_count >= self.failure_threshold:
-                        self.state.is_open = True
-                        logger.error("Circuit %s OPEN after %d consecutive failures", self.name, self.state.failure_count)
+                    elif self._state.failure_count >= self.failure_threshold:
+                        self._state.is_open = True
+                        logger.error("Circuit %s OPEN after %d consecutive failures", self.name, self._state.failure_count)
 
                 raise
 
@@ -298,23 +309,23 @@ class CircuitBreaker:
 
     def _should_attempt_reset(self) -> bool:
         """True if enough time passed to attempt recovery."""
-        if not self.state.last_failure_time:
+        if not self._state.last_failure_time:
             return True
-        elapsed = datetime.now(timezone.utc) - self.state.last_failure_time
+        elapsed = datetime.now(timezone.utc) - self._state.last_failure_time
         return elapsed.total_seconds() >= self.recovery_timeout_sec
 
     def _time_until_reset(self) -> float:
         """Time remaining until a reset attempt (seconds)."""
-        if not self.state.last_failure_time:
+        if not self._state.last_failure_time:
             return 0.0
-        elapsed = datetime.now(timezone.utc) - self.state.last_failure_time
+        elapsed = datetime.now(timezone.utc) - self._state.last_failure_time
         remaining = self.recovery_timeout_sec - elapsed.total_seconds()
         return max(0.0, remaining)
 
     def reset(self) -> None:
         """Manually reset the circuit breaker to CLOSED state."""
         with self._lock:
-            self.state = CircuitState()
+            self._state = CircuitState()
             logger.info("Circuit %s manually reset", self.name)
 
     def get_stats(self) -> Dict[str, Any]:
@@ -322,12 +333,12 @@ class CircuitBreaker:
         with self._lock:
             return {
                 "name": self.name,
-                "is_open": self.state.is_open,
-                "failure_count": self.state.failure_count,
-                "total_calls": self.state.total_calls,
-                "total_failures": self.state.total_failures,
-                "failure_rate": (self.state.total_failures / self.state.total_calls if self.state.total_calls > 0 else 0.0),
-                "time_until_reset": self._time_until_reset() if self.state.is_open else 0.0,
+                "is_open": self._state.is_open,
+                "failure_count": self._state.failure_count,
+                "total_calls": self._state.total_calls,
+                "total_failures": self._state.total_failures,
+                "failure_rate": (self._state.total_failures / self._state.total_calls if self._state.total_calls > 0 else 0.0),
+                "time_until_reset": self._time_until_reset() if self._state.is_open else 0.0,
             }
 
 
@@ -346,7 +357,9 @@ class DeadLetterQueue:
             # an unbounded memory leak in a long-running service.
             raise ValueError(f"DeadLetterQueue: max_size must be >= 1, got {max_size}")
         self.max_size = max_size
-        self.queue: List[Dict[str, Any]] = []
+        # deque(maxlen) evicts the oldest entry in O(1) on append (audit P-05); a list slice rebuilt
+        # the whole queue on every add once it was full.
+        self.queue: Deque[Dict[str, Any]] = deque(maxlen=max_size)
         self._lock = threading.Lock()
 
     def __getstate__(self) -> Dict[str, Any]:
@@ -371,8 +384,6 @@ class DeadLetterQueue:
                 "context": context or {},
             }
             self.queue.append(entry)
-            if len(self.queue) > self.max_size:
-                self.queue = self.queue[-self.max_size :]
             logger.error("Added to dead letter queue: %s - %s", operation, error, extra={"dlq_entry": entry})
 
     def get_all(self) -> List[Dict[str, Any]]:
@@ -387,7 +398,7 @@ class DeadLetterQueue:
             # negative n returned all but the first few. Same `[-0:]` trap already fixed for max_size.
             return []
         with self._lock:
-            return list(reversed(self.queue[-n:]))
+            return list(reversed(self.queue))[:n]
 
     def clear(self) -> None:
         """Clear the queue."""

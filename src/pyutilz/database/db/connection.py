@@ -60,6 +60,32 @@ def _get_thread_cursors() -> Dict[str, Any]:
     return cast(Dict[str, Any], _thread_local.cursors)
 
 
+def _close_replaced_connection(previous: Any, current: Any) -> None:
+    """Close the psycopg2 connection a reconnect just replaced (audit R-01); best-effort, never raises."""
+    if previous is None or previous is current:
+        return
+    try:
+        previous.close()
+    except Exception as close_exc:
+        logger.debug("closing the replaced DB connection failed: %s", close_exc)
+
+
+def _dispose_previous_engine() -> None:
+    """Dispose the SQLAlchemy engine being replaced by a reconnect (audit R-02).
+
+    Rebinding ``conn_alchemy`` without ``dispose()`` left the old engine's QueuePool holding its
+    DBAPI sockets open until garbage collection. Checked-out connections are not closed by
+    ``dispose()``; they are released when their holders return them.
+    """
+    old_engine = getattr(_facade, "conn_alchemy", None)
+    if old_engine is None:
+        return
+    try:
+        old_engine.dispose()
+    except Exception as exc:
+        logger.warning("disposing the previous SQLAlchemy engine failed: %s", exc)
+
+
 def _setup_postgres_session(
     conn: Any,
     username: Any,
@@ -80,6 +106,7 @@ def _setup_postgres_session(
     if db_schema:
         conn_string += f"&options=--search_path%3D{db_schema},public"
 
+    _dispose_previous_engine()
     _facade.conn_alchemy = _facade.sqlalchemy.create_engine(conn_string, paramstyle="format")
     # https://stackoverflow.com/questions/25917741/sqlalchemy-with-postgres-insert-into-a-table-whose-columns-have-parentheses
 
@@ -113,6 +140,7 @@ def _setup_mysql_engine(username: Any, pwd: Any, db_host: Any, db_port: Any, db_
     #!pip install pymysql
     import pymysql  # noqa: F401 -- the import IS the availability check for the engine URL built below
 
+    _dispose_previous_engine()
     _facade.conn_alchemy = _facade.sqlalchemy.create_engine(f"mysql+pymysql://{username}:{pwd}@{db_host}:{db_port}/{db_name}")
 
 
@@ -182,7 +210,11 @@ def connect_to_db(
 
                 params = _postgres_connect_params(db_name, db_host, db_port, username, pwd, db_schema, db_sslmode)
                 conn = _facade.psycopg2.connect(**params)
+                # Close the connection being replaced (audit R-01). Rebinding the global alone let
+                # the old socket live until GC; this path runs on every reconnect after a failure.
+                previous_conn = _facade.conn
                 _facade.conn = conn
+                _close_replaced_connection(previous_conn, conn)
                 conn_opened_this_iteration = True
                 _setup_postgres_session(conn, username, pwd, db_host, db_port, db_name, db_schema, db_sslmode)
             elif db_flavor == "mysql":
