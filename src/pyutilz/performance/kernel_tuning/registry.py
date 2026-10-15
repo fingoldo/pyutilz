@@ -117,7 +117,7 @@ class TunerSpec:
         try:
             return compute_code_version(*self.variant_fns, extra_fns=self.extra_fns, salt=self.salt)
         except Exception as e:
-            logger.debug("%s code_version() unavailable: %s", self.kernel_name, e)
+            logger.warning("%s code_version() unavailable: %s", self.kernel_name, e)
             return None
 
     def _fallback_choice(self, dims: dict) -> str:

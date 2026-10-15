@@ -90,14 +90,8 @@ def compute_concentrations(
         explode_keeping_empty_as_null(groupby_object.agg(entity, by), entity_name, by)
         .group_by(*groupby_columns, entity_name)
         .agg(total_by=pl.sum(by))
-        # A group whose total is 0 (or null) has no share to rank: 0/0 would be NaN and inf/NaN sort keys, so it gets 0.0.
-        .with_columns(
-            rel_total_by=pl.when(pl.sum("total_by").over(groupby_columns) != 0)
-            .then(pl.col("total_by") / pl.sum("total_by").over(groupby_columns))
-            .otherwise(0.0)
-        )
-        # A single group_by(...).agg(top_k_by(rel_total_by, top_n)) could replace the sort + head below, but head() on a
-        # maintain_order group_by is what keeps the per-group rows in the requested order.
+        # A zero or null group total has no share to rank (0/0 would be NaN), so its share is 0.0. A top_k_by group_by could replace the sort + head below; head() keeps the row order.
+        .with_columns(rel_total_by=pl.when(pl.sum("total_by").over(groupby_columns) != 0).then(pl.col("total_by") / pl.sum("total_by").over(groupby_columns)).otherwise(0.0))
         .sort(*groupby_columns, "rel_total_by" if sort_by_concentration else entity_name, descending=([False] * len(groupby_columns) + [sort_by_concentration]))
         .group_by(groupby_columns, maintain_order=True)
         .head(top_n)

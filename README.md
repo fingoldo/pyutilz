@@ -23,7 +23,7 @@ pip install pyutilz[all,dev]          # full install (recommended -- see the not
 
 pip install pyutilz                   # core only: orjson, numba, numpy, joblib, portalocker, psutil, pandas, tqdm, pympler
 pip install pyutilz[dataframes]       # pandas + pyarrow + polars
-pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql + redis
+pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql + redis + filelock
 pip install pyutilz[web]              # selenium + undetected-chromedriver + requests + grequests + fake-useragent + curl-cffi
 pip install pyutilz[cloud]            # boto3 + google-cloud-storage
 pip install pyutilz[nlp]              # spacy (>=3.10 only) + nltk + tiktoken + jellyfish + beautifulsoup4 + inflect + emoji-data-python

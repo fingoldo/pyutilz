@@ -5,7 +5,7 @@ generation from a table, and the JSON-column optimization advisor. Everything he
 through the facade's ``safe_execute``, so it carries no connection state of its own.
 """
 
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple, Union
 
 from ._common import (
     logger,
@@ -178,6 +178,27 @@ def read_unique_table_field(
     return container
 
 
+def _alternate_values_clause(alternate_fields_names: str, alternate_fields_values: Any, raw_sql: bool) -> Tuple[str, list]:
+    """Return the VALUES text for the alternate fields and the values to bind to it (audit finding X-08).
+
+    A sequence of values becomes one ``%s`` placeholder per value. A string is a raw SQL fragment and is refused unless
+    ``raw_sql`` is set, so an injectable value cannot reach the statement by accident.
+    """
+    if alternate_fields_values is None or isinstance(alternate_fields_values, str):
+        fragment = alternate_fields_values or ""
+        if fragment and not raw_sql:
+            raise TypeError(
+                "alternate_fields_values is a SQL fragment: pass the values as a sequence (bound parameters), "
+                "or set raw_sql=True to splice a trusted fragment"
+            )
+        return fragment, []
+    values = list(alternate_fields_values)
+    n_names = len([n for n in alternate_fields_names.split(",") if n])
+    if values and n_names != len(values):
+        raise ValueError(f"alternate_fields_names has {n_names} name(s) but alternate_fields_values has {len(values)} value(s)")
+    return ",".join(["%s"] * len(values)), values
+
+
 def get_id_by_key_field_and_insert_if_needed(
     dict_enums: dict,
     table: str,
@@ -185,11 +206,12 @@ def get_id_by_key_field_and_insert_if_needed(
     key_field_name: Optional[str] = "name",
     key_is_not_string: Optional[bool] = False,
     alternate_fields_names: Optional[str] = "",
-    alternate_fields_values: Optional[str] = "",
+    alternate_fields_values: Union[str, Sequence[Any], None] = "",
     unique_constraint_fields: Optional[str] = "",
     use_alternate_fields_only: Optional[bool] = False,
     id_field_name: Optional[str] = "id",
     add_updated_at_timestamp: Optional[str] = None,
+    raw_sql: bool = False,
 ) -> str:
     """Look up ``key_field_value``'s id in ``dict_enums`` (or the DB), inserting a new row if needed.
 
@@ -197,10 +219,10 @@ def get_id_by_key_field_and_insert_if_needed(
     sourced data there (``key_is_not_string`` only documents that the column is not textual; the
     value is parameterized either way).
 
-    WARNING: ``alternate_fields_values`` is spliced verbatim into the generated INSERT's VALUES
-    list (a raw SQL fragment, unvalidated) - it must NEVER be built from external/user-controlled
-    input; only pass trusted, hard-coded or internally-constructed expressions. Every identifier
-    argument is validated.
+    ``alternate_fields_values`` is a sequence of values, one per name in ``alternate_fields_names``. They are bound
+    through driver placeholders, so they are safe to pass externally sourced data (audit finding X-08). A plain string is
+    a raw SQL fragment spliced into the INSERT's VALUES list: it is refused unless ``raw_sql=True``, and it must then never
+    be built from external or user-controlled input. Every identifier argument is validated.
 
     Also importable as :func:`GetIdByKeyFieldAndInsertIfNeeded` -- a deprecated alias, same
     function, kept for backward compatibility with the legacy PascalCase/Hungarian-notation name.
@@ -223,6 +245,7 @@ def get_id_by_key_field_and_insert_if_needed(
         validate_sql_identifier(id_field_name)
         for _name in [n for n in alternate_fields_names.split(",") if n]:
             validate_sql_identifier(_name)
+        alt_fragment, alt_values = _alternate_values_clause(alternate_fields_names, alternate_fields_values, raw_sql)
         if unique_constraint_fields == "":
             unique_constraint_fields = key_field_name
         for _name in [n for n in unique_constraint_fields.split(",") if n]:
@@ -241,12 +264,13 @@ def get_id_by_key_field_and_insert_if_needed(
         if len(alternate_fields_names) > 0:
             if not use_alternate_fields_only:
                 rs = _facade.safe_execute(
-                    f"insert into {table} ({key_field_name} , {alternate_fields_names}) values (%s,{alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}",  # nosec B608
-                    (bound_key_value,),
+                    f"insert into {table} ({key_field_name} , {alternate_fields_names}) values (%s,{alt_fragment}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}",  # nosec B608
+                    (bound_key_value, *alt_values),
                 )
             else:
                 rs = _facade.safe_execute(
-                    f"insert into {table} ({alternate_fields_names}) values ({alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(alternate_fields_names, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+                    f"insert into {table} ({alternate_fields_names}) values ({alt_fragment}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(alternate_fields_names, add_updated_at_timestamp)} returning {id_field_name}",  # nosec B608
+                    tuple(alt_values),
                 )
         else:
             rs = _facade.safe_execute(

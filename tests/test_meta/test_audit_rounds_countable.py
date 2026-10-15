@@ -49,6 +49,23 @@ def test_every_finding_in_a_dispositioned_round_has_a_disposition():
     assert not problems, "findings that cannot be counted:\n  " + "\n  ".join(problems)
 
 
+def _remove_empty_leftover_rounds(audits: Path) -> list[str]:
+    """Remove empty round folders left behind by a move. Returns the ones that could not be removed (locked on Windows)."""
+    stuck = []
+    for folder in sorted(audits.iterdir()):
+        if folder.is_dir() and folder.name != "implemented" and not any(folder.iterdir()):
+            try:
+                folder.rmdir()
+            except OSError as exc:
+                stuck.append(f"{folder.name} ({exc.strerror or exc})")
+    return stuck
+
+
 def test_rounds_are_filed_where_their_state_says():
-    """A fully closed round lives in audits/implemented/, and a filed round has no open row."""
+    """A fully closed round lives in audits/implemented/, and a filed round has no open row.
+
+    An empty folder left behind by a move is removed here first. If Windows still holds it open, the gate fails and
+    names the folder: the commit cannot pass until the folder is gone."""
+    stuck = _remove_empty_leftover_rounds(AUDITS)
+    assert not stuck, "empty audit round folders that could not be removed (another process holds them; reboot or close it, then rerun): " + "; ".join(stuck)
     assert_rounds_filed(AUDITS, known=KNOWN_FILING_PROBLEMS, min_trackers=0)

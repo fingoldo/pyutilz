@@ -91,7 +91,7 @@ class S3Backend(RemoteBackend):
             obj = client.get_object(Bucket=self.bucket, Key=self._key(fingerprint))
             return orjson.loads(obj["Body"].read())  # type: ignore[no-any-return]  # orjson.loads returns Any by design (arbitrary JSON)
         except Exception as e:  # NoSuchKey, network, parse -- all degrade to miss
-            logger.debug("S3Backend.read(%s) miss/error: %s", fingerprint, e)
+            logger.warning("S3Backend.read(%s) miss/error: %s", fingerprint, e)
             return None
 
     def write(self, fingerprint: str, payload: dict) -> bool:
@@ -110,7 +110,7 @@ class S3Backend(RemoteBackend):
             )
             return True
         except Exception as e:
-            logger.debug("S3Backend.write(%s) error: %s", fingerprint, e)
+            logger.warning("S3Backend.write(%s) error: %s", fingerprint, e)
             return False
 
 

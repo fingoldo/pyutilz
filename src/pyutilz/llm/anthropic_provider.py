@@ -609,7 +609,7 @@ class AnthropicProvider(LLMProvider):
         try:
             mapping = dict(headers) if headers is not None else {}
         except Exception as exc:
-            logger.debug("Anthropic response-header capture failed: %s", exc)
+            logger.warning("Anthropic response-header capture failed: %s", exc)
             return
         # Lower-case the keys for case-insensitive lookup downstream.
         lower = {k.lower(): v for k, v in mapping.items()}

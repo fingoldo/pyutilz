@@ -56,7 +56,8 @@ def download_in_parallel(
         try:
             require_http_url(sub_url)
         except UnsafeURLError:  # noqa: PERF203 -- per-URL validation, one check per entry is intentional
-            logger.warning("download_in_parallel: skipping non-http(s) URL %r", sub_url)
+            if _error_log_throttle(len(errored_urls), _MAX_LOGGED_ERRORS):
+                logger.warning("download_in_parallel: skipping non-http(s) URL %r", sub_url)
             errored_urls.append(sub_url)
         else:
             fetchable.append(sub_url)

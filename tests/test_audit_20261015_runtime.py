@@ -230,12 +230,16 @@ def test_r02_previous_engine_is_disposed(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_r02_dispose_failure_is_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
+    disposed = []
+
     class _Broken:
         def dispose(self) -> None:
+            disposed.append(True)
             raise RuntimeError("socket already gone")
 
     monkeypatch.setattr(db_facade, "conn_alchemy", _Broken(), raising=False)
     connection_mod._dispose_previous_engine()  # must not raise
+    assert disposed == [True], "the previous engine must be disposed, and the failure swallowed"
 
 
 # ── R-03: named cursor closed on the OperationalError retry branch ─────────────

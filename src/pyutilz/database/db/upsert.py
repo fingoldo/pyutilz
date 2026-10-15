@@ -294,6 +294,7 @@ def build_upsert_query(
     history_fields_aliases: Optional[dict] = None,
     hash_fields: Optional[Iterable[str]] = "",
     default_timestamp: str = "now()",
+    raw_sql: bool = False,
 ) -> str:
     """
     Inserts new records or Updates fields in a Postgres table
@@ -301,7 +302,8 @@ def build_upsert_query(
 
     WARNING: ``default_timestamp``, ``custom_onconflict`` and the values of
     ``on_conflict_update_values`` are spliced verbatim into the generated statement (raw SQL
-    fragments, unvalidated). They must NEVER be built from external/user-controlled input; only
+    fragments, unvalidated). ``custom_onconflict`` and ``on_conflict_update_values`` are refused unless ``raw_sql=True``
+    is passed (audit finding X-09). They must NEVER be built from external/user-controlled input; only
     pass trusted, hard-coded or internally-constructed expressions. Every other argument is
     validated as a SQL identifier.
 
@@ -319,6 +321,7 @@ def build_upsert_query(
         returning_fields: Columns for the RETURNING clause; replaced by the history-comparison fields when history_table_name is set.
         history_table_name: Optional history table that receives changed rows.
         history_fields: Fields copied into the history table.
+        raw_sql: Must be True to pass ``custom_onconflict`` or ``on_conflict_update_values``; the default refuses them.
         history_fields_aliases: Mapping of history field name to the column name used in the history table.
         hash_fields: Fields whose hash is compared between new and old records to detect a change. A bare str names a single field.
         default_timestamp: the SQL expression written for every timestamp_check_field in the insert's
@@ -333,6 +336,9 @@ def build_upsert_query(
     history_fields_aliases = {} if history_fields_aliases is None else history_fields_aliases
     on_conflict_update_fields = [] if on_conflict_update_fields is None else on_conflict_update_fields
     on_conflict_update_values = {} if on_conflict_update_values is None else on_conflict_update_values
+    if (custom_onconflict or on_conflict_update_values) and not raw_sql:
+        # X-09: these are spliced into the statement verbatim. Refused unless the caller says it is passing trusted SQL.
+        raise TypeError("custom_onconflict and on_conflict_update_values are raw SQL fragments: pass raw_sql=True for trusted input")
     returning_fields = [] if returning_fields is None else returning_fields
     skip_fields = [] if skip_fields is None else skip_fields
     timestamp_check_fields = [] if timestamp_check_fields is None else timestamp_check_fields

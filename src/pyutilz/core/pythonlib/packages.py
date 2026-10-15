@@ -36,7 +36,7 @@ def _install_each(packages_to_install: list[str]) -> list[str]:
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])  # nosec B603 - sys.executable is the running interpreter's own path (not attacker-controlled), and pkg names come from ensure_installed's own `packages` argument (developer-supplied dependency list), not from untrusted/network input. Using `sys.executable -m pip` (rather than a bare "pip" resolved via PATH search order) guarantees installation into the running interpreter's own environment and avoids Windows' CWD-before-PATH executable search order picking up an attacker-planted pip.exe/pip.bat.
         except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one failed install shouldn't abort the rest)
-            logger.warning("Failed to install package %s: %s", pkg, e)
+            logger.warning("Failed to install package %s: %s", pkg, e)  # audit-exempt: unthrottled_hot_loop_log -- one line per package the caller asked to install; the list is short by construction
             failed_packages.append(pkg)
     return failed_packages
 

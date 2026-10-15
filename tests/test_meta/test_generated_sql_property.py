@@ -220,7 +220,8 @@ def check_upsert_grid(builder: Callable[..., str]) -> int:
 
 
 def test_build_upsert_query_option_space_emits_valid_bounded_sql() -> None:
-    built = check_upsert_grid(build_upsert_query)
+    # The grid passes raw fragments on purpose; raw_sql=True is the explicit opt-in for them (audit finding X-09).
+    built = check_upsert_grid(lambda **kwargs: build_upsert_query(raw_sql=True, **kwargs))
     # Guards against the sweep silently degenerating into "every combination was refused", which
     # would make the invariants above vacuous while the test still went green.
     assert built > 100, f"only {built} of the grid's combinations produced a query -- the sweep is no longer exercising the builder"

@@ -365,7 +365,7 @@ def _free_bytes_via_cupy(device_id: Optional[int], include_pool: bool = False) -
         logger.debug("cupy memGetInfo runtime error: %s", e)
         return None
     except Exception as e:
-        logger.debug("cupy memGetInfo failed: %s", e)
+        logger.warning("cupy memGetInfo failed: %s", e)
         return None
 
 
@@ -379,7 +379,7 @@ def _pool_free_bytes(device_id: Optional[int]) -> int:
                 return int(cp.get_default_memory_pool().free_bytes())
         return int(cp.get_default_memory_pool().free_bytes())
     except Exception as e:  # swallow-ok: no cupy / no device -> nothing pooled
-        logger.debug("cuda_memory_guard: pool free_bytes probe failed: %s", e)
+        logger.warning("cuda_memory_guard: pool free_bytes probe failed: %s", e)
         return 0
 
 
@@ -559,7 +559,7 @@ def query_cuda_device_attribute(name_or_code: "str | int", device_id: int = 0) -
         _drv.driver.cuDeviceGetAttribute(byref(result), code, device.id)
         return int(result.value)
     except Exception:
-        logger.debug("query_cuda_device_attribute: driver refused attribute %s", name_or_code, exc_info=True)
+        logger.warning("query_cuda_device_attribute: driver refused attribute %s", name_or_code, exc_info=True)
         return None
 
 

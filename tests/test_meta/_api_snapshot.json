@@ -58,7 +58,7 @@
       "ReadTableIntoDic": "callable(dicEnums:any:0:, sTable:any:0:, sKeyFieldName:any:1:'name', sCondition:any:1:'', sIdFieldName:any:1:'id', sAutocreateIdTypeName:any:1:None)",
       "ReadTableIntoDicReversed": "callable(dicEnums:any:0:, sTable:any:0:, sKeyFieldName:any:1:'name', sCondition:any:1:'', sIdFieldName:any:1:'id', sAutocreateIdTypeName:any:1:None)",
       "basic_db_execute": "callable(ex_type:any:0:, statement:any:0:, data:any:1:None, auto_commit:any:1:True, cursor_factory:any:1:None, cursor_name:any:1:None, return_cursor:any:1:False, itersize:any:1:None, page_size:any:1:1000000, max_retries:any:1:5)",
-      "build_upsert_query": "callable(fields_names:any:0:, table_name:any:0:, conflict_fields:any:1:None, fields_types:any:1:None, skip_fields:any:1:None, timestamp_check_fields:any:1:None, timestamp_update_fields:any:1:None, on_conflict_update_fields:any:1:None, on_conflict_update_values:any:1:None, custom_onconflict:any:1:None, returning_fields:any:1:None, history_table_name:any:1:None, history_fields:any:1:None, history_fields_aliases:any:1:None, hash_fields:any:1:'', default_timestamp:any:1:'now()')",
+      "build_upsert_query": "callable(fields_names:any:0:, table_name:any:0:, conflict_fields:any:1:None, fields_types:any:1:None, skip_fields:any:1:None, timestamp_check_fields:any:1:None, timestamp_update_fields:any:1:None, on_conflict_update_fields:any:1:None, on_conflict_update_values:any:1:None, custom_onconflict:any:1:None, returning_fields:any:1:None, history_table_name:any:1:None, history_fields:any:1:None, history_fields_aliases:any:1:None, hash_fields:any:1:'', default_timestamp:any:1:'now()', raw_sql:any:1:False)",
       "check_if_pg_table_exists": "callable(table_name:any:0:, schema_name:any:1:'public')",
       "conn": "value",
       "conn_alchemy": "value",
@@ -85,7 +85,7 @@
       "fetch_db_elements": "callable(self:any:0:, elements:any:0:, fields:any:0:, indices:any:1:None, prefix:any:1:'')",
       "get_cursor": "callable(cursor_type:any:0:, cursor_factory:any:1:None, cursor_name:any:1:None, itersize:any:1:None)",
       "get_cursor_type": "callable(cursor_factory:any:0:, cursor_name:any:1:None)",
-      "get_id_by_key_field_and_insert_if_needed": "callable(dict_enums:any:0:, table:any:0:, key_field_value:any:0:, key_field_name:any:1:'name', key_is_not_string:any:1:False, alternate_fields_names:any:1:'', alternate_fields_values:any:1:'', unique_constraint_fields:any:1:'', use_alternate_fields_only:any:1:False, id_field_name:any:1:'id', add_updated_at_timestamp:any:1:None)",
+      "get_id_by_key_field_and_insert_if_needed": "callable(dict_enums:any:0:, table:any:0:, key_field_value:any:0:, key_field_name:any:1:'name', key_is_not_string:any:1:False, alternate_fields_names:any:1:'', alternate_fields_values:any:1:'', unique_constraint_fields:any:1:'', use_alternate_fields_only:any:1:False, id_field_name:any:1:'id', add_updated_at_timestamp:any:1:None, raw_sql:any:1:False)",
       "get_table_fields": "callable(table:any:0:, alias:any:0:, prefix:any:1:'', suffix:any:1:'', excluding:any:1:'')",
       "init_params_fn": "value",
       "insert_sqllite_data": "callable(table_name:any:0:, data:any:0:, columns:any:0:, cursor:any:0:, conn:any:0:, verbose:any:1:1)",
@@ -357,7 +357,7 @@
       "keys_changed_enough": "callable(obj:any:0:, prev_obj:any:0:, min_change_percent:any:1:10.0, key_contains:any:1:None)",
       "list_is_non_decreasing": "callable(lst:any:0:)",
       "list_is_non_increasing": "callable(lst:any:0:)",
-      "load_file": "callable(fpath:any:0:, unpickle_to_pd:any:1:True, kwargs:**kw:0:)",
+      "load_file": "callable(fpath:any:0:, unpickle_to_pd:any:1:True, allow_unverified:kw:1:None, kwargs:**kw:0:)",
       "load_object_params_into_func": "callable(obj:any:0:, locals:any:0:, postfix:any:1:'_param_')",
       "logger": "value",
       "lookup_in_stack": "callable(variable:any:0:)",
@@ -386,7 +386,7 @@
       "logger": "value",
       "serialize": "callable(obj:any:0:, fname:any:1:None, compression:any:1:9)",
       "str_to_class": "callable(classname:any:0:)",
-      "unserialize": "callable(obj:any:0:, compression:any:1:9, verify_sidecar:any:1:False, max_output_bytes:any:1:4294967296)"
+      "unserialize": "callable(obj:any:0:, compression:any:1:9, verify_sidecar:any:1:True, max_output_bytes:any:1:4294967296)"
     },
     "similarity": {
       "HAS_NUMBA": "value",
@@ -441,7 +441,7 @@
       "parse_html": "callable(text:any:0:, sep:any:1:'. ')",
       "parse_tokens": "callable(notation:any:0:, start_token:any:1:'[%clk ', end_token:any:1:']')",
       "punctuation": "value",
-      "read_config_file": "callable(file:any:0:, object:any:0:, section:any:1:None, variables:any:1:None, encryption:any:1:'xor')",
+      "read_config_file": "callable(file:any:0:, object:any:0:, section:any:1:None, variables:any:1:None, encryption:any:1:'base64')",
       "remove_json_attributes": "callable(json_obj:any:0:, attributes:any:0:)",
       "remove_json_defaults": "callable(json_obj:any:0:, attr_values:any:1:None, warn_if_not_default:any:1:False, obj_id:any:1:'')",
       "remove_json_empty_attributes": "callable(json_obj:any:0:, attributes:any:0:)",
@@ -463,7 +463,7 @@
       "underscorize_variable": "callable(var:any:0:)",
       "unescape_html": "callable(text:any:0:)",
       "unicode_emojies": "value",
-      "write_config_file": "callable(file:any:0:, object:any:0:, section:any:1:'MAIN', variables:any:1:None, encryption:any:1:'xor', mode:any:1:'append')"
+      "write_config_file": "callable(file:any:0:, object:any:0:, section:any:1:'MAIN', variables:any:1:None, encryption:any:1:'base64', mode:any:1:'append')"
     },
     "strings": {
       "ascii_emojies": "value",
@@ -503,7 +503,7 @@
       "parse_html": "callable(text:any:0:, sep:any:1:'. ')",
       "parse_tokens": "callable(notation:any:0:, start_token:any:1:'[%clk ', end_token:any:1:']')",
       "punctuation": "value",
-      "read_config_file": "callable(file:any:0:, object:any:0:, section:any:1:None, variables:any:1:None, encryption:any:1:'xor')",
+      "read_config_file": "callable(file:any:0:, object:any:0:, section:any:1:None, variables:any:1:None, encryption:any:1:'base64')",
       "remove_json_attributes": "callable(json_obj:any:0:, attributes:any:0:)",
       "remove_json_defaults": "callable(json_obj:any:0:, attr_values:any:1:None, warn_if_not_default:any:1:False, obj_id:any:1:'')",
       "remove_json_empty_attributes": "callable(json_obj:any:0:, attributes:any:0:)",
@@ -525,7 +525,7 @@
       "underscorize_variable": "callable(var:any:0:)",
       "unescape_html": "callable(text:any:0:)",
       "unicode_emojies": "value",
-      "write_config_file": "callable(file:any:0:, object:any:0:, section:any:1:'MAIN', variables:any:1:None, encryption:any:1:'xor', mode:any:1:'append')"
+      "write_config_file": "callable(file:any:0:, object:any:0:, section:any:1:'MAIN', variables:any:1:None, encryption:any:1:'base64', mode:any:1:'append')"
     },
     "tokenizers": {
       "_excluded": "optional packages spacy and nltk"

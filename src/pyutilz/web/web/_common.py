@@ -105,7 +105,7 @@ def _parse_retry_after(res: Any) -> Optional[float]:
     try:
         raw = res.headers.get("Retry-After")
     except Exception as e:
-        logger.debug("Response object exposes no readable headers mapping (%s); ignoring Retry-After.", e)
+        logger.warning("Response object exposes no readable headers mapping (%s); ignoring Retry-After.", e)
         return None
     if not raw:
         return None

@@ -133,6 +133,7 @@ class TestBuildUpsertQueryTestGapCoverage:
             table_name="mytable",
             conflict_fields=["id"],
             on_conflict_update_fields=["name"],  # would normally trigger auto-generation
+            raw_sql=True,  # custom_onconflict is raw SQL by design (audit finding X-09)
             custom_onconflict=custom,
         )
         assert custom in query

@@ -213,7 +213,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         try:
             mapping = {k.lower(): v for k, v in dict(headers).items()}
         except Exception as e:
-            logger.debug("Could not parse response headers for rate-limit capture: %s", e)
+            logger.warning("Could not parse response headers for rate-limit capture: %s", e)
             return
         # Assigned unconditionally: the snapshot describes THIS response, so a response carrying
         # no rate-limit headers must read as "none", not silently keep the previous call's window.

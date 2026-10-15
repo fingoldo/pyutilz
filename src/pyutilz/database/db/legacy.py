@@ -91,6 +91,7 @@ def GetIdByKeyFieldAndInsertIfNeeded(
         key_is_not_string=bKeyIsNotString,
         alternate_fields_names=sAlternateFieldsNames,
         alternate_fields_values=sAlternateFieldsValues,
+        raw_sql=True,  # the legacy API always took a raw fragment here; the deprecated name keeps that contract
         unique_constraint_fields=sUniqueConstraintFields,
         use_alternate_fields_only=bUseAlternateFieldsOnly,
         id_field_name=sIdFieldName,

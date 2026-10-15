@@ -458,7 +458,7 @@ def _rank_mean(candidates: "dict[str, Callable]", names: "list[str]", reps: int,
                 synchronize_gpu_if_available()
             out[name] = (timer() - t0) / reps * 1e3
         except Exception as exc:
-            logger.warning("_rank_mean: candidate %r raised, scored as infinitely slow: %s: %s", name, type(exc).__name__, exc)
+            logger.warning("_rank_mean: candidate %r raised, scored as infinitely slow: %s: %s", name, type(exc).__name__, exc)  # audit-exempt: unthrottled_hot_loop_log -- one line per candidate of one ranking call; candidates are a short, caller-supplied list
             out[name] = float("inf")
     return out
 

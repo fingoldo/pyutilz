@@ -74,7 +74,7 @@ def _current_device_id() -> int:
         import cupy as cp
         return int(cp.cuda.runtime.getDevice())
     except Exception as e:
-        logger.debug("Current CUDA device probe failed (%s), falling back to device 0", e)
+        logger.warning("Current CUDA device probe failed (%s), falling back to device 0", e)
         return 0
 
 
@@ -190,7 +190,7 @@ def _one_dist_version(name: str) -> Optional[str]:
 
         return _token(metadata.version(name))
     except Exception as e:
-        logger.debug("distribution %s version unavailable (%s)", name, e)
+        logger.warning("distribution %s version unavailable (%s)", name, e)
         return None
 
 
@@ -263,7 +263,7 @@ def _hw_fp_path() -> Optional[str]:
     try:
         return os.path.join(cache_dir(), _HW_FP_DISK_FILENAME)
     except Exception as e:
-        logger.debug("Could not resolve on-disk hw-fingerprint path (%s), skipping disk cache", e)
+        logger.warning("Could not resolve on-disk hw-fingerprint path (%s), skipping disk cache", e)
         return None
 
 
@@ -552,7 +552,7 @@ def _safe_version(import_name: str, attr: str = "__version__") -> Optional[str]:
         mod = __import__(import_name)
         return str(getattr(mod, attr, None))
     except Exception as e:
-        logger.debug("Could not read %s.%s (%s), version omitted from provenance", import_name, attr, e)
+        logger.warning("Could not read %s.%s (%s), version omitted from provenance", import_name, attr, e)
         return None
 
 
@@ -688,7 +688,7 @@ def _async_sweep_hw_busy() -> bool:
         from ..benchmark import hardware_busy
         return hardware_busy()
     except Exception as e:
-        logger.debug("hardware_busy() probe failed (%s), treating hardware as idle", e)
+        logger.warning("hardware_busy() probe failed (%s), treating hardware as idle", e)
         return False
 
 # Process-scoped "tuned this run" guard, keyed on (kernel_name, cache_path), so

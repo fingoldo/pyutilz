@@ -184,6 +184,16 @@ def _collect_frames(
     return lst, fnames
 
 
+def _try_remove_source(filename: str) -> bool:
+    """Remove one already-concatenated source file. False when it stays on disk (permissions, in use); logged at DEBUG."""
+    try:
+        os.remove(filename)
+        return True
+    except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; the caller reports what stayed behind
+        logger.warning("Failed to remove source file %s after concat: %s", filename, e)
+        return False
+
+
 def _flush_and_cleanup(
     lst: list,
     fnames: list,
@@ -203,13 +213,7 @@ def _flush_and_cleanup(
     if res is not None:
         logger.info("Final df size (%s rows)", len(res))
     if delete_after:
-        left_behind: list[str] = []
-        for filename in fnames:
-            try:
-                os.remove(filename)
-            except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; a failed remove (e.g. permissions/in-use) shouldn't abort the already-computed result  # noqa: PERF203 -- per-iteration fault isolation is intentional
-                logger.debug("Failed to remove source file %s after concat: %s", filename, e)
-                left_behind.append(filename)
+        left_behind = [filename for filename in fnames if not _try_remove_source(filename)]
         if left_behind:
             logger.warning("%d source file(s) could not be removed after the concat and are still on disk, e.g. %s", len(left_behind), left_behind[0])
     return res

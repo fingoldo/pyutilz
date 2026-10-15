@@ -23,7 +23,8 @@ def test_mem_map_array_tolerates_the_file_vanishing_before_unlink():
 
     with patch.object(parallel.os, "unlink", side_effect=vanish_then_unlink):
         parallel.mem_map_array(arr, "race_probe")
-        parallel.mem_map_array(arr, "race_probe")  # the second call finds the first file and removes it
+        mapped = parallel.mem_map_array(arr, "race_probe")  # the second call finds the first file and removes it
+    np.testing.assert_array_equal(np.asarray(mapped), arr)  # the mapping that came back holds the array written
 
 
 def test_benchmark_cleans_its_temp_folder_when_interrupted(tmp_path, monkeypatch):

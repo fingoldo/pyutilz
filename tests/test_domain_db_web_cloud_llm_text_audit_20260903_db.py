@@ -248,12 +248,12 @@ def test_get_id_by_key_field_binds_the_key_value_with_alternate_fields(monkeypat
 
     monkeypatch.setattr(db, "safe_execute", fake_safe_execute)
 
-    the_id = db.get_id_by_key_field_and_insert_if_needed({}, "colors", "red'; drop table t--", alternate_fields_names="shade", alternate_fields_values="'dark'")
+    the_id = db.get_id_by_key_field_and_insert_if_needed({}, "colors", "red'; drop table t--", alternate_fields_names="shade", alternate_fields_values=["dark"])
 
     assert the_id == 9
-    assert "values (%s,'dark')" in captured["sql"]
+    assert "values (%s,%s)" in captured["sql"]
     assert "drop table" not in captured["sql"]
-    assert captured["data"] == ("red'; drop table t--",)
+    assert captured["data"] == ("red'; drop table t--", "dark")  # the alternate value is bound too (audit finding X-08)
 
 
 # ---------------------------------------------------------------------------
