@@ -321,11 +321,11 @@ def build_upsert_query(
         returning_fields: Columns for the RETURNING clause; replaced by the history-comparison fields when history_table_name is set.
         history_table_name: Optional history table that receives changed rows.
         history_fields: Fields copied into the history table.
-        raw_sql: Must be True to pass ``custom_onconflict`` or ``on_conflict_update_values``; the default refuses them.
         history_fields_aliases: Mapping of history field name to the column name used in the history table.
         hash_fields: Fields whose hash is compared between new and old records to detect a change. A bare str names a single field.
         default_timestamp: the SQL expression written for every timestamp_check_field in the insert's
             select list (default ``now()``).
+        raw_sql: Must be True to pass ``custom_onconflict`` or ``on_conflict_update_values``; the default refuses them.
 
     Returns:
         The SQL statement text, with the ``%s`` placeholder for the VALUES list.
