@@ -212,17 +212,17 @@ class TestReadStatsEdgeCases:
         assert len(result) == 1
         assert os.path.exists(fpath)  # deletion failed (PermissionError swallowed), file must survive
 
-    def test_concat_exception_returns_none(self, tmp_path):
-        """Lines 486-487: exception during concat returns None."""
+    def test_concat_exception_is_raised_not_swallowed(self, tmp_path):
+        """A failing concat must reach the caller: returning None would look like "no files" (audit finding S-03)."""
         df = pd.DataFrame({"v": [1]})
         df.to_pickle(str(tmp_path / "f.pckl"))
         with patch("pyutilz.data.pandaslib.concat_and_flush_df_list", side_effect=ValueError("bad")):
-            result = read_stats_from_multiple_files(
-                joint_file_name=str(tmp_path / "joint"),
-                folder=str(tmp_path),
-                template="f*.pckl",
-            )
-        assert result is None
+            with pytest.raises(ValueError, match="bad"):
+                read_stats_from_multiple_files(
+                    joint_file_name=str(tmp_path / "joint"),
+                    folder=str(tmp_path),
+                    template="f*.pckl",
+                )
 
 
 # ---------------------------------------------------------------------------
