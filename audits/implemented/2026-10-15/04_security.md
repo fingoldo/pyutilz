@@ -40,7 +40,7 @@ Counts: P0 0, P1 0, P2 4 (X-01 to X-04), P3 14 (X-05 to X-18).
 - X-04: WON'T FIX. owner decision: keep the integrity-only sidecar; cache_dir must be private (documented). Keyed HMAC not needed
 - X-07: RESOLVED. `src/pyutilz/database/db/execution.py` `_validate_returning` (called from `_build_dml_statement`) accepts only `*` or a comma-separated list of (optionally table-qualified) identifiers; anything else raises `SQLValidationError`. Tests: `test_x07_*`.
 - X-08: DEFERRED. `src/pyutilz/database/db/schema.py` `alternate_fields_values` is unchanged. Question for owner: change the parameter to bound values with `%s` placeholders (breaks callers that pass raw SQL), or keep the raw escape hatch documented?
-- X-09: DEFERRED. `src/pyutilz/database/db/upsert.py` unchanged. Same question as X-08 for `custom_onconflict` and `on_conflict_update_values`.
+- X-09: WON'T FIX. build_upsert_query takes no data values, only identifiers and SQL fragments (custom_onconflict, on_conflict_update_values expressions, default_timestamp), so there is nothing to bind; a return of (sql, params) would bind nothing. No caller exists outside pyutilz, so compatibility is not the constraint. Safety rests on the raw_sql=True gate (refuses raw fragments by default) and on identifier validation; checking expressions for safety was rejected because blocklists are bypassable. Owner decision applied.
 - X-10: WON'T FIX. owner decision: keep the documented raw WHERE fragment for a trusted caller; no blocklist
 - X-11: WON'T FIX. owner decision: same as X-10 for read_table_into_dict and its reversed variant
 - X-18: RESOLVED. `execution.py` `get_table_fields` validates `alias`, and `prefix`/`suffix` when non-empty, with `validate_sql_identifier` before any query. Tests: `test_x18_*`.
@@ -55,7 +55,7 @@ Counts: P0 0, P1 0, P2 4 (X-01 to X-04), P3 14 (X-05 to X-18).
 - X-06: RESOLVED. load_tokens verifies sha256 sidecar
 - X-07: RESOLVED. returning validated
 - X-08: DEFERRED. alternate_fields_values raw SQL: API change to bound values, owner decides
-- X-09: DEFERRED. custom_onconflict raw SQL: API change, owner decides
+- X-09: WON'T FIX. build_upsert_query takes no data values, only identifiers and SQL fragments (custom_onconflict, on_conflict_update_values expressions, default_timestamp), so there is nothing to bind; a return of (sql, params) would bind nothing. No caller exists outside pyutilz, so compatibility is not the constraint. Safety rests on the raw_sql=True gate (refuses raw fragments by default) and on identifier validation; checking expressions for safety was rejected because blocklists are bypassable. Owner decision applied.
 - X-10: WON'T FIX. owner decision: keep the documented raw WHERE fragment for a trusted caller; no blocklist
 - X-11: WON'T FIX. owner decision: same as X-10 for read_table_into_dict and its reversed variant
 - X-12: RESOLVED. lock file in a per-user directory

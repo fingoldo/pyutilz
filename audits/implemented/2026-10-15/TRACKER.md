@@ -41,7 +41,7 @@ One row per finding. Statuses: RESOLVED (fixed; regression test where a test can
 | **RESOLVED** | P3 | `X-06` | `load_tokens` unpickles a caller-named gzip file. The "same trust as the writer" claim is unchecked: the writer's output |
 | **RESOLVED** | P3 | `X-07` | `returning` is concatenated into SQL with no validation (comment at :418-419 calls it an "accepted raw fragment"). Ident |
 | **DEFERRED** | P3 | `X-08` | `alternate_fields_values` is raw SQL inside the insert, unvalidated. The comment at :240 says so, and the docstring has  |
-| **DEFERRED** | P3 | `X-09` | `custom_onconflict` is returned verbatim into the statement with no validation, and `on_conflict_update_values` entries  |
+| **WON'T FIX** | P3 | `X-09` | `custom_onconflict` is returned verbatim into the statement with no validation, and `on_conflict_update_values` entries  |
 | **WON'T FIX** | P3 | `X-10` | `condition` is spliced verbatim into `SELECT`. The WARNING docstring (:660-663) says so, so this is a documented escape  |
 | **WON'T FIX** | P3 | `X-11` | `read_table_into_dict` and `read_table_into_dict_reversed` splice `condition` into SELECT. The docstrings (:106-109, :13 |
 | **RESOLVED** | P3 | `X-12` | The lock file is `tempfile.gettempdir()/sha256(path).lock`, a predictable name in a shared directory, with no per-user s |
