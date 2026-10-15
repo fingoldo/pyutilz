@@ -16,3 +16,14 @@ Scope: read-only review of numeric and dtype handling in `src/pyutilz`, concentr
 Version note: the Float32/Float64 difference the repo found between polars 1.0 and later was not reproduced in these files. The code that casts to Float32 (`columns.py:130`, `dtypes.py:559`, `aggregations.py:990`) is not version-gated. N-08 is the only version-dependent numeric path found.
 
 Verdict: no P0 or P1 defects found in the sampled numeric code. The most important items are N-01 (a silent all-NaN or all-zero binning result on -inf input) and N-02 (silent int-to-float32 precision loss in the pandas and polars helpers, with inconsistent guards). The rest are guard gaps (N-03 to N-07) and one version-dependent comment (N-08). Several areas already carry explicit guards that were checked and found correct: `_float_precision_ok` mantissa handling, `dagostino_k2` and `anderson_darling_normal` small-n returns, `clean_numeric` null/NaN separation, `_resolve_bin_dtype` widening, and the zero-variance short-circuit in `normality_verdict`.
+
+## Disposition (round close, 2026-10-15)
+
+- N-01: RESOLVED. clipping off no longer yields inf bins
+- N-02: RESOLVED. float64 to float32 cast guarded
+- N-03: RESOLVED. Int64 minimum handled in overflow check
+- N-04: RESOLVED. zero group totals guarded
+- N-05: WON'T FIX. zero-sum weights falling back to nans_filler is the documented contract of add_weighted_aggregates
+- N-06: RESOLVED. zero counts skipped in entropy
+- N-07: RESOLVED. docstring states the no-NaN contract of the njit kernels; kernels unchanged
+- N-08: DEFERRED. needs a test matrix across polars release lines; only 1.41.2 installed

@@ -19,7 +19,7 @@ Scope: read-only audit of `src/pyutilz` (about 270 modules) for broad or bare `e
 | S-13 | src/pyutilz/cloud/cloud.py:158-165 (model download loop) | P3 | A persistent download error is logged at ERROR and retried after a sleep, with no retry limit. | The caller's loop does not return; it runs until the operator stops it. This is loud, but it has no give-up path, unlike the other retry sites in this repo. | Add a bounded retry count and raise after it. **Disposition: RESOLVED.** `cloud.py`: `get_from_s3_or_cache` counts consecutive download failures and raises `RuntimeError` after `_MAX_DOWNLOAD_ATTEMPTS` (5); `_download_model_from_s3` now re-raises after its ERROR log. The not-found-in-bucket wait is still unbounded, deliberately, because its docstring describes it as waiting for the upload. Regression: `test_s13_*`. |
 | S-14 | src/pyutilz/dev/code_audit/broad_except.py:60-61 (`_is_silent_swallow`, via `_has_debug_only_log_call`) | P1 | The scanner returns "not silent" for any handler whose only log call is `logger.debug`, including handlers that return a default. The shared gate applies the same rule. | `test_no_swallowed_io_or_broad_failures` passes for S-02, S-04, S-07, S-08 and S-03, all of which are debug-only fail-open returns. The gate is blind to the bug class named in this audit. | Flag a handler that returns or assigns a default value and logs only at DEBUG when the return value feeds a caller decision. Add a fixture with `except Exception as e: logger.debug(...); return False`. **Disposition: RESOLVED (scanner rule); DEFERRED (baseline refresh).** `broad_except.py`: a handler whose only log is `.debug` is now silent when it returns or assigns a bare default (None, a constant, or an empty container); a structured return still escapes. Fixtures in `test_s14_*`. The rule will surface pre-existing repo handlers, so the shared gate baseline (outside my files) needs a refresh decision. Note: S-05's shape (assignment with no log) is not covered by this debug-only rule; it is fixed by logging instead. |
 
-### Checked and not findings
+#### Checked and not findings
 
 - `src/pyutilz/dev/dashlib.py:287-309` (`_resolve_current_user`): an exception returns `(True, None)`. The role filter at dashlib.py:345 requires `user is not None` for restricted tabs, so the failure path shows only unrestricted tabs. Fail-closed for roles.
 - `src/pyutilz/cloud/cloud.py:95-125` (`s3_file_exists`): a previous fail-open was fixed; only a 404 returns `False`, and other errors re-raise.
@@ -27,10 +27,27 @@ Scope: read-only audit of `src/pyutilz` (about 270 modules) for broad or bare `e
 - `src/pyutilz/core/serialization.py:243-247`: re-raises.
 - `src/pyutilz/llm/openrouter_provider/_provider.py:425-441`: failure returns `False` by design and says so in the docstring.
 
-### Verdict
+#### Verdict
 
 The codebase has a clear pattern of fixing fail-open bugs by hand, and the shared gate covers the broad `except: pass` and `except Exception: return <literal>` shapes with no log call at all. The gap is the DEBUG-only handler: the gate treats it as a deliberate, visible swallow, and four of the P1/P2 findings above (S-02, S-03, S-04, S-05) sit exactly in that gap. Fixing the gate rule (S-14) first would surface them mechanically. The most serious single defect is S-01: the audit tool itself returns a clean result when one of its own scanners crashes, so a broken check looks like a passing one.
 
 ## Disposition (implementation, 2026-10-15)
 
 - S-10: RESOLVED. `src/pyutilz/core/disk_cache.py` `DiskCache.put` now returns `bool` (True when payload and sidecar are stored, False on any failure). Callers that ignore the return value are unaffected. Test: `test_s10_put_returns_false_on_failure_and_true_on_success`.
+
+## Disposition (round close, 2026-10-15)
+
+- S-01: RESOLVED. tests/test_meta/test_code_audit_scanners_run.py fails when any scanner raises on the production tree; the py-ci-shared gate itself still uses run_all (its own repo)
+- S-02: RESOLVED. ensure_installed logs failures at WARNING; contract kept
+- S-03: RESOLVED. concat failure raises instead of returning None
+- S-04: RESOLVED. check_cpu_flag logs at WARNING when cpuinfo fails
+- S-05: RESOLVED. benchmark rank failure logged
+- S-06: RESOLVED. category conversion failure logged regardless of verbose
+- S-07: RESOLVED. load_file surfaces exists() errors
+- S-08: RESOLVED. source-file cleanup failure logged at WARNING
+- S-09: RESOLVED. stats fetch failure distinguishable from not-requested
+- S-10: RESOLVED. DiskCache.put returns bool
+- S-11: RESOLVED. _pid_alive treats unknown probe failure as unknown, not alive
+- S-12: RESOLVED. unchecked columns logged
+- S-13: RESOLVED. download retries bounded
+- S-14: RESOLVED. scanner counts a debug-only log as silent

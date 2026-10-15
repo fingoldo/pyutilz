@@ -60,3 +60,15 @@ Finding count: P0 = 0, P1 = 1, P2 = 2, P3 = 6. Total 9.
 - C-07: RESOLVED. `src/pyutilz/core/disk_cache.py` `DiskCache.get` runs its read under `_get_key_lock(key)` via `_read_locked`. Test: `test_c07_get_waits_for_key_lock`.
 - C-08: RESOLVED. `config.py` `get()` reads the section reference under `_lock`; the `data` setter stores `dict(value)` (shallow copy, matching the getter). Test: `test_c08_data_setter_copies_caller_dict`. Owner note: `tests/test_meta/_lock_discipline_baseline.json` entry 1 can now be dropped (not edited here, outside this task's file list).
 - C-09: RESOLVED. `src/pyutilz/system/resilience.py` `CircuitBreaker`: the live object is private `_state`; `state` is a read-only property returning a `dataclasses.replace` snapshot under the lock. Tests: `test_c09_*`. Owner note: baseline entry 2 can be dropped (same reason as C-08).
+
+## Disposition (round close, 2026-10-15)
+
+- C-01: RESOLVED. config reload stats the file before reading it
+- C-02: RESOLVED. pool reset only on the owning thread's connection, other threads keep theirs
+- C-03: RESOLVED. pool globals read under the lock
+- C-04: RESOLVED. mmap unlink without a separate exists() check; mapped-file reuse on Windows still raises (DEFERRED design: distinct names required)
+- C-05: RESOLVED. bounded-FIFO eviction under a lock
+- C-06: RESOLVED. catalogue freshness read once under lock
+- C-07: RESOLVED. DiskCache.get takes the per-key lock
+- C-08: RESOLVED. config get() locked; data setter copies
+- C-09: RESOLVED. breaker state exposed read-only, reset under lock

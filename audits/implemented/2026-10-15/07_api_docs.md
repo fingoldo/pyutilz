@@ -15,3 +15,13 @@ Scope: read-only audit of public API docstrings, module `__all__` lists, and REA
 ## Verdict
 
 The `__all__` surfaces are sound: every listed name resolves at import time, and the spot-checked docstrings (`env_flag`, `unserialize`, the factory aliases in `llm/factory.py`, `list_openrouter_models` health keys, `validate_sql_identifier`, `ensure_idle_devices`, the sweep env vars in `cache_base.py`) match the code. The problems cluster in the install documentation, which repeats the same stale claims in README.md and docs/index.md: the core dependency list is incomplete, the `[speedups]` description is false, and the `[llm]` Python/version floor is wrong. These are cheap to fix and should be fixed in both files together. The `deltalakes.safe_delta_write` docstring has a real behaviour mismatch (skip versus raise) plus an undocumented optional-dependency requirement, and is the one code-level item worth prioritising. Counts: P0 0, P1 0, P2 5, P3 2.
+
+## Disposition (round close, 2026-10-15)
+
+- A-01: RESOLVED. README and docs state [speedups] is empty
+- A-02: RESOLVED. core dependency list and count corrected
+- A-03: RESOLVED. google-genai floor stated per Python version
+- A-04: RESOLVED. lock_timeout docstring matches the TimeoutError
+- A-05: RESOLVED. owner decision applied: filelock declared in the database extra
+- A-06: RESOLVED. docs dev line includes pytest-xdist
+- A-07: RESOLVED. owner decision applied: the subpackage docstring states that __all__ is the full computed export set; __all__ is not extended

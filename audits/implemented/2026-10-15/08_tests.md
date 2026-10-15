@@ -23,3 +23,17 @@ Checked and not findings: no `xfail` marker exists in `tests/` outside scanner f
 Verdict. The suite has no P0 and no P1 finding. The defects cluster in two places: wall-clock bounds and ordering assertions that depend on the host (T-01, T-02, T-04, T-05, T-06), and weak or duplicated assertions in a few test modules (T-03, T-10). The existing test-quality gate covers the textual wall-clock and vacuous-assert patterns, but its scanner misses bounds on a collected list (`min(elapsed)`) and timing-derived winners, and the reload gate misses `del sys.modules`, while its whitelist reason for `test_llm_config.py` (T-08) is contradicted by the source. The highest-value fixes are T-08 (correct the gate's reason), T-03 (add real assertions and remove the duplicate), and replacing the three host-timed ranking tests with an injected timer (T-04 and its siblings).
 
 Counts: P0 0, P1 0, P2 4 (T-01, T-03, T-04, T-08), P3 7 (T-02, T-05, T-06, T-07, T-09, T-10, T-11).
+
+## Disposition (round close, 2026-10-15)
+
+- T-01: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-02: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-03: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-04: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-05: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-06: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-07: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-08: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-09: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-10: RESOLVED. test made independent of wall-clock or order; still fails on the guarded regression
+- T-11: RESOLVED. conftest counts skipped live-provider tests and prints the count in the terminal summary

@@ -19,3 +19,11 @@ The codebase is generally careful about hot-path cost. Caches are bounded or ref
 ## Disposition (implementation, 2026-10-15)
 
 - P-05: RESOLVED. `src/pyutilz/system/resilience.py` `DeadLetterQueue.queue` is `collections.deque(maxlen=max_size)`; `add` appends only, and `get_recent` slices the reversed deque. Test: `test_p05_dead_letter_queue_is_bounded_deque`.
+
+## Disposition (round close, 2026-10-15)
+
+- P-01: RESOLVED. proxy outcome lists trimmed incrementally
+- P-02: RESOLVED. monitor sample lists bounded (max_samples, default 100000)
+- P-03: RESOLVED. deep memory pass limited; concat peak still deferred
+- P-04: RESOLVED. fence regex bounded
+- P-05: RESOLVED. dead-letter queue bounded in O(1) per add

@@ -52,3 +52,12 @@ Three real defects and one reproducible gap in the gate. The most important is R
 - R-02: RESOLVED. `connection.py` `_dispose_previous_engine()` runs before both `create_engine` calls (postgres and mysql). Tests: `test_r02_*`.
 - R-03: RESOLVED. `src/pyutilz/database/db/execution.py` `basic_db_execute`: `_close_local_named_cursor` is called on the OperationalError/InterfaceError branch (before retry or raise) and on the DuplicateTable branch. Test: `test_r03_named_cursor_closed_on_operational_error_retries`.
 - R-04, R-05, R-06: not in this task's file list; left to their owners.
+
+## Disposition (round close, 2026-10-15)
+
+- R-01: RESOLVED. reconnect closes the previous psycopg2 connection
+- R-02: RESOLVED. old SQLAlchemy engine disposed on reconnect
+- R-03: RESOLVED. named cursor closed on retry and max-retry branches
+- R-04: RESOLVED. benchmark temp folder removed in finally
+- R-05: RESOLVED. proxy-auth zip removed when Chrome fails to start
+- R-06: DEFERRED. partly: release gate now runs the resource-handle scan; mkdtemp, Session and Lock not yet in the scanner

@@ -37,10 +37,31 @@ Counts: P0 0, P1 0, P2 4 (X-01 to X-04), P3 14 (X-05 to X-18).
 
 ## Disposition (implementation, 2026-10-15)
 
-- X-04: DEFERRED (partly). The false comment at `src/pyutilz/core/disk_cache.py` `DiskCache.get` is corrected to state that the sidecar is integrity-only and that `cache_dir` must be private. The keyed-HMAC sidecar is NOT implemented: it needs a key-management decision from the owner (where the key lives, what happens to existing caches on rotation).
+- X-04: WON'T FIX. owner decision: keep the integrity-only sidecar; cache_dir must be private (documented). Keyed HMAC not needed
 - X-07: RESOLVED. `src/pyutilz/database/db/execution.py` `_validate_returning` (called from `_build_dml_statement`) accepts only `*` or a comma-separated list of (optionally table-qualified) identifiers; anything else raises `SQLValidationError`. Tests: `test_x07_*`.
 - X-08: DEFERRED. `src/pyutilz/database/db/schema.py` `alternate_fields_values` is unchanged. Question for owner: change the parameter to bound values with `%s` placeholders (breaks callers that pass raw SQL), or keep the raw escape hatch documented?
 - X-09: DEFERRED. `src/pyutilz/database/db/upsert.py` unchanged. Same question as X-08 for `custom_onconflict` and `on_conflict_update_values`.
-- X-10: DEFERRED. `src/pyutilz/database/db/execution.py` `showcase_table` unchanged. Question for owner: accept a parameter dict (API change) or keep the documented raw WHERE fragment. A runtime blocklist (for example rejecting `;`) was rejected as bypassable.
-- X-11: DEFERRED. `src/pyutilz/database/db/schema.py` `read_table_into_dict` and `read_table_into_dict_reversed` unchanged; same question as X-10.
+- X-10: WON'T FIX. owner decision: keep the documented raw WHERE fragment for a trusted caller; no blocklist
+- X-11: WON'T FIX. owner decision: same as X-10 for read_table_into_dict and its reversed variant
 - X-18: RESOLVED. `execution.py` `get_table_fields` validates `alias`, and `prefix`/`suffix` when non-empty, with `validate_sql_identifier` before any query. Tests: `test_x18_*`.
+
+## Disposition (round close, 2026-10-15)
+
+- X-01: RESOLVED. heartbeat errors logged without URL
+- X-02: RESOLVED. CDP endpoint restricted to the owner
+- X-03: RESOLVED. owner decision applied: unserialize verifies the sidecar by default; serialize writes the sidecar for file paths; verify_sidecar=False is the explicit opt-out
+- X-04: WON'T FIX. owner decision: keep the integrity-only sidecar; cache_dir must be private (documented). Keyed HMAC not needed
+- X-05: RESOLVED. owner decision applied: load_file verifies the .sha256 sidecar by default for .joblib and .pckl, reading the bytes once; allow_unverified=True opts out
+- X-06: RESOLVED. load_tokens verifies sha256 sidecar
+- X-07: RESOLVED. returning validated
+- X-08: DEFERRED. alternate_fields_values raw SQL: API change to bound values, owner decides
+- X-09: DEFERRED. custom_onconflict raw SQL: API change, owner decides
+- X-10: WON'T FIX. owner decision: keep the documented raw WHERE fragment for a trusted caller; no blocklist
+- X-11: WON'T FIX. owner decision: same as X-10 for read_table_into_dict and its reversed variant
+- X-12: RESOLVED. lock file in a per-user directory
+- X-13: RESOLVED. owner decision applied: mode renamed to base64 (default); the old 'xor' name still works and logs a warning
+- X-14: RESOLVED. owner decision applied: http is refused unless allow_insecure_http=True is passed
+- X-15: WON'T FIX. ip-api.com free tier is http-only; icanhazip is https. IP response validation in ipinfo.py is outside this round
+- X-16: RESOLVED. owner decision applied: redirect chains longer than 5 hops, and any https-to-http step, are refused in both download paths
+- X-17: RESOLVED. owner decision applied: default stays md5 for compatibility; the docstring names sha256 as the choice for any security use
+- X-18: RESOLVED. get_table_fields alias/prefix/suffix validated
