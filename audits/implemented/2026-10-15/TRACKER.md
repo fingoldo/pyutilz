@@ -18,7 +18,7 @@ One row per finding. Statuses: RESOLVED (fixed; regression test where a test can
 | **RESOLVED** | P3 | `R-03` | A named (server-side, WITH HOLD) cursor created for the attempt is not closed on the `OperationalError`/`InterfaceError` |
 | **RESOLVED** | P3 | `R-04` | The temp directory from `mkdtemp` is removed only on the straight-line success path. The benchmark calls are wrapped, but a BaseException such as KeyboardInterrupt skips the cleanup. |
 | **RESOLVED** | P3 | `R-05` | When `webdriver.Chrome(**kwargs)` raises, the proxy-auth zip (credential-bearing, mode 0600) created by `_configure_prox |
-| **DEFERRED** | P3 | `R-06` | Gate coverage gap. The gate checks only the `connect`/`close` pair, and it exempts the three modules where the release l |
+| **WON'T FIX** | P3 | `R-06` | Gate coverage gap. The gate checks only the `connect`/`close` pair, and it exempts the three modules where the release l |
 | **RESOLVED** | P1 | `S-01` | A scanner that raises is converted to a single WARNING and `[]`, and `run_all` merges that empty list with the other sca |
 | **RESOLVED** | P1 | `S-02` | `subprocess.check_call` failure is caught and logged at DEBUG only; the function then returns `None`. |
 | **RESOLVED** | P1 | `S-03` | Any exception from the concat-and-write step is logged at DEBUG and the function returns `None`. The docstring says `Non |

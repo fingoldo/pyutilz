@@ -60,4 +60,4 @@ Three real defects and one reproducible gap in the gate. The most important is R
 - R-03: RESOLVED. named cursor closed on retry and max-retry branches
 - R-04: RESOLVED. benchmark temp folder removed in finally
 - R-05: RESOLVED. proxy-auth zip removed when Chrome fails to start
-- R-06: DEFERRED. partly: release gate now runs the resource-handle scan; mkdtemp, Session and Lock not yet in the scanner
+- R-06: WON'T FIX for the rest. mkdtemp needs a finally-based cleanup, not a with block; Lock is not a resource to release; requests/httpx sessions live on instances and modules (self._client, session.py), so a with-discipline scan would flag them all falsely. The connect/close pair and the handle scan already gate the parts that fit.

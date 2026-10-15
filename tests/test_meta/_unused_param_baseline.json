@@ -1,12 +1,4 @@
 {
   "_comment": "Frozen ruff ARG001/ARG002 snapshot; see test_unused_parameter_baseline.py. Key: path::function::param. Value: why this parameter is intentionally unused.",
-  "entries": {
-    "dev/code_audit/domain_boundary.py::scan_domain_vocabulary_leak::exclude_dirs": "Scanner-registry uniformity: every registered scanner takes (root, exclude_dirs); this one names each boundary file explicitly and never walks a tree. Documented in its own Args section.",
-    "dev/code_audit/missed_await.py::_BlockingCallFinder.visit_AsyncFunctionDef::node": "ast.NodeVisitor dispatch signature: the visitor stops traversal at a nested scope, so the node is deliberately not descended into.",
-    "dev/code_audit/missed_await.py::_BlockingCallFinder.visit_FunctionDef::node": "ast.NodeVisitor dispatch signature: the visitor stops traversal at a nested scope, so the node is deliberately not descended into.",
-    "dev/code_audit/missed_await.py::_BlockingCallFinder.visit_Lambda::node": "ast.NodeVisitor dispatch signature: the visitor stops traversal at a nested lambda scope, so the node is deliberately not descended into.",
-    "dev/code_audit/return_annotation.py::_OwnReturnFinder.visit_AsyncFunctionDef::node": "ast.NodeVisitor dispatch signature: returns without descending, so a nested function's returns are not attributed to the outer one.",
-    "dev/code_audit/return_annotation.py::_OwnReturnFinder.visit_FunctionDef::node": "ast.NodeVisitor dispatch signature: returns without descending, so a nested function's returns are not attributed to the outer one.",
-    "dev/code_audit/return_annotation.py::_OwnReturnFinder.visit_Lambda::node": "ast.NodeVisitor dispatch signature: returns without descending, so a nested lambda's returns are not attributed to the outer function."
-  }
+  "entries": []
 }

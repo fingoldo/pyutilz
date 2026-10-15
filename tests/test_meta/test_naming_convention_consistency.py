@@ -52,6 +52,16 @@ _REPO_ROOT = Path(pyutilz.__file__).resolve().parents[2]
 _SRC_DIR = Path(pyutilz.__file__).resolve().parent
 _BASELINE_PATH = Path(__file__).resolve().parent / "_naming_convention_baseline.json"
 
+# Declared exceptions (owner decision, 2026-10-15): each name is kept on purpose, with its reason.
+_DECLARED_NAMING_EXCEPTIONS = {
+    "src/pyutilz/database/db/__init__.py EnsurePgTableExists": "deprecated PascalCase alias kept for backward compatibility; the snake_case name is the API and the legacy wrapper warns",
+    "src/pyutilz/database/db/__init__.py GetIdByKeyFieldAndInsertIfNeeded": "deprecated PascalCase alias kept for backward compatibility; the snake_case name is the API",
+    "src/pyutilz/database/db/__init__.py ReadTableIntoDic": "deprecated PascalCase alias kept for backward compatibility; the snake_case name is the API",
+    "src/pyutilz/database/db/__init__.py ReadTableIntoDicReversed": "deprecated PascalCase alias kept for backward compatibility; the snake_case name is the API",
+    "src/pyutilz/database/db/sql_helpers.py MakeSetExcludedClause": "deprecated PascalCase alias kept for backward compatibility; the snake_case name is the API",
+    "src/pyutilz/web/browser.py LoginAndGetCookies": "public login helper; renaming breaks callers, a snake_case alias is the follow-up if the owner wants it",
+}
+
 _SNAKE_CASE_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
@@ -90,7 +100,7 @@ def test_no_new_naming_convention_inconsistency():
         _BASELINE_PATH.write_text(jsonlib.dumps(sorted(current), indent=True), encoding="utf-8")
         pytest.skip(f"naming-convention baseline refreshed at {_BASELINE_PATH.name} ({len(current)} finding(s))")
 
-    baseline = set(jsonlib.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
+    baseline = set(jsonlib.loads(_BASELINE_PATH.read_text(encoding="utf-8"))) | set(_DECLARED_NAMING_EXCEPTIONS)
     new = sorted(current - baseline)
     fixed = sorted(baseline - current)
 

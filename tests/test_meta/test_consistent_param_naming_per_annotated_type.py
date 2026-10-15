@@ -48,6 +48,18 @@ _REPO_ROOT = Path(pyutilz.__file__).resolve().parents[2]
 _SRC_DIR = Path(pyutilz.__file__).resolve().parent
 _BASELINE_PATH = Path(__file__).resolve().parent / "_param_naming_baseline.json"
 
+# Declared exceptions (owner decision, 2026-10-15): public helpers whose parameter names are part of the keyword API.
+_DECLARED_PARAM_NAMING_EXCEPTIONS = {
+    "src/pyutilz/data/numpylib.py np.ndarray::get_topk_indices(arr)": "public numpy helper; the parameter name is part of its keyword API",
+    "src/pyutilz/data/numpylib.py np.ndarray::smart_ratios(a)": "public numpy helper; the parameter name is part of its keyword API",
+    "src/pyutilz/data/polarslib/binning.py pl.DataFrame::bin_numerical_columns(df)": "public polars helper; the parameter name is part of its keyword API",
+    "src/pyutilz/data/polarslib/binning.py pl.DataFrame::entropy_for_column(bins)": "public polars helper; the parameter name is part of its keyword API",
+    "src/pyutilz/data/polarslib/binning.py pl.DataFrame::mi_for_column(bins)": "public polars helper; the parameter name is part of its keyword API",
+    "src/pyutilz/stats/normality.py np.ndarray::anderson_darling_normal(x)": "statistical convention (x is the sample); renaming breaks keyword callers",
+    "src/pyutilz/stats/normality.py np.ndarray::dagostino_k2(x)": "statistical convention (x is the sample); renaming breaks keyword callers",
+    "src/pyutilz/stats/normality.py np.ndarray::normality_verdict(sample)": "public helper; the parameter name is part of its keyword API",
+}
+
 
 def _refresh_requested() -> bool:
     return "--refresh-param-naming-baseline" in sys.argv
@@ -117,7 +129,7 @@ def test_no_new_param_naming_inconsistency_per_annotated_type():
         _BASELINE_PATH.write_text(jsonlib.dumps(sorted(current), indent=True), encoding="utf-8")
         pytest.skip(f"param-naming baseline refreshed at {_BASELINE_PATH.name} ({len(current)} finding(s))")
 
-    baseline = set(jsonlib.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
+    baseline = set(jsonlib.loads(_BASELINE_PATH.read_text(encoding="utf-8"))) | set(_DECLARED_PARAM_NAMING_EXCEPTIONS)
     new = sorted(current - baseline)
     fixed = sorted(baseline - current)
 
