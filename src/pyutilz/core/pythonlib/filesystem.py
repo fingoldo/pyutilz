@@ -24,6 +24,7 @@ from ._common import (
     shelve,
     sys,
 )
+import io
 from typing import Any, Iterator, Literal
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -75,9 +76,29 @@ def ensure_valid_filename(name: str, max_length: int = 255) -> str:
     )
 
 
-def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs: Any) -> Any:
+def _read_verified_pickle(fpath: str, allow_unverified: Optional[bool]) -> bytes:
+    """Read ``fpath`` once and return its bytes only if its sha256 sidecar matches them (audit finding X-05)."""
+    from pyutilz.core.safe_pickle import PickleVerificationError, _verify_sidecar
+
+    with open(fpath, "rb") as f:
+        payload = f.read()
+    if not _verify_sidecar(fpath, allow_unverified=allow_unverified, payload=payload):
+        raise PickleVerificationError(
+            f"load_file: refusing to unpickle {fpath!r}; sha256 sidecar missing or mismatch. "
+            "Run write_sidecar(path) on a trusted copy, or pass allow_unverified=True for a legacy file."
+        )
+    return payload
+
+
+def load_file(fpath: str, unpickle_to_pd: bool = True, *, allow_unverified: Optional[bool] = None, **kwargs: Any) -> Any:
     """
     Load plicked object, dataframe, Catboost model, based on file presence and name.
+
+    ``.joblib`` and ``.pckl`` files are pickles, so by default their ``.sha256`` sidecar must match before any byte is
+    unpickled (audit finding X-05); a missing or mismatched sidecar raises ``PickleVerificationError``. Pass
+    ``allow_unverified=True`` (or set the ``PYUTILZ_ALLOW_UNVERIFIED_PICKLE`` environment variable, as ``safe_load`` does)
+    to load a legacy file that has no sidecar yet. The bytes are read once, verified, then unpickled, so another process
+    cannot swap the file in between.
     """
     fpath = abspath(fpath)
     # No try here: an error from the existence check (permissions, invalid path) must reach the caller as itself,
@@ -87,7 +108,7 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs: Any) -> Any:
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), fpath)
     else:
         if fpath.lower().endswith(".joblib"):
-            return joblib.load(fpath)
+            return joblib.load(io.BytesIO(_read_verified_pickle(fpath, allow_unverified)))  # nosec B301 - sidecar verified in _read_verified_pickle
         elif fpath.lower().endswith(".pckl"):
             if unpickle_to_pd:
                 # Imported here, not at function entry: only this branch needs pandas, and a
@@ -96,10 +117,10 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs: Any) -> Any:
                 # branch below already documents.
                 import pandas as pd
 
-                return pd.read_pickle(fpath)  # nosec B301 - fpath is caller-supplied (same trust level as the joblib.load branch above); this loader's whole purpose is deserializing a named local file
+                return pd.read_pickle(io.BytesIO(_read_verified_pickle(fpath, allow_unverified)))  # nosec B301 - sidecar verified in _read_verified_pickles deserializing a named local file
             from pyutilz.core.safe_pickle import safe_load
 
-            return safe_load(fpath, **kwargs)
+            return safe_load(fpath, allow_unverified=allow_unverified, **kwargs)
         elif fpath.lower().endswith(".bin"):
             # Lazy import: catboost is only needed for this branch, not for .joblib/.pckl
             # callers, who should not be forced to have it installed (found 2026-07-09 deptry

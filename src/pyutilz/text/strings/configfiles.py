@@ -10,16 +10,28 @@ from typing import Any, Optional
 
 from pyutilz.core.pythonlib import is_float
 
-def read_config_file(file: str, object: dict, section: Optional[str] = None, variables: Any = None, encryption: Optional[str] = "xor") -> Optional[bool]:  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
+# X-13: the mode is base64 encoding, not encryption. "xor" is the old name, still accepted with a warning.
+_BASE64_MODES = ("base64", "xor")
+
+
+def _normalise_encryption(encryption: Optional[str]) -> Optional[str]:
+    """Return the mode, logging once per call when the deprecated ``"xor"`` name is used."""
+    if encryption == "xor":
+        logger.warning('encryption="xor" is a misnomer for base64 encoding (not encryption); use encryption="base64"')
+    return encryption
+
+
+def read_config_file(file: str, object: dict, section: Optional[str] = None, variables: Any = None, encryption: Optional[str] = "base64") -> Optional[bool]:  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     """Read values from an INI-style config file into ``object`` (mutated in place).
 
-    For each requested variable, attempts base64 decoding (if ``encryption="xor"`` and the
+    For each requested variable, attempts base64 decoding (if ``encryption="base64"`` and the
     value isn't numeric) followed by ``ast.literal_eval`` to coerce it back to its native
     Python type, falling back to the raw string on either failure. If ``section`` is None,
     every section in the file is read, and keys are prefixed with their lowercased section name
     (``"<section>_<var>"``) to avoid a same-named variable in two different sections silently
     overwriting each other. Returns True on success, None if an exception occurred.
     """
+    encryption = _normalise_encryption(encryption)
     import configparser
 
     try:
@@ -68,10 +80,10 @@ def _read_section_values(config: Any, section_name: str, variables: Any, prepend
 
 
 def _maybe_b64_decode(val: Any, var: str, encryption: Optional[str]) -> Any:
-    """base64-decode a non-numeric string value when ``encryption == "xor"``; otherwise return it unchanged."""
+    """base64-decode a non-numeric string value when ``encryption in _BASE64_MODES``; otherwise return it unchanged."""
     from base64 import b64decode
 
-    if isinstance(val, str) and not is_float(val) and encryption == "xor":
+    if isinstance(val, str) and not is_float(val) and encryption in _BASE64_MODES:
         try:
             return b64decode(val).decode("utf-8")
         except Exception as e:  # nosec B110 - best-effort decode of a config value that may or may not be base64/xor-encoded; falling through to the raw string is the intended behavior, not an error to hide
@@ -102,7 +114,7 @@ def _normalize_variables(variables: Any, values: dict) -> list:
 
 
 def _fill_config_section(config: Any, section: str, values: dict, variables: list, encryption: Optional[str]) -> None:
-    """Write each named variable of *values* into ``config[section]``, base64-encoding it under ``encryption="xor"``."""
+    """Write each named variable of *values* into ``config[section]``, base64-encoding it under ``encryption="base64"``."""
     from base64 import b64encode
 
     for var in variables:
@@ -113,7 +125,7 @@ def _fill_config_section(config: Any, section: str, values: dict, variables: lis
             # disables interpolation, keeping the round trip symmetric.
             val = str(values[var])
 
-            if encryption == "xor":
+            if encryption in _BASE64_MODES:
                 val = b64encode(val.encode("utf-8")).decode("utf-8")
 
             config[section][var] = val
@@ -122,20 +134,21 @@ def _fill_config_section(config: Any, section: str, values: dict, variables: lis
 
 
 def write_config_file(
-    file: str, object: dict, section: Optional[str] = "MAIN", variables: Any = None, encryption: Optional[str] = "xor", mode: str = "append"  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
+    file: str, object: dict, section: Optional[str] = "MAIN", variables: Any = None, encryption: Optional[str] = "base64", mode: str = "append"  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
 ) -> Optional[bool]:
     """Write values from ``object`` into an INI-style config file under ``section``.
 
     Values are stringified (verbatim -- interpolation is disabled on both the writer and the
     reader, so ``%`` is NOT escaped and survives a write/read round trip unchanged) and, when
-    ``encryption="xor"``, base64-encoded before being written. When ``mode="append"`` and
+    ``encryption="base64"``, base64-encoded before being written. When ``mode="append"`` and
     the file already exists, its existing contents are read first and merged with the new
     section/variables before the file is overwritten. Returns True on success, None on failure.
 
-    WARNING (X-13): ``encryption="xor"`` (the default) is base64 ENCODING, not encryption. Anyone who can read
+    WARNING (X-13): ``encryption="base64"`` (the default) is base64 ENCODING, not encryption. Anyone who can read
     the file recovers every value, including passwords. Do not store secrets here unless the file itself is
     protected by filesystem permissions. Changing the default is a behaviour change pending owner sign-off.
     """
+    encryption = _normalise_encryption(encryption)
     import os
     import configparser
 

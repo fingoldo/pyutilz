@@ -1,6 +1,7 @@
 """Extra tests for pythonlib.py — covers specific uncovered lines."""
 
 import pytest
+from pyutilz.core.safe_pickle import write_sidecar
 import os
 import sys
 import tempfile
@@ -642,6 +643,7 @@ class TestLoadFile:
         payload = {"a": 1, "b": [2, 3]}
         path = tmp_path / "obj.joblib"
         joblib.dump(payload, path)
+        write_sidecar(str(path))  # load_file verifies the sha256 sidecar by default (audit finding X-05)
 
         assert load_file(str(path)) == payload
 
@@ -653,6 +655,7 @@ class TestLoadFile:
         df = pd.DataFrame({"x": [1, 2, 3]})
         path = tmp_path / "frame.pckl"
         df.to_pickle(path)
+        write_sidecar(str(path))
 
         loaded = load_file(str(path))
         assert isinstance(loaded, pd.DataFrame)
@@ -674,6 +677,7 @@ class TestLoadFile:
 
         path = tmp_path / "obj.JOBLIB"
         joblib.dump([1, 2], path)
+        write_sidecar(str(path))
         assert load_file(str(path)) == [1, 2]
 
     def test_missing_file_raises_filenotfound(self, tmp_path):

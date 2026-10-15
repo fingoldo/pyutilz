@@ -164,6 +164,8 @@ database = [
     "psycopg2-binary>=2.9,<2.9.10 ; python_version < '3.9'",
     "psycopg2-binary>=2.9 ; python_version >= '3.9'",
     "pymysql>=1.0",
+    # database/deltalakes.py takes its lock from filelock (audit finding A-05): declared here, so the lock works out of the box.
+    "filelock>=3.0",
     # database/db/__init__.py imports dateutil.relativedelta unconditionally at module level
     # (database/__init__.py itself is a 4-line re-export shim with no imports of its own --
     # the actual unconditional import lives one directory deeper, in the db/ subpackage);

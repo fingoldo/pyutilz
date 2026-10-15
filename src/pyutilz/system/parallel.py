@@ -310,7 +310,8 @@ def mem_map_array(obj: np.ndarray, file_name: str, mmap_mode: str = "r") -> obje
         temp_folder = _MEM_MAP_DIR
 
     filename = os.path.join(temp_folder, f"{file_name}.mmap")
-    if os.path.exists(filename):
+    # No exists() check first: another caller could remove the file between the two calls (audit C-04).
+    with contextlib.suppress(FileNotFoundError):
         os.unlink(filename)
     _ = dump(obj, filename)
     memmaped = load(filename, mmap_mode=mmap_mode)

@@ -353,3 +353,18 @@ def sample_df():
 # somewhere" when nothing exercised them, and `temp_dir` duplicated pytest's builtin `tmp_path`
 # while inviting new tests to use a hand-rolled fixture instead. New tests needing a temporary
 # directory should use `tmp_path`; new DataFrame shapes belong next to the tests that use them.
+
+
+# T-11 (audit 2026-10-15): a live-provider test that skips on an outage reads as green. Count the skipped live tests
+# and print them in the summary, so an outage is visible in every run without making it a failure.
+_LIVE_SKIPPED: list = []
+
+
+def pytest_runtest_logreport(report):
+    if report.skipped and "test_llm_live" in report.nodeid:  # skipped in setup (no --run-live) or in the call (outage)
+        _LIVE_SKIPPED.append(report.nodeid)
+
+
+def pytest_terminal_summary(terminalreporter):
+    if _LIVE_SKIPPED:
+        terminalreporter.write_line(f"live provider tests skipped (outage or missing key): {len(_LIVE_SKIPPED)}", yellow=True)

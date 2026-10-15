@@ -72,6 +72,28 @@ def download_in_parallel(
     return errored_urls
 
 
+MAX_REDIRECTS = 5  # X-16: a download follows at most this many redirects
+
+
+class RedirectRefusedError(Exception):
+    """A redirect chain that would send a download to a non-https hop, or that is longer than MAX_REDIRECTS."""
+
+
+def _check_redirect_chain(resp, requested_url: str) -> None:
+    """Refuse a redirect chain that is too long or that steps from https down to http (audit finding X-16)."""
+    # Only str URLs count: a response object without a real URL (a test double, for one) is not a redirect chain.
+    history = getattr(resp, "history", None)
+    history = history if isinstance(history, (list, tuple)) else []
+    urls = [getattr(h, "url", None) for h in history] + [getattr(resp, "url", None)]
+    hops = [u for u in urls if isinstance(u, str)]
+    if not hops:
+        return
+    if len(hops) - 1 > MAX_REDIRECTS:
+        raise RedirectRefusedError(f"more than {MAX_REDIRECTS} redirects for {requested_url}")
+    if requested_url.lower().startswith("https://") and any(h.lower().startswith("http://") for h in hops):
+        raise RedirectRefusedError(f"redirect from https to http for {requested_url}")
+
+
 def _handle_parallel_response(resp, sub_url, func: Callable, errored_urls: List, max_logged_errors: int) -> None:
     """Route one grequests response: call ``func`` on HTTP 200, otherwise record ``sub_url`` in ``errored_urls``."""
     # None-check MUST come before touching any attribute of resp: grequests.map() puts None
@@ -86,6 +108,13 @@ def _handle_parallel_response(resp, sub_url, func: Callable, errored_urls: List,
             logger.error("Response is None for url %s", sub_url)
         return
     final_status_code = resp.history[-1].status_code if len(resp.history) > 0 else resp.status_code
+    try:
+        _check_redirect_chain(resp, sub_url)
+    except RedirectRefusedError as e:
+        errored_urls.append(sub_url)
+        if _error_log_throttle(len(errored_urls), max_logged_errors):
+            logger.error("Refused url %s: %s", sub_url, e)
+        return
     if resp.status_code == http.HTTPStatus.OK:
         try:
             func(resp, sub_url)
@@ -197,6 +226,7 @@ def _download_attempt(
     request: Optional[requests.Response] = None
     try:
         request = _facade.requests.get(url, timeout=timeout, headers=headers, stream=True)
+        _check_redirect_chain(request, url)
         if request.status_code in exit_codes:
             # A caller-designated fatal status (e.g. 404): requests.get() does not raise on
             # 4xx/5xx, so without this the error page's body would be written as the file.

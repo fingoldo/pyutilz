@@ -1,7 +1,8 @@
 """pyutilz.system.system subpackage (split from a 2024-LOC monolith).
 
 Behaviour-preserving carve into cohesive submodules. This __init__ re-exports
-EVERY public name that ``pyutilz.system.system`` exposed before the split, so
+EVERY public name that ``pyutilz.system.system`` exposed before the split (``__all__`` is that full set, computed from
+the module globals; helpers such as ``remove_nas`` are reached through the package, not listed in the docs), so
 ``from pyutilz.system import system`` / ``system.ensure_dir_exists`` etc. keep
 resolving unchanged. Submodules:
   _common  - WMI helpers, remove_nas, decode_* , summarize_devices

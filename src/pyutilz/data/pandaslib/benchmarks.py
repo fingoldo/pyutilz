@@ -267,32 +267,33 @@ def benchmark_dataframe_compression(
     temp_folder = tempfile.mkdtemp(dir=benchmark_dir_path)
 
     res: Any = []
-
-    for func in (
-        _facade.benchmark_dataframe_feather_compression,
-        _facade.benchmark_dataframe_orc_compression,
-        _facade.benchmark_dataframe_hdf_compression,
-        _facade.benchmark_dataframe_pickle_compression,
-        _facade.benchmark_dataframe_csv_compression,
-    ):
-        try:
-            func(res, temp_folder, df, nrepeats)
-        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one benchmark failing shouldn't skip the rest)
-            logger.error(e)
-
-    # Parquet has different signature, handle separately
     try:
-        parquet_results = _facade.benchmark_dataframe_parquet_compression(df, temp_folder, nrepeats)
-        # Rows, not records: `res` holds LISTS (see pack_benchmark_results), and pd.DataFrame() renders a
-        # dict inside a list-of-rows as its KEYS, so every parquet row used to come out as a row of the
-        # literal strings "config", "mean_read_times", ... -- which the very next sort_values() then
-        # compared against floats and died on with an unrelated-looking numpy UFuncTypeError.
-        res.extend(parquet_results.itertuples(index=False, name=None))
-    except Exception as e:
-        logger.error(e)
 
-    if should_clean_temp_folder:
-        shutil.rmtree(temp_folder)
+        for func in (
+            _facade.benchmark_dataframe_feather_compression,
+            _facade.benchmark_dataframe_orc_compression,
+            _facade.benchmark_dataframe_hdf_compression,
+            _facade.benchmark_dataframe_pickle_compression,
+            _facade.benchmark_dataframe_csv_compression,
+        ):
+            try:
+                func(res, temp_folder, df, nrepeats)
+            except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one benchmark failing shouldn't skip the rest)
+                logger.error(e)
+
+        # Parquet has different signature, handle separately
+        try:
+            parquet_results = _facade.benchmark_dataframe_parquet_compression(df, temp_folder, nrepeats)
+            # Rows, not records: `res` holds LISTS (see pack_benchmark_results), and pd.DataFrame() renders a
+            # dict inside a list-of-rows as its KEYS, so every parquet row used to come out as a row of the
+            # literal strings "config", "mean_read_times", ... -- which the very next sort_values() then
+            # compared against floats and died on with an unrelated-looking numpy UFuncTypeError.
+            res.extend(parquet_results.itertuples(index=False, name=None))
+        except Exception as e:
+            logger.error(e)
+    finally:
+        if should_clean_temp_folder:
+            shutil.rmtree(temp_folder, ignore_errors=True)
 
     res = (
         pd.DataFrame(res, columns=["config", *chain(*[("mean_" + arr, "std_" + arr) for arr in "read_time write_time read_size write_size".split()])])

@@ -240,6 +240,8 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
 # but cover a real concern. Reverse-direction whitelist.
 _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
+    "test_audit_20261015_runtime": "cross-cutting regression tests for the 2026-10-15 audit findings C-01, C-02, C-03, C-07, C-08, C-09, R-01, R-02, R-03, S-10, X-07, X-18, P-05 over the database, config, cache and resilience modules",
+    "test_audit_20261015_unassigned": "regression tests for the 2026-10-15 audit findings C-04 (system.parallel mmap unlink) and R-04 (pandaslib benchmark temp folder)",
     "test_pricing_tiers_20261003": "cross-cutting: pyutilz.llm._pricing (cache-write rates, long-context tiers) through the xAI, Gemini, OpenAI, Anthropic, DeepSeek and OpenRouter providers",
     "test_providers_live_20261003": "cross-cutting regression tests from the 2026-10-03 live verification of the PROV-* fixes, replaying recorded responses through five providers",
     "test_general_audit_20260926": "cross-cutting regression tests for audits/implemented/2026-09-26/50_general.md (GEN-1..15) over nine modules; one class per finding",

@@ -7,6 +7,7 @@ import types
 from pathlib import Path
 import numpy as np
 import pytest
+from pyutilz.core.safe_pickle import write_sidecar
 
 def test_f43_distinct_digits_match_the_decimal_rendering():
     """int(frac_part * 10**precision) truncated (0.05063*100000 = 5062.999... -> 5062) and
@@ -136,6 +137,7 @@ def test_f149_pandas_is_imported_lazily(monkeypatch, tmp_path: Path):
 
     path = tmp_path / "m.joblib"
     joblib.dump({"a": 1}, path)
+    write_sidecar(str(path))  # load_file verifies the sidecar by default (audit finding X-05)
 
     real_import = __import__
 
@@ -163,10 +165,12 @@ def test_f50_named_temporary_file_is_accepted():
     with tempfile.NamedTemporaryFile(delete=False) as fh:
         assert serialize({"a": 1}, fh) is True
         name = fh.name
+    write_sidecar(name)  # a file object write gets no sidecar from serialize(); the writer records it
     try:
         assert unserialize(name) == {"a": 1}
     finally:
         os.unlink(name)
+        os.unlink(name + ".sha256")
 
 
 def test_f50_a_non_file_object_raises_typeerror():

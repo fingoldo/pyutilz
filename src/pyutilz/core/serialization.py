@@ -107,6 +107,11 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
                     system.ensure_dir_exists(dirname)
                 with open(fname, "wb") as f:
                     f.write(data)
+                # Written after the payload is closed, so the digest matches the bytes on disk (audit finding X-03):
+                # unserialize() verifies this sidecar by default, so a file written here round-trips without opt-outs.
+                from pyutilz.core.safe_pickle import write_sidecar
+
+                write_sidecar(fname)
             else:
                 fname.write(data)
             return True
@@ -194,18 +199,16 @@ def _unpickle_payload(obj: bytes, compression: Optional[int], max_output_bytes: 
     return pickle.loads(data)  # deserialize-ok: in-memory bytes are the caller's own data; file paths are sidecar-checked ONLY when verify_sidecar=True (default False, X-03: unverified), and file-like input is never checked  # nosec B301 - unverified by default for file paths (see unserialize's verify_sidecar); callers reading a path another user can write must pass verify_sidecar=True
 
 
-def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9, verify_sidecar: bool = False, max_output_bytes: Optional[int] = DEFAULT_MAX_DECOMPRESSED_BYTES) -> Any:
+def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9, verify_sidecar: bool = True, max_output_bytes: Optional[int] = DEFAULT_MAX_DECOMPRESSED_BYTES) -> Any:
     """
     If fname is passed, data will be read from disk.
     Otherwise, obj will be read from memory directl.
     Unpacked data will be returned.
 
-    ``verify_sidecar`` (default False, preserving historical behaviour for existing callers --
-    ``serialize()`` in this same module never writes a ``.sha256`` sidecar, so flipping this
-    default would break every plain ``serialize()``/``unserialize()`` round-trip; use
-    :mod:`pyutilz.core.safe_pickle`'s ``safe_dump``/``safe_load`` instead when you want
-    verification on by default): when True AND ``obj`` is a file path, requires a matching
-    ``<path>.sha256`` sidecar (see :mod:`pyutilz.core.safe_pickle`) before unpickling. Unlike
+    ``verify_sidecar`` (default True, audit finding X-03): when ``obj`` is a file path, a matching ``<path>.sha256``
+    sidecar (see :mod:`pyutilz.core.safe_pickle`) is required before unpickling. ``serialize(obj, path)`` writes that
+    sidecar, so its files round-trip unchanged. A file written before this default, or by another tool, has no sidecar:
+    pass ``verify_sidecar=False`` for such a trusted file, after checking it yourself. Unlike
     every other failure mode in this function, a missing/mismatched sidecar is raised to the
     caller as :class:`pyutilz.core.safe_pickle.PickleVerificationError` -- it is NOT swallowed
     into the generic ``except Exception: logger.exception(...); return None`` path below, so
