@@ -173,10 +173,10 @@ class TestArr2Str:
         small = best_of(1_000)
         large = best_of(10_000)
 
-        # Quadratic would be ~100x; linear ~10x. 30x leaves generous headroom for constant
-        # factors and timer granularity while still failing an O(N**2) regression outright.
+        # Quadratic would be ~100x; linear ~10x. 50x leaves headroom for constant factors and for scheduler noise on a loaded
+        # runner (macOS CI measured 47x for linear code) while still failing an O(N**2) regression outright.
         ratio = large / max(small, 1e-6)
-        assert ratio < 30, f"arr2str looks super-linear: 10x input cost {ratio:.1f}x the time (small={small:.6f}s, large={large:.6f}s)"
+        assert ratio < 50, f"arr2str looks super-linear: 10x input cost {ratio:.1f}x the time (small={small:.6f}s, large={large:.6f}s)"
 
     def test_no_njit_decorator(self):
         """Test that arr2str is NOT compiled with @njit (removed for performance)"""

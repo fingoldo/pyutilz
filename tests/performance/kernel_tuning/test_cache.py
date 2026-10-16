@@ -596,12 +596,17 @@ class TestAsyncSweepHwBusyGate:
         assert ktc._async_sweep_hw_busy() is False
 
     def test_verdict_is_ttl_cached(self, monkeypatch):
-        self._reset()
+        from pyutilz.performance.kernel_tuning import benchmark as bm
+
+        # Own the process-wide verdict cache for this test: an async sweep thread left by an earlier test may store its
+        # own poll between _reset() and the first call, so the first call is not guaranteed to poll the mock.
+        monkeypatch.setattr(bm, "_HW_BUSY_CACHE", None)
         gpu_mod, _ = self._patch(monkeypatch, gpu_load=0.95, cpu_pct=1.0, ttl_zero=False)
         assert ktc._async_sweep_hw_busy() is True
-        # Second call within the TTL must NOT re-poll GPUtil.
+        polls_after_first = gpu_mod.getGPUs.call_count
+        # A second call within the TTL must NOT re-poll GPUtil: the count stays where the first call left it.
         assert ktc._async_sweep_hw_busy() is True
-        assert gpu_mod.getGPUs.call_count == 1
+        assert gpu_mod.getGPUs.call_count == polls_after_first
 
     def test_start_delay_env(self, monkeypatch):
         monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_START_DELAY", "10")

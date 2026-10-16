@@ -44,8 +44,10 @@ def test_concurrency_runs_all_threads():
     lock = threading.Lock()
 
     def fn(_):
+        # Thread objects, not get_ident(): a finished thread's ident can be reused by a later one, so a set of idents
+        # could count two threads for three workers. Holding the objects keeps each one distinct.
         with lock:
-            seen_threads.add(threading.get_ident())
+            seen_threads.add(threading.current_thread())
         time.sleep(0.002)
 
     time_backend(fn, lambda: (0,), concurrency=3, n_iters=2, warmup=0)
