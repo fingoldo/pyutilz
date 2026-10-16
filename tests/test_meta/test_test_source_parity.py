@@ -241,6 +241,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
 # but cover a real concern. Reverse-direction whitelist.
 _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_audit_20261015_runtime": "cross-cutting regression tests for the 2026-10-15 audit findings C-01, C-02, C-03, C-07, C-08, C-09, R-01, R-02, R-03, S-10, X-07, X-18, P-05 over the database, config, cache and resilience modules",
+    "test_printed_advice_messages": "cross-cutting: the refusal messages that advise a keyword (load_file, _alternate_values_clause, build_upsert_query, _normalise_encryption), each pinned by the printed-advice gate",
     "test_audit_20261015_unassigned": "regression tests for the 2026-10-15 audit findings C-04 (system.parallel mmap unlink) and R-04 (pandaslib benchmark temp folder)",
     "test_pricing_tiers_20261003": "cross-cutting: pyutilz.llm._pricing (cache-write rates, long-context tiers) through the xAI, Gemini, OpenAI, Anthropic, DeepSeek and OpenRouter providers",
     "test_providers_live_20261003": "cross-cutting regression tests from the 2026-10-03 live verification of the PROV-* fixes, replaying recorded responses through five providers",
