@@ -40,12 +40,9 @@ _PUBLIC_API_WHITELIST: set[str] = {
     # tracked via the api stability snapshot, not here.
 }
 
-_USER_DEFERRED_DEAD_HELPERS: set[str] = {
-    # Surfaced 2026-04-28 by this meta-test on its first run; maintainer
-    # to review whether to keep, delete, or expose.
-    "llm/exceptions.py::LLMTruncationError",
-    "llm/openai_compat.py::parse_retry_after",
-}
+_USER_DEFERRED_DEAD_HELPERS: set[str] = set()
+# Emptied 2026-10-16: LLMTruncationError is raised by the anthropic, gemini and openai_compat providers, and parse_retry_after
+# has a live caller in openai_compat, so neither is dead any more. The deferral (surfaced 2026-04-28) no longer applies.
 
 
 def _python_files() -> list[Path]:
