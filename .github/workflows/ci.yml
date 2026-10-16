@@ -156,7 +156,7 @@ jobs:
         pytest -m "not gpu" -n auto --dist=loadgroup --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=85 --durations=200
 
     - name: Upload coverage to Codecov
-      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@641677acf514f095914711fc5d5c258c3ca38ada  # v1.22.12  # pragma: allowlist secret
+      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@531a0e51b2343f7b6127a2b1a37aaeceae34618f  # v1.22.12  # pragma: allowlist secret
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       with:
         files: ./coverage.xml
@@ -187,9 +187,9 @@ jobs:
   # https://github.com/fingoldo/py-ci-shared and this repo's pyproject.toml `[tool.ruff] extend`.
   ruff-blocking:
     name: Ruff (real bugs - blocking)
-    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@641677acf514f095914711fc5d5c258c3ca38ada  # v1.22.12  # pragma: allowlist secret
+    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@531a0e51b2343f7b6127a2b1a37aaeceae34618f  # v1.22.12  # pragma: allowlist secret
     with:
-      py-ci-shared-ref: 641677acf514f095914711fc5d5c258c3ca38ada  # v1.22.12  # pragma: allowlist secret
+      py-ci-shared-ref: 531a0e51b2343f7b6127a2b1a37aaeceae34618f  # v1.22.12  # pragma: allowlist secret
       ignore: "C901"
 
   # The shared ruff-blocking job above ignores C901 (its default). This job enforces the complexity
@@ -215,7 +215,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: fingoldo/py-ci-shared
-          ref: c7988d7d79392724bd13b3306ccc61387935dcab  # v1.22.10  # pragma: allowlist secret
+          ref: 531a0e51b2343f7b6127a2b1a37aaeceae34618f  # v1.22.10  # pragma: allowlist secret
           path: py-ci-shared
           persist-credentials: false
 
@@ -229,7 +229,7 @@ jobs:
 
   lint-blocking:
     name: lint + security (blocking, triaged clean)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@641677acf514f095914711fc5d5c258c3ca38ada  # v1.22.12  # pragma: allowlist secret
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@531a0e51b2343f7b6127a2b1a37aaeceae34618f  # v1.22.12  # pragma: allowlist secret
     with:
       source-path: src/pyutilz
       codespell-paths: src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md
@@ -241,9 +241,9 @@ jobs:
 
   lint-advisory:
     name: lint (advisory)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@641677acf514f095914711fc5d5c258c3ca38ada  # v1.22.12  # pragma: allowlist secret
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@531a0e51b2343f7b6127a2b1a37aaeceae34618f  # v1.22.12  # pragma: allowlist secret
     with:
-      py-ci-shared-ref: 641677acf514f095914711fc5d5c258c3ca38ada  # v1.22.12  # pragma: allowlist secret
+      py-ci-shared-ref: 531a0e51b2343f7b6127a2b1a37aaeceae34618f  # v1.22.12  # pragma: allowlist secret
       source-path: src/pyutilz
 
   build:
