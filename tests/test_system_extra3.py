@@ -843,8 +843,10 @@ class TestEnsureIdleDevices:
         with patch.dict("sys.modules", {"GPUtil": None}), patch("builtins.__import__", side_effect=_selective_import_error("GPUtil")), patch(
             "time.time", side_effect=[0, 0, 6]
         ), patch("time.sleep"):
-            result = ensure_idle_devices(duration_seconds=5, min_cpu_free_ram_gb=1.0)
-        assert result is True
+            result = ensure_idle_devices(duration_seconds=5, min_gpu_free_ram_gb=1.0)
+        # Fail closed: a GPU free-RAM minimum that cannot be verified (no GPUtil) refuses to report the devices idle.
+        assert result is False
+        assert any("GPUtil not available" in str(c.args[0]) for c in mock_logger.warning.call_args_list)
 
     @patch("pyutilz.system.system.misc.logger")
     @patch("pyutilz.system.system.misc.psutil")

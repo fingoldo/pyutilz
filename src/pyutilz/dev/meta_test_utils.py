@@ -281,7 +281,11 @@ def _is_foreign_symbol(obj: object) -> bool:
         return True
     # Skip callables (functions / methods) imported from stdlib -- their parameter names drift across Python
     # versions (``os.path.join(path, *paths)`` -> ``join(a, *p)``).
-    if inspect.isfunction(obj) or inspect.isbuiltin(obj):
+    # Unwrap first: on Python 3.11+ ``urllib.parse.urlsplit`` is an ``lru_cache`` wrapper, which is not ``isfunction``, so
+    # without the unwrap the same stdlib callable was foreign on 3.8 and in the surface on 3.14 (api snapshot CI diff).
+    target = inspect.unwrap(obj) if callable(obj) else obj
+    if inspect.isfunction(target) or inspect.isbuiltin(target):
+        owner = getattr(target, "__module__", None)
         if owner and not owner.startswith("pyutilz"):
             return True
     return False
