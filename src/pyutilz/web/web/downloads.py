@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Tuple
 if TYPE_CHECKING:
     import requests
 
-from ..exceptions import UnsafeURLError
+from ..exceptions import UnsafeURLError, WebError
 from ..url_guard import require_http_url
 from ._common import _error_log_throttle, logger
 
@@ -76,7 +76,7 @@ def download_in_parallel(
 MAX_REDIRECTS = 5  # X-16: a download follows at most this many redirects
 
 
-class RedirectRefusedError(Exception):
+class RedirectRefusedError(WebError):
     """A redirect chain that would send a download to a non-https hop, or that is longer than MAX_REDIRECTS."""
 
 

@@ -4,7 +4,7 @@ Split out of the historical flat ``pyutilz.core.pythonlib`` module; re-exported 
 package ``__init__`` to preserve the public import surface.
 """
 
-from typing import Iterable, Optional, Union
+from typing import Iterable, List, Optional, Union
 
 from ._common import importlib, logger, subprocess, sys
 
@@ -23,15 +23,15 @@ def _package_present(import_name: str) -> Optional[bool]:
         return None
 
 
-def _warn_unchecked(unchecked_packages: list[str]) -> None:
+def _warn_unchecked(unchecked_packages: List[str]) -> None:
     """Log, once, the packages whose presence check raised: they are installed as if missing."""
     if unchecked_packages:
         logger.warning("Could not check whether these packages are installed, so they are treated as missing: %s", unchecked_packages)
 
 
-def _install_each(packages_to_install: list[str]) -> list[str]:
+def _install_each(packages_to_install: List[str]) -> List[str]:
     """Pip-install each package in turn, isolating failures; return the ones that did not install (each logged at WARNING)."""
-    failed_packages: list[str] = []
+    failed_packages: List[str] = []
     for pkg in packages_to_install:
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])  # nosec B603 - sys.executable is the running interpreter's own path (not attacker-controlled), and pkg names come from ensure_installed's own `packages` argument (developer-supplied dependency list), not from untrusted/network input. Using `sys.executable -m pip` (rather than a bare "pip" resolved via PATH search order) guarantees installation into the running interpreter's own environment and avoids Windows' CWD-before-PATH executable search order picking up an attacker-planted pip.exe/pip.bat.
@@ -56,7 +56,7 @@ def ensure_installed(packages: Union[str, Iterable[str]], sep: str = " ") -> Non
             else:
                 packages = [packages]
         missing_packages = []
-        unchecked_packages: list[str] = []
+        unchecked_packages: List[str] = []
         for pkg in packages:
             import_name = known_abbreviations.get(pkg, pkg)
             present = _package_present(import_name)

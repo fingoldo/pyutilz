@@ -240,7 +240,7 @@ class TestHardwareMonitorGuards:
         assert mon.n_sampling_errors == 0, "an unreported CPU frequency is a known absence, not a sampling failure"
         # No clock is recorded rather than a fabricated 0.0: a zero would be averaged in later as a
         # genuine "the CPU ran at 0 MHz" measurement.
-        assert mon.cpu_clocks == []
+        assert list(mon.cpu_clocks) == []
         assert mon.get_average_utilization()["cpu_clocks_mhz"] is None
 
     def test_missing_cpu_freq_attribute_is_a_reported_absence(self, monkeypatch):
@@ -266,8 +266,8 @@ class TestHardwareMonitorGuards:
             mon.query_utilization()
 
         assert mon.n_sampling_errors == 0, "a missing platform capability must not be reported as a sampling error"
-        assert mon.cpu_utilizaton == [1.0], "the rest of the sample must still be collected"
-        assert mon.cpu_clocks == []
+        assert list(mon.cpu_utilizaton) == [1.0], "the rest of the sample must still be collected"
+        assert list(mon.cpu_clocks) == []
         stats = mon.get_average_utilization()
         assert stats["cpu_clocks_mhz"] is None
         assert "cpu_freq" in stats["unavailable_metrics"], stats["unavailable_metrics"]

@@ -92,6 +92,8 @@ jobs:
           pip install "pandas==${PANDAS_VERSION}"
           if [[ "${PANDAS_VERSION}" == 1.* ]]; then
             pip install "numpy<2"
+            # pyarrow 17+ requires NumPy 2 at import time, so the same leg caps it at the last NumPy-1 release.
+            pip install "pyarrow<17"
           else
             pip install "numpy<2.5"
           fi
