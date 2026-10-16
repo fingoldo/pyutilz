@@ -6,6 +6,7 @@ real database, a real network endpoint, or a real LLM provider.
 
 import asyncio
 import re
+import types
 from unittest.mock import Mock, patch
 import pytest
 from pyutilz.database.db.upsert import build_upsert_query
@@ -560,15 +561,22 @@ def test_f23_undecodable_non_json_body_returns_none(tmp_path):
 # F24 -- PortHealthTracker
 # ---------------------------------------------------------------------------
 
-def test_f24_successes_are_trimmed_to_the_window():
+def test_f24_successes_are_trimmed_to_the_window(monkeypatch):
     """report_error trimmed; report_success did not, so a healthy pool retained one sample per
-    request per port for the whole process lifetime."""
-    tracker = PortHealthTracker(window=0.001)
-    import time as _time
+    request per port for the whole process lifetime.
+
+    The clock is driven by the test, not by sleep(): on Windows time.monotonic ticks about every 15 ms, so a 10 ms
+    sleep against a 1 ms window could leave the clock unchanged and the old samples inside the window.
+    """
+    import pyutilz.web.proxy.base as proxy_base
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(proxy_base, "time", types.SimpleNamespace(monotonic=lambda: clock["now"]))
+    tracker = PortHealthTracker(window=1.0)
 
     for _ in range(500):
         tracker.report_success(7)
-    _time.sleep(0.01)
+    clock["now"] += 2.0
     tracker.report_success(7)
     assert tracker._ports[7].total < 500
 
