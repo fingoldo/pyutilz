@@ -7,6 +7,7 @@ from typing import Callable, Iterable, Optional
 
 import logging
 
+from . import _scan_cache
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, severity_rank
 from .mutable_defaults import scan_mutable_defaults, scan_parameter_aliasing_mutation
 from .closures import scan_late_binding_closures
@@ -632,6 +633,14 @@ def run_all_checked(
     by running scanners concurrently across cores.
     """
     selected = _select_scanners(checks)
+    # Only built-in scanners are cached: a scanner registered at runtime (a test's, say) is not a function of the tree alone.
+    cacheable = all(_module_registered(name, _SCANNERS[name]) for name in selected)
+    if cacheable:
+        digest, signature = _scan_cache.cache_key(root, selected, exclude_dirs)
+        cached = _scan_cache.load(digest, signature)
+        if cached is not None:
+            hit: tuple[list[Finding], dict[str, str]] = cached  # stored by this same function as an (out, failed) tuple
+            return hit
 
     out: list[Finding] = []
     failed: dict[str, str] = {}
@@ -647,6 +656,8 @@ def run_all_checked(
 
     # Unknown severities rank -1, i.e. ABOVE P0: a stray value is loud, never silently last.
     out.sort(key=lambda f: (severity_rank(f.severity), f.check, f.file, f.line))
+    if cacheable:
+        _scan_cache.store(digest, signature, (out, failed))
     return out, failed
 
 
