@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- CI badges and the `badges` branch are documented in [docs/guides/ci_badges.md](docs/guides/ci_badges.md): the pandas and polars
+  matrix badges read their shields.io JSON from the orphan `badges` branch, which keeps bot commits out of `master`'s history
+  and out of its CI trigger. The README now shows both badges.
+
 - `dev.benchmarking.sweep_backend_grid`: `prune_dominated` (default on), `prune_ratio` (3.0) and `prune_min_ms` (1000). A cell is no longer
   timed when, on every axis, the same variant already beat every rival by `prune_ratio` or more in the two previous steps with the
   slowest rival costing at least `prune_min_ms` and its lead not shrinking; the cell takes that variant as its decision and no variant is run
