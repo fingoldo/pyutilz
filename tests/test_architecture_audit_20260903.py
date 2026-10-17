@@ -465,7 +465,7 @@ def test_every_module_left_in_the_scanner_package_is_a_source_scanner():
 
     package_dir = Path(facade.__file__).parent
     non_scanner = []
-    infrastructure = {"__init__.py", "__main__.py", "_base.py", "registry.py", "cli.py", "meta_test_utils.py", "field_text_agreement.py"}
+    infrastructure = {"__init__.py", "__main__.py", "_base.py", "_scan_cache.py", "registry.py", "cli.py", "meta_test_utils.py", "field_text_agreement.py"}
     for py in sorted(package_dir.glob("*.py")):
         if py.name in infrastructure:
             continue

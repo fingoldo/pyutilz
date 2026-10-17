@@ -554,6 +554,29 @@ def _warn_lossy_float32_int_columns(df: pd.DataFrame, cols: Sequence[Any]) -> No
         logger.warning("ensure_dataframe_float32_convertability: integer column(s) %s have values beyond 2**24 -- Float32 cast will lose exact-integer precision.", lossy)
 
 
+def _arrow_type(dtype: object) -> object:
+    """The pyarrow type behind a pandas ArrowDtype, or None for any other dtype.
+
+    Read from the Arrow type rather than with pandas.api.types.is_integer_dtype/is_float_dtype: on pandas 1.5 those return
+    False for ``int64[pyarrow]``, so an Arrow column was skipped and never converted (the pandas-1.5 CI leg).
+    """
+    return getattr(dtype, "pyarrow_dtype", None)
+
+
+def _arrow_is_integer(dtype: object) -> bool:
+    import pyarrow as pa
+
+    arrow_type = _arrow_type(dtype)
+    return arrow_type is not None and pa.types.is_integer(arrow_type)
+
+
+def _arrow_is_float(dtype: object) -> bool:
+    import pyarrow as pa
+
+    arrow_type = _arrow_type(dtype)
+    return arrow_type is not None and pa.types.is_floating(arrow_type)
+
+
 def ensure_dataframe_float32_convertability(
     df: Union[pd.DataFrame, pl.DataFrame],
     verbose: bool = False,
@@ -598,14 +621,12 @@ def ensure_dataframe_float32_convertability(
 
         # --- PyArrow-backed dtypes ---
         if arrow_backed.any():
-            from pandas.api.types import is_integer_dtype, is_float_dtype
-
-            _warn_lossy_float32_int_columns(df, [col for col in df.columns[arrow_backed] if is_integer_dtype(df[col].dtype)])
+            _warn_lossy_float32_int_columns(df, [col for col in df.columns[arrow_backed] if _arrow_is_integer(df[col].dtype)])
 
             for col in df.columns[arrow_backed]:
                 pa_dtype = df[col].dtype
                 # Infer numeric Arrow types
-                if is_integer_dtype(pa_dtype) or is_float_dtype(pa_dtype):
+                if _arrow_is_integer(pa_dtype) or _arrow_is_float(pa_dtype):
                     if verbose:
                         logger.info("Converting PyArrow column '%s' (%s) -> float32[pyarrow]", col, pa_dtype)
                     df[col] = df[col].astype("float32[pyarrow]")
