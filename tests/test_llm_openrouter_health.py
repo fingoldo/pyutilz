@@ -132,10 +132,14 @@ class TestHealthTTLCache:
                 "pricing": {"prompt": "0.00000015", "completion": "0.0000006"},
             },
         }
+        # The injected catalogue must read as fresh: an earlier test may have left a real fetch time behind, which would make it
+        # stale and send list_openrouter_models to the network mock (467 models instead of 1).
+        openrouter_module._MODELS_CATALOGUE_FETCHED_AT = float("inf")
         openrouter_module._HEALTH_CACHE.clear()
 
     def teardown_method(self):
         openrouter_module._MODELS_CATALOGUE = None
+        openrouter_module._MODELS_CATALOGUE_FETCHED_AT = float("inf")
         openrouter_module._HEALTH_CACHE.clear()
 
     def _patch_one_model_healthy(self):
