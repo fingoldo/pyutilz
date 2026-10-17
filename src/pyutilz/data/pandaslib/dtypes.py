@@ -564,6 +564,7 @@ def _arrow_type(dtype: object) -> object:
 
 
 def _arrow_is_integer(dtype: object) -> bool:
+    """True for a pandas ArrowDtype whose pyarrow type is an integer type."""
     import pyarrow as pa
 
     arrow_type = _arrow_type(dtype)
@@ -571,6 +572,7 @@ def _arrow_is_integer(dtype: object) -> bool:
 
 
 def _arrow_is_float(dtype: object) -> bool:
+    """True for a pandas ArrowDtype whose pyarrow type is a floating-point type."""
     import pyarrow as pa
 
     arrow_type = _arrow_type(dtype)

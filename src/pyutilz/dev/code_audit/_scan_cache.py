@@ -51,6 +51,7 @@ def cache_key(root: Path, selected: Iterable[str], exclude_dirs: frozenset[str])
 
 
 def _cache_dir() -> Path:
+    """The per-user memo directory, created on first use and private to its owner on POSIX."""
     path = Path.home() / ".cache" / "pyutilz-code-audit"
     path.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
