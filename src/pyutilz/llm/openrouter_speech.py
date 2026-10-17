@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
+from .exceptions import LLMProviderError
+
 httpx: Any
 try:
     import httpx  # type: ignore[no-redef]
@@ -51,7 +53,7 @@ _NON_RETRYABLE = frozenset({400, 401, 403, 404, 405, 410, 413, 422})
 _CATALOGUE_TTL_S = 3600.0
 
 
-class SpeechError(RuntimeError):
+class SpeechError(LLMProviderError, RuntimeError):
     """A speech request failed; ``status`` is the HTTP status (0 when none), ``retryable`` whether another try could help."""
 
     def __init__(self, message: str, status: int = 0, retryable: bool = False, kind: str = "other") -> None:
@@ -61,7 +63,7 @@ class SpeechError(RuntimeError):
         self.kind = kind  # one of error_kind()'s groups, for reporting
 
 
-class SpeechInputError(ValueError):
+class SpeechInputError(LLMProviderError, ValueError):
     """The request is invalid before any network call (empty text, over the model cap, bad speed). Nothing is billed."""
 
 
