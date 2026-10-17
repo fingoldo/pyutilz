@@ -639,8 +639,7 @@ def run_all_checked(
         digest, signature = _scan_cache.cache_key(root, selected, exclude_dirs)
         cached = _scan_cache.load(digest, signature)
         if cached is not None:
-            hit: tuple[list[Finding], dict[str, str]] = cached  # stored by this same function as an (out, failed) tuple
-            return hit
+            return cached
 
     out: list[Finding] = []
     failed: dict[str, str] = {}
@@ -657,7 +656,7 @@ def run_all_checked(
     # Unknown severities rank -1, i.e. ABOVE P0: a stray value is loud, never silently last.
     out.sort(key=lambda f: (severity_rank(f.severity), f.check, f.file, f.line))
     if cacheable:
-        _scan_cache.store(digest, signature, (out, failed))
+        _scan_cache.store(digest, signature, out, failed)
     return out, failed
 
 

@@ -13,11 +13,13 @@ entry there (the predictable-temp-path class of defect).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
-import pickle
 from pathlib import Path
-from typing import Any, Iterable, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
+
+from ._base import Finding
 
 logger = logging.getLogger(__name__)
 
@@ -56,26 +58,42 @@ def _cache_dir() -> Path:
     return path
 
 
-def load(digest: str, signature: Tuple) -> Any:
-    """The stored result for *digest* when its signature still matches, else None.
-
-    Typed ``Any``: the caller stored exactly one shape under this digest, so it is the one that comes back.
-    """
+def load(digest: str, signature: Tuple) -> Optional[Tuple[List[Finding], Dict[str, str]]]:
+    """The stored ``(findings, failed)`` for *digest* when its signature still matches, else None."""
     try:
-        with open(_cache_dir() / f"{digest}.pkl", "rb") as handle:
-            stored_signature, result = pickle.load(handle)
-    except (OSError, EOFError, pickle.UnpicklingError, ValueError, AttributeError, ImportError):  # best-effort: an unreadable entry only costs a fresh scan
+        with open(_cache_dir() / f"{digest}.json", "r", encoding="utf-8") as handle:
+            document = json.load(handle)
+        if document["signature"] != _as_json(signature):
+            return None
+        findings = [Finding(**entry) for entry in document["findings"]]
+        failed = dict(document["failed"])
+    except (OSError, ValueError, KeyError, TypeError):  # best-effort: an unreadable or foreign entry only costs a fresh scan
         return None
-    return result if stored_signature == signature else None
+    return findings, failed
 
 
-def store(digest: str, signature: Tuple, result: object) -> None:
-    """Write *result* for *digest*; a failure to write only costs the next run its scan."""
+def store(digest: str, signature: Tuple, findings: List[Finding], failed: Dict[str, str]) -> None:
+    """Write the result for *digest* as JSON; a failure to write only costs the next run its scan."""
+    document = {
+        "signature": _as_json(signature),
+        "findings": [{name: getattr(finding, name) for name in _FINDING_FIELDS} for finding in findings],
+        "failed": dict(failed),
+    }
     try:
-        target = _cache_dir() / f"{digest}.pkl"
+        target = _cache_dir() / f"{digest}.json"
         tmp = target.with_suffix(".tmp")
-        with open(tmp, "wb") as handle:
-            pickle.dump((signature, result), handle)
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(document, handle)
         os.replace(tmp, target)
     except OSError as exc:
         logger.warning("code-audit scan cache not written (%s); the next run scans again", exc)
+
+
+_FINDING_FIELDS = ("check", "severity", "file", "line", "snippet", "detail")
+
+
+def _as_json(value: object) -> object:
+    """Tuples become lists, so a signature read back from JSON compares equal to the one computed in memory."""
+    if isinstance(value, (tuple, list)):
+        return [_as_json(item) for item in value]
+    return value

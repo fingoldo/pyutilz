@@ -27,7 +27,7 @@ def test_a_cached_scan_equals_a_fresh_scan(tmp_path, cache_home):
     second, second_failed = run_all_checked(tmp_path / "tree")
     assert [(f.check, f.file, f.line) for f in second] == [(f.check, f.file, f.line) for f in first]
     assert second_failed == first_failed
-    assert list(cache_home.rglob("*.pkl")), "the second run should have read the memo this one wrote"
+    assert list(cache_home.rglob("*.json")), "the second run should have read the memo this one wrote"
 
 
 def test_editing_a_file_is_never_served_from_the_memo(tmp_path, cache_home):
@@ -51,7 +51,7 @@ def test_a_runtime_registered_scanner_is_not_memoised(tmp_path, cache_home, monk
     (tmp_path / "tree").mkdir()
     (tmp_path / "tree" / "mod.py").write_text(GOOD, encoding="utf-8")
     run_all_checked(tmp_path / "tree", checks=["runtime_only_probe"])
-    assert not list(cache_home.rglob("*.pkl"))
+    assert not list(cache_home.rglob("*.json"))
 
 
 def test_a_corrupt_memo_entry_falls_back_to_a_fresh_scan(tmp_path, cache_home):
@@ -59,6 +59,6 @@ def test_a_corrupt_memo_entry_falls_back_to_a_fresh_scan(tmp_path, cache_home):
     tree.mkdir()
     (tree / "mod.py").write_text(BAD, encoding="utf-8")
     run_all_checked(tree)
-    for entry in cache_home.rglob("*.pkl"):
-        entry.write_bytes(b"not a pickle")
+    for entry in cache_home.rglob("*.json"):
+        entry.write_bytes(b"not json")
     assert run_all_checked(tree)[0], "a corrupt entry must not hide the finding"
