@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pyutilz.llm`: the OpenRouter speech client (`OpenRouterSpeech`, `SpeechRequest`, `SpeechResult`, `SpeechAccounting`, `SpeechError`, `SpeechInputError`) is re-exported lazily from the package; the module `pyutilz.llm.openrouter_speech` is unchanged.
+
 - CI badges and the `badges` branch are documented in [docs/guides/ci_badges.md](docs/guides/ci_badges.md): the pandas and polars
   matrix badges read their shields.io JSON from the orphan `badges` branch, which keeps bot commits out of `master`'s history
   and out of its CI trigger. The README now shows both badges.

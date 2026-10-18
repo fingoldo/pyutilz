@@ -7,6 +7,8 @@ if TYPE_CHECKING:
     from ._progress import track_stream_progress
     from .config import clear_llm_settings_cache
     from .openai_tokens import num_tokens_from_messages, num_tokens_from_string
+    from .generation_metadata import fetch_generation_metadata
+    from .openrouter_speech import OpenRouterSpeech, SpeechAccounting, SpeechError, SpeechInputError, SpeechRequest, SpeechResult
 
 # Resolved on first attribute access by __getattr__ (lazy: the defining modules may need optional extras).
 _REEXPORTS = {
@@ -15,6 +17,13 @@ _REEXPORTS = {
     "clear_llm_settings_cache": "config",
     "num_tokens_from_messages": "openai_tokens",
     "num_tokens_from_string": "openai_tokens",
+    "OpenRouterSpeech": "openrouter_speech",
+    "SpeechRequest": "openrouter_speech",
+    "SpeechResult": "openrouter_speech",
+    "SpeechAccounting": "openrouter_speech",
+    "SpeechError": "openrouter_speech",
+    "SpeechInputError": "openrouter_speech",
+    "fetch_generation_metadata": "generation_metadata",
 }
 
 

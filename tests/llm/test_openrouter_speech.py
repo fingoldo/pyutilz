@@ -26,9 +26,12 @@ AUDIO = b"ID3" + b"\x01" * 100
 
 @pytest.fixture(autouse=True)
 def _fresh_catalogue() -> Any:
-    osp._catalogue_cache.update(at=0.0, data={})
+    osp.reset_speech_catalogue_cache()
     yield
-    osp._catalogue_cache.update(at=0.0, data={})
+    osp.reset_speech_catalogue_cache()
+
+
+seen_params: List[Any] = []
 
 
 def _client(speech: Callable[[httpx.Request], httpx.Response], models: Any = None) -> httpx.Client:
@@ -36,7 +39,7 @@ def _client(speech: Callable[[httpx.Request], httpx.Response], models: Any = Non
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/models"):
-            assert request.url.params["output_modalities"] == "speech"
+            seen_params.append(request.url.params.get("output_modalities"))  # checked by the test, not inside the handler
             return httpx.Response(200, json=listing)
         return speech(request)
 
@@ -139,7 +142,8 @@ def test_accounting_totals_chars_bytes_cost_and_request_bytes() -> None:
     s.synthesize(_req("cde"))
     snap = s.accounting.snapshot()
     assert (snap["calls"], snap["chars"], snap["audio_bytes"]) == (2, 5, 2 * len(AUDIO))
-    assert snap["cost_usd"] == pytest.approx(5 * PRICE) and snap["request_bytes"] > 0 and snap["failures"] == 0
+    upload = sum(len(json.dumps(_req(x).body(), ensure_ascii=False).encode("utf-8")) for x in ("ab", "cde"))
+    assert snap["cost_usd"] == pytest.approx(5 * PRICE) and snap["request_bytes"] == upload and snap["failures"] == 0
 
 
 def test_unpriced_model_reports_unknown_cost_not_zero() -> None:
@@ -156,6 +160,12 @@ def test_catalogue_outage_yields_unknown_price_not_crash() -> None:
 
     s = OpenRouterSpeech("key", client=httpx.Client(transport=httpx.MockTransport(boom)), sleep=lambda s: None)
     assert s.synthesize(_req("abc")).cost_usd is None
+
+
+def test_catalogue_is_requested_for_speech_models_only() -> None:
+    seen_params.clear()
+    osp.price_per_char(MODEL, _client(lambda r: httpx.Response(500), models={"data": []}))
+    assert seen_params == ["speech"]
 
 
 def test_price_per_char_reads_prompt_price_and_caches() -> None:
@@ -182,7 +192,7 @@ def test_429_retried_honouring_retry_after_then_succeeds() -> None:
 
     s = _speech(handler, sleep=sleeps.append)
     assert s.synthesize(_req()).audio == AUDIO
-    assert sleeps == [7.0] and state["n"] == 2
+    assert 7.0 <= sleeps[0] <= 7.0 * (1 + osp.RETRY_AFTER_JITTER) and state["n"] == 2
     assert s.accounting.calls == 1  # the failed attempt is not a billed call
 
 
@@ -237,12 +247,13 @@ def test_transport_error_is_retried() -> None:
     assert _speech(handler).synthesize(_req()).audio == AUDIO and state["n"] == 2
 
 
-def test_backoff_grows_between_attempts() -> None:
+def test_backoff_grows_between_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(osp.random, "random", lambda: 0.5)  # jitter multiplier 1.0: the sequence is exact
     sleeps: List[float] = []
     s = _speech(lambda r: httpx.Response(500), sleep=sleeps.append, max_retries=3, backoff_s=2.0)
     with pytest.raises(SpeechError):
         s.synthesize(_req())
-    assert len(sleeps) == 3 and sleeps[2] > sleeps[0]
+    assert sleeps == [2.0, 4.0, 8.0]
 
 
 def test_cache_hit_recorded_separately_from_calls() -> None:
@@ -275,6 +286,7 @@ def test_client_is_shared_safely_across_threads() -> None:
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda i: s.synthesize(_req(f"w{i}")), range(64)))
     assert s.accounting.calls == 64
+    assert len(seen) > 1  # the eight workers really ran on several threads through one client
 
 
 def test_missing_api_key_rejected() -> None:
@@ -287,6 +299,14 @@ def test_context_manager_closes_owned_client_only() -> None:
     with OpenRouterSpeech("k", client=shared):
         pass
     assert not shared.is_closed
+
+
+def test_owned_client_is_closed_on_exit() -> None:
+    owned = OpenRouterSpeech("k")
+    inner = owned._client
+    with owned:
+        assert not inner.is_closed
+    assert inner.is_closed
 
 
 def test_retries_and_error_groups_are_counted() -> None:
@@ -320,3 +340,13 @@ def test_terminal_failure_carries_its_kind() -> None:
     with pytest.raises(SpeechError) as info:
         s.synthesize(_req())
     assert info.value.kind == "http_4xx"
+
+
+def test_fetch_credits_reads_total_usage_and_remaining() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": {"total_credits": 10.0, "total_usage": 2.5}})))
+    assert osp.fetch_credits("k", client) == {"total_credits": 10.0, "total_usage": 2.5, "remaining": 7.5}
+
+
+def test_fetch_credits_failure_is_none_not_an_exception() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    assert osp.fetch_credits("k", client) is None
