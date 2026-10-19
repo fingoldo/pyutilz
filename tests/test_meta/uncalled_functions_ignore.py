@@ -38,5 +38,9 @@ UNCALLED_FUNCTIONS_IGNORE: Dict[str, str] = {
     "get_utc_unix_timestamp": "Public current UTC Unix timestamp in whole seconds in system.system.misc; exposed by the star import of system.system; no in-repo caller.",
     "report_large_objects": "Public logger of module-level globals above a deep-size threshold in system.system.misc; exposed by the star import of system.system; no in-repo caller.",
     "tqdmu_lazy_start": "Public tqdm drop-in that starts its elapsed clock lazily in system.system.misc; exposed by the star import of system.system; no in-repo caller.",
+    "fetch_credits": "Public OpenRouter balance read in llm.openrouter_speech; glossum calls it for the balance check and spend guard.",
+    "fetch_generation_provider": "Public GET /generation lookup in llm.openrouter_speech returning the serving provider; glossum calls it for the manifest.",
+    "reset_speech_catalogue_cache": "Public cache reset for the speech catalogue in llm.openrouter_speech, for tests and long-lived callers.",
+    "_retry_after": "Private Retry-After parser in llm.openrouter_speech used through the public speech client path (called by name from its retry loop).",
     "compute_total_gpus_ram": "Public aggregate GPU RAM statistics over a list of GPU info dicts in system.system.probing; exposed by the star import of system.system; no in-repo caller.",
 }
