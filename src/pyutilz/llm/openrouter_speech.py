@@ -120,6 +120,7 @@ class SpeechError(LLMProviderError, RuntimeError):
     """
 
     def __init__(self, message: str, status: int = 0, retryable: bool = False, kind: str = "other", details: Optional[Mapping[str, Any]] = None) -> None:
+        """Keep the HTTP status, the retry flag and the failure kind next to the message."""
         super().__init__(message)
         self.status = status
         self.retryable = retryable
@@ -132,10 +133,12 @@ class SpeechInputError(LLMProviderError, ValueError):
 
 
 def _is_number(value: Any) -> bool:
+    """Whether a value is a real number; a bool is not one."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _is_int(value: Any) -> bool:
+    """Whether a value is an integer; a bool is not one."""
     return isinstance(value, int) and not isinstance(value, bool)
 
 
@@ -194,6 +197,7 @@ class SpeechRequest:
             self._check_speed(self.speed)
 
     def _check_options(self) -> None:
+        """Refuse seed, language and normalisation options the speech API would reject."""
         if self.seed is not None and (not _is_int(self.seed) or not SEED_RANGE[0] <= self.seed <= SEED_RANGE[1]):
             raise SpeechInputError(f"seed must be an integer within {SEED_RANGE}, got {self.seed!r}")
         if self.language_code is not None and (not isinstance(self.language_code, str) or not self.language_code.strip()):
@@ -215,6 +219,7 @@ class SpeechRequest:
                 raise SpeechInputError(f"voice_settings.{name} must be a number within {UNIT_RANGE}, got {value!r}")
 
     def _check_speed(self, speed: Any) -> None:
+        """Refuse a speed that is not finite, not allowed for this model, or outside the accepted range."""
         if not _is_number(speed) or not math.isfinite(speed):
             raise SpeechInputError(f"speed must be a finite number, got {speed!r}")
         if self.model in SPEED_REJECTING_MODELS and speed != 1.0:
@@ -223,6 +228,7 @@ class SpeechRequest:
             raise SpeechInputError(f"speed must be within {SPEED_RANGE}, got {speed}")
 
     def _has_elevenlabs_options(self) -> bool:
+        """Whether any option that only ElevenLabs models accept is set."""
         return any(
             value is not None
             for value in (
@@ -314,14 +320,17 @@ class SpeechAccounting:
     errors_by_kind: Dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Create the lock that guards the counters; a dataclass cannot declare it as a field."""
         self._lock = threading.Lock()
 
     def __getstate__(self) -> Dict[str, Any]:
+        """Drop the lock so the accounting object can be pickled."""
         state = self.__dict__.copy()
         state.pop("_lock", None)
         return state
 
     def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Restore the state and recreate the lock dropped by pickling."""
         self.__dict__.update(state)
         self._lock = threading.Lock()
 
@@ -692,6 +701,7 @@ class OpenRouterSpeech:
         max_audio_bytes: int = MAX_AUDIO_BYTES,
         max_call_s: float = MAX_CALL_S,
     ) -> None:
+        """Store the client settings and check that an API key and an HTTP client are available."""
         if not api_key:
             raise ValueError("OpenRouter API key not provided")
         if client is None and httpx is None:
@@ -708,9 +718,11 @@ class OpenRouterSpeech:
         self._client = client if client is not None else httpx.Client(headers={"Authorization": f"Bearer {api_key}"}, timeout=httpx.Timeout(timeout_s, connect=10.0))
 
     def __enter__(self) -> "OpenRouterSpeech":
+        """Return the client so it can be used in a with-statement."""
         return self
 
     def __exit__(self, *exc: Any) -> None:
+        """Close the client when the with-statement ends."""
         self.close()
 
     def close(self) -> None:
@@ -719,6 +731,7 @@ class OpenRouterSpeech:
             self._client.close()
 
     def _cancelled(self) -> bool:
+        """Whether the caller has asked for the in-flight request to stop."""
         return self.cancel is not None and self.cancel.is_set()
 
     def _wait(self, delay: float) -> None:

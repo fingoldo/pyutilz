@@ -55,7 +55,7 @@ EXAMPLE_BODY: Dict[str, Any] = json.loads(
     "session_id": null,
     "preset_id": null,
     "api_type": "tts",
-    "id": "gen-tts-1792299598-95fpbNDPILj8SQkhmSHL",  # pragma: allowlist secret
+    "id": "gen-tts-PLACEHOLDER",
     "upstream_id": "UjsPJs8Hi5rdDgzIEc7C",
     "provider_responses": [
       {
@@ -79,6 +79,7 @@ EXAMPLE_BODY: Dict[str, Any] = json.loads(
 }
 """
 )
+EXAMPLE_BODY["data"]["id"] = GEN_ID
 
 EXPECTED_FULL: Dict[str, Any] = {
     "provider_name": "ElevenLabs",

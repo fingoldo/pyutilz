@@ -249,7 +249,12 @@ def test_r2_lib9_ill_typed_options_are_refused_before_any_call(build: Callable[[
 
 
 def test_r2_lib9_well_typed_options_are_accepted() -> None:
-    _req(voice_settings={"stability": 0, "similarity_boost": 1.0, "use_speaker_boost": True}, seed=7, language_code="ru").validate()
+    request = _req(voice_settings={"stability": 0, "similarity_boost": 1.0, "use_speaker_boost": True}, seed=7, language_code="ru")
+    request.validate()
+    options = request.body()["provider"]["options"]["elevenlabs"]
+    assert options["voice_settings"] == {"stability": 0, "similarity_boost": 1.0, "use_speaker_boost": True}
+    assert options["seed"] == 7
+    assert options["language_code"] == "ru"
 
 
 # R2-LIB-10: 1 and 1.0 are one setting and share one cache key
