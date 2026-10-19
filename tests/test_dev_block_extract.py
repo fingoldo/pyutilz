@@ -296,3 +296,82 @@ def test_a_later_independent_use_of_a_conditional_name_is_not_an_output(tmp_path
             return 1
         """)
     assert any("only on some paths" in m for m in plan_extraction(q, "f", 2, 3).problems)
+
+
+def test_an_elif_clause_is_refused_as_a_block(tmp_path):
+    """An ``elif`` is an ``if`` node in its parent's ``orelse``; lifting it alone would write ``elif`` at helper indent (a
+    SyntaxError). The plan refuses it and apply writes nothing; a range inside the elif's own body still plans."""
+    p = _write(tmp_path, "m.py", """\
+        def f(x):
+            if x > 1:
+                y = 1
+            elif x > 0:
+                y = 2
+            else:
+                y = 3
+            return y
+        """)
+    before = p.read_text()
+    plan = plan_extraction(p, "f", 4, 7)  # the elif clause spans its own else: branch
+    assert any("elif" in m for m in plan.problems)
+    with pytest.raises(ValueError):
+        apply_extraction(plan, "_h", tmp_path / "s.py", "s", core_module="m")
+    assert p.read_text() == before and not (tmp_path / "s.py").exists()
+    assert not plan_extraction(p, "f", 5, 5).problems  # a range inside the elif body still plans  # the elif body alone is an ordinary block
+
+
+def test_a_name_bound_only_by_a_loop_before_the_block_is_not_an_input(tmp_path):
+    """``k`` is a loop target and ``seen`` a name assigned only in the loop body; the loop may run zero times, so the block
+    reading them eagerly would raise UnboundLocalError. Neither may be passed as an input; the plan reports both."""
+    p = _write(tmp_path, "m.py", """\
+        def f(items, n):
+            for k in items:
+                seen = k
+            total = n + k + seen
+            return total
+        """)
+    plan = plan_extraction(p, "f", 4, 4)
+    assert "k" not in plan.inputs and "seen" not in plan.inputs
+    assert any("some paths" in m and "k" in m and "seen" in m for m in plan.problems)
+
+
+def test_a_loop_bound_name_read_by_a_later_block_is_not_an_input(tmp_path):
+    """Inside a loop, ``prev`` is bound only after the block in the loop body: on the first iteration it is unbound."""
+    p = _write(tmp_path, "m.py", """\
+        def f(items):
+            out = []
+            for x in items:
+                if x:
+                    out.append(prev)
+                prev = x
+            return out
+        """)
+    plan = plan_extraction(p, "f", 5, 5)
+    assert "prev" not in plan.inputs
+    assert any("some paths" in m and "prev" in m for m in plan.problems)
+
+
+def test_a_name_pre_bound_before_the_loop_is_passed_and_behaves_the_same(tmp_path, monkeypatch):
+    """The caller's fix: pre-bind the name before the loop. It is then definitely bound, so the plan passes it and the
+    extracted code behaves like the original on the zero-iteration path too."""
+    monkeypatch.syspath_prepend(str(tmp_path))
+    pkg = tmp_path / "pb"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    core = _write(pkg, "core.py", """\
+        def f(items, n):
+            seen = None
+            for k in items:
+                seen = k
+            total = n
+            total = total + (seen or 0)
+            return total
+        """)
+    expected_f = _import(core, "pb.core", monkeypatch).f
+    before = [expected_f([], 2), expected_f([4, 5], 2)]
+    plan = plan_extraction(core, "f", 6, 6)
+    assert not plan.problems and plan.inputs == ["total", "seen"]
+    apply_extraction(plan, "_add", pkg / "stages.py", "pb.stages", core_module="pb.core")
+    monkeypatch.delitem(sys.modules, "pb.core", raising=False)
+    after_f = _import(core, "pb.core", monkeypatch).f
+    assert [after_f([], 2), after_f([4, 5], 2)] == before

@@ -14,11 +14,16 @@ Name events are recorded in EVALUATION order, scope-aware:
 * ``except ... as e`` binds ``e`` for its handler only (Python deletes it afterwards), so neither the binding nor the
   reads of ``e`` inside that handler are data flow of the enclosing function.
 
-A plan's ``inputs`` are the names the range reads before binding them that exist earlier in the function (parameters
-included); ``outputs`` are the names it binds that the rest of the function reads. An output that already existed is
-also an input (the range may bind it on some paths only); a NEW name bound only on some paths and read later cannot be
-returned safely, so such a range is refused, as is one containing ``return``/``yield``/``await`` at its own level, a
-``break``/``continue`` leaving it, or ``global``/``nonlocal``.
+A plan's ``inputs`` are the names the range reads before binding them that are bound on EVERY path before the range
+(parameters included); ``outputs`` are the names it binds that the rest of the function reads. An output that already
+existed is also an input (the range may bind it on some paths only); a NEW name bound only on some paths and read later
+cannot be returned safely, so such a range is refused, as is one containing ``return``/``yield``/``await`` at its own
+level, a ``break``/``continue`` leaving it, or ``global``/``nonlocal``.
+
+A name that is bound before the range on only SOME paths (a loop target, a name assigned only in a loop body or in one
+arm of an ``if``) is never passed as an input: an eager read of it would raise ``UnboundLocalError`` on the path that
+skipped the binding. Such a name is reported in ``problems``; the caller binds it before the enclosing loop or ``if``
+(a sentinel such as ``seen = None``) and plans again. An ``elif`` clause is refused as a range (see :func:`plan_extraction`).
 
 **State mode** (:func:`apply_extraction` ``state_names``): long-lived locals that many stages share can live on one
 state object instead of being threaded through 20-40 parameters. Those names are rewritten to ``<state>.<name>`` in the
@@ -311,6 +316,96 @@ def _definitely_bound(stmts: list) -> set:
     return out
 
 
+def _must_bind(stmts: list) -> set:
+    """Names EVERY path through ``stmts`` binds: plain statements, both arms of an if/else, a with-body, a try whose body
+    (or else) and every handler bind them. A loop body may run zero times, so a loop binds nothing for certain."""
+    out: set = set()
+    for st in stmts:
+        if isinstance(st, ast.If):
+            if st.orelse:
+                out |= _must_bind(st.body) & _must_bind(st.orelse)
+        elif isinstance(st, (ast.With, ast.AsyncWith)):
+            out |= _must_bind(st.body)
+        elif isinstance(st, ast.Try):
+            normal = _must_bind(st.body) | _must_bind(st.orelse)
+            if st.handlers:
+                normal &= set.intersection(*[_must_bind(h.body) for h in st.handlers])
+            out |= normal | _must_bind(st.finalbody)
+        elif isinstance(st, (ast.For, ast.AsyncFor, ast.While, *_MATCH)):
+            continue
+        else:
+            out |= {n for _, k, n in name_events([st]) if k == "store"}
+    return out
+
+
+def _holds(stmts: list, probe: ast.AST) -> bool:
+    """True when ``probe`` is one of the statements in ``stmts`` or nested anywhere below them."""
+    return any(n is probe for s in stmts for n in ast.walk(s))
+
+
+def _target_names(target: ast.AST) -> set:
+    """Every plain name a ``for`` target or ``with ... as`` target binds."""
+    return {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+
+
+def _definite_before(body: list, probe: ast.stmt) -> set:
+    """Names bound on EVERY path that reaches ``probe`` (the block's first statement) from the top of ``body``: the
+    statements before it, plus what the enclosing constructs bind on the way in (a loop target, a ``with`` target, an
+    ``except ... as`` name)."""
+    out: set = set()
+    for st in body:
+        if st is probe:
+            return out
+        if _holds([st], probe):
+            return out | _definite_inside(st, probe)
+        out |= _must_bind([st])
+    return out
+
+
+def _entry_names(st: ast.stmt, probe: ast.stmt) -> set:
+    """Names a compound statement ``st`` binds on the way into ``probe``: a for target, ``with ... as`` targets, and the
+    ``except ... as`` name of the handler that contains it."""
+    out: set = set()
+    if isinstance(st, (ast.For, ast.AsyncFor)) and _holds(st.body, probe):
+        out |= _target_names(st.target)
+    if isinstance(st, (ast.With, ast.AsyncWith)) and _holds(st.body, probe):
+        for item in st.items:
+            if item.optional_vars is not None:
+                out |= _target_names(item.optional_vars)
+    for handler in getattr(st, "handlers", []):
+        if handler.name and _holds(handler.body, probe):
+            out.add(handler.name)
+    return out
+
+
+def _sub_bodies(st: ast.stmt) -> list:
+    """Every statement list nested directly in ``st``: its bodies, else/finally clauses, handler and match-case bodies."""
+    bodies = [getattr(st, fld) for fld in ("body", "orelse", "finalbody") if isinstance(getattr(st, fld, None), list)]
+    bodies += [h.body for h in getattr(st, "handlers", [])] + [c.body for c in getattr(st, "cases", [])]
+    return [b for b in bodies if b]
+
+
+def _definite_inside(st: ast.stmt, probe: ast.stmt) -> set:
+    """What the compound statement ``st`` (which contains ``probe``) binds on every path into ``probe``."""
+    out = _entry_names(st, probe)
+    for sub in _sub_bodies(st):
+        if _holds(sub, probe):
+            return out | _definite_before(sub, probe)
+    return out
+
+
+def _elif_ids(fn: ast.AST, src_lines: list) -> set:
+    """ids of the ``if`` nodes that are ``elif`` clauses: the sole statement of a parent's ``orelse`` whose source line
+    starts with ``elif`` (an ``else:`` followed by a nested ``if`` starts with ``if`` and is not one)."""
+    out: set = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.If) and len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+            child = node.orelse[0]
+            if src_lines[child.lineno - 1].lstrip().startswith("elif"):
+                out.add(id(child))
+    return out
+
+
 def _never_reads_prior_binding(later: list, name: str) -> bool:
     """True when the statements after the block cannot read the value the block bound to ``name``: a top-level statement
     rebinds it before any read, or every read of it sits inside a ``for`` loop whose own target rebinds it."""
@@ -341,6 +436,20 @@ def _module_names(tree: ast.Module) -> set:
     return names
 
 
+def _route_outputs(plan: ExtractionPlan, defined_before: set, definite: set, top: set) -> set:
+    """An output that existed before the block is an input when bound on every path before it; otherwise, when the block
+    does not bind it on every path either, it is returned as needing a pre-bind. Returns those names."""
+    needs: set = set()
+    for n in plan.outputs:
+        if n in defined_before:
+            if n in definite:
+                if n not in plan.inputs:
+                    plan.inputs.append(n)
+            elif n not in top:
+                needs.add(n)
+    return needs
+
+
 def _plan_block_io(
     plan: ExtractionPlan,
     fn: Any,
@@ -351,33 +460,44 @@ def _plan_block_io(
     start: int,
     end: int,
     in_loop: bool,
-) -> None:
-    """Fill ``plan.inputs``, ``plan.outputs`` and ``plan.problems`` for the block's reads and bindings."""
+) -> set:
+    """Fill ``plan.inputs``, ``plan.outputs`` and ``plan.problems`` for the block's reads and bindings. Returns the names
+    that are bound before the block on only some paths and that the block needs (reads them before binding them, or
+    returns them while binding them on some paths only): these are never inputs and are reported as problems."""
     outside = [e for e in events if not (start <= e[0] <= end)]
     before = outside if in_loop else [e for e in outside if e[0] < start]
     after = outside if in_loop else [e for e in outside if e[0] > end]
     defined_before = params | {n for _, k, n in before if k == "store"}
+    definite = params | (_definite_before(fn.body, block[0]) if block else set())
+    needs_pre_bind: set = set()
     bound: set = set()
     for _, kind, name in block_ev:
-        if kind == "load" and name not in bound and name in defined_before and name not in plan.inputs:
-            plan.inputs.append(name)
+        if kind == "load" and name not in bound and name in defined_before and name not in plan.inputs and name not in needs_pre_bind:
+            if name in definite:
+                plan.inputs.append(name)
+            else:
+                needs_pre_bind.add(name)
         if kind == "store":
             bound.add(name)
     read_after = {n for _, k, n in after if k == "load"}
     plan.outputs = sorted(n for n in bound if n in read_after)
-    for n in plan.outputs:
-        if n in defined_before and n not in plan.inputs:
-            plan.inputs.append(n)
     # a NEW name bound only on some paths cannot be returned safely - unless the rest of the function never reads the
     # block's binding (it rebinds first, or only reads it inside loops that rebind it)
     top = _definitely_bound(block)
+    needs_pre_bind |= _route_outputs(plan, defined_before, definite, top)
     later = [s for s in fn.body if s.lineno > end] if not in_loop else []
     unread = {n for n in plan.outputs if n not in defined_before and n not in top and later and _never_reads_prior_binding(later, n)}
     plan.outputs = [n for n in plan.outputs if n not in unread]
     risky = [n for n in plan.outputs if n not in defined_before and n not in top]
     if risky:
         plan.problems.append(f"new names bound only on some paths and read later: {risky}")
+    if needs_pre_bind:
+        plan.problems.append(
+            f"names bound before the block on only some paths (a loop target, or a name bound only in a loop body or one arm of an if): "
+            f"{sorted(needs_pre_bind)}; bind them before the enclosing loop or if (e.g. a None sentinel) so the block receives them"
+        )
     plan.problems += _control_problems(block)
+    return needs_pre_bind
 
 
 def _guarded_import_ids(fn: ast.AST) -> set:
@@ -419,7 +539,13 @@ def _move_lazy_imports_out_of_inputs(plan: ExtractionPlan, fn: ast.AST, src_text
 
 
 def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> ExtractionPlan:
-    """Plan lifting the statements of ``func`` spanning lines ``[start, end]`` (one body, whole statements) into a helper."""
+    """Plan lifting the statements of ``func`` spanning lines ``[start, end]`` (one body, whole statements) into a helper.
+
+    An ``elif`` clause is refused: its range is a clause of its parent ``if``, and a helper cannot start with ``elif``.
+    Lift the whole ``if`` statement, or a range inside one of its branches, instead. A name bound before the range on
+    only some paths is never an input (see the module docstring); it is reported in ``problems`` so the caller can
+    pre-bind it. ``problems`` non-empty means the range cannot be lifted as planned.
+    """
     path = Path(path)
     src_text = path.read_text(encoding="utf-8")
     tree = ast.parse(src_text, filename=str(path))
@@ -430,17 +556,25 @@ def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> 
         plan.problems.append(f"lines {start}-{end} are not whole statements of one body of {func}")
         return plan
     block = [s for s in stmts if s.lineno >= start and s.end_lineno <= end]
+    elifs = _elif_ids(fn, src_text.splitlines())
+    clauses = [s.lineno for s in block if id(s) in elifs]
+    if clauses:
+        plan.problems.append(
+            f"lines {start}-{end} are an elif clause (line {clauses[0]}); an elif cannot be lifted alone, so extract the whole "
+            f"if statement or statements inside one of its branches"
+        )
+        return plan
     params = _Events._params(fn.args)
     events = name_events(fn.body)
     block_ev = name_events(block)
-    _plan_block_io(plan, fn, block, events, block_ev, params, start, end, in_loop)
+    needs_pre_bind = _plan_block_io(plan, fn, block, events, block_ev, params, start, end, in_loop)
     module = _module_names(tree)
     bound = {n for _, k, n in block_ev if k == "store"}
     loads = {n for _, k, n in block_ev if k == "load"}
     plan.module_names = sorted(n for n in loads - bound - set(plan.inputs) if n in module and not hasattr(builtins, n))
     imports = _move_lazy_imports_out_of_inputs(plan, fn, src_text, params)
     fn_bound = {n for _, k, n in events if k == "store"} | params
-    unknown = sorted(n for n in loads - bound - set(plan.inputs) if n in fn_bound and n not in module and n not in imports)
+    unknown = sorted(n for n in loads - bound - set(plan.inputs) if n in fn_bound and n not in module and n not in imports and n not in needs_pre_bind)
     if unknown:
         plan.problems.append(f"reads names of {func} not available at the block: {unknown}")
     return plan
