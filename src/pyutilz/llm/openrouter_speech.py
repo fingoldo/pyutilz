@@ -577,6 +577,7 @@ def _warn_if_expiring(model: str, entry: Mapping[str, Any]) -> None:
     try:
         expires = dt.date.fromisoformat(str(raw)[:10])
     except ValueError:
+        logger.warning("speech model %s has an unreadable expiration_date %r; no expiry warning for it", model, raw)
         return
     days_left = (expires - dt.datetime.now(dt.timezone.utc).date()).days
     if days_left <= _EXPIRY_WARNING_DAYS:
