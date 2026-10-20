@@ -74,7 +74,14 @@ _HEALTH_CACHE_LOCK = threading.Lock()
 # ``import pyutilz.llm.openrouter_provider as _pkg`` at import time and would
 # otherwise race the globals (they only READ ``_pkg.X`` at call time, so the
 # partially-initialised module object is fine as long as the names exist).
-from pyutilz.llm.openrouter_provider._endpoint_prices import EndpointPrice, endpoint_price, endpoint_prices
+from pyutilz.llm.openrouter_provider._endpoint_prices import (
+    EndpointPrice,
+    claimed_quantization,
+    endpoint_price,
+    endpoint_prices,
+    endpoints_for_provider,
+    warm_endpoint_cache,
+)
 from pyutilz.llm.openrouter_provider._catalogue import (
     _ensure_catalogue_warm_async,
     _fetch_models_catalogue,
@@ -97,8 +104,11 @@ from pyutilz.llm.openrouter_provider._provider import OpenRouterProvider
 
 __all__ = [
     "EndpointPrice",
+    "claimed_quantization",
     "endpoint_price",
     "endpoint_prices",
+    "endpoints_for_provider",
+    "warm_endpoint_cache",
     "OpenRouterProvider",
     "list_openrouter_models",
     "clear_openrouter_caches",
