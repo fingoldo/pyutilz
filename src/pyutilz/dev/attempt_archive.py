@@ -94,6 +94,10 @@ class AttemptRecord:
     cost_usd: Optional[float] = None
     generation_id: Optional[str] = None
     upstream_provider: Optional[str] = None
+    # The pinned endpoint tag (None when unpinned) and the weight format the provider CLAIMS for the serving endpoint ("unknown"
+    # is a real answer; None means not known). Both optional so records written before they existed still load.
+    endpoint_tag: Optional[str] = None
+    quantization: Optional[str] = None
     finish_reason: Optional[str] = None
     native_finish_reason: Optional[str] = None
     provider: Optional[str] = None
@@ -311,6 +315,8 @@ def metadata_from_provider(provider: Any) -> Dict[str, Any]:
         "cost_usd": _float_or_none(cost),
         "generation_id": _str_or_none(pick("generation_id", getattr(provider, "last_generation_id", None))),
         "upstream_provider": _str_or_none(pick("upstream_provider", getattr(provider, "last_upstream_provider", None))),
+        "endpoint_tag": _str_or_none(pick("endpoint_tag", getattr(provider, "last_endpoint_tag", None))),
+        "quantization": _str_or_none(pick("quantization", getattr(provider, "last_quantization", None))),
         "finish_reason": _str_or_none(pick("finish_reason", getattr(provider, "_last_finish_reason", None))),
         "native_finish_reason": _str_or_none(pick("native_finish_reason", getattr(provider, "last_native_finish_reason", None))),
         "model": _str_or_none(pick("requested_model", getattr(provider, "model_name", None), getattr(provider, "model", None))),

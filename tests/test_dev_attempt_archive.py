@@ -442,3 +442,19 @@ class TestTheMetadataReader:
         meta = metadata_from_provider(provider)
 
         assert (meta["generation_id"], meta["cost_usd"], meta["prompt_tokens"], meta["upstream_provider"]) == ("from-summary", 0.004, 99, "FromAttr")
+
+
+class TestTheEndpointAndTheClaimedQuantizationAreRecorded:
+    def test_a_provider_that_reports_them_has_them_in_the_metadata(self) -> None:
+        provider = _FakeProvider([])
+        provider.last_endpoint_tag = "deepinfra/fp8"
+        provider.last_quantization = "fp8"
+
+        meta = metadata_from_provider(provider)
+
+        assert (meta["endpoint_tag"], meta["quantization"]) == ("deepinfra/fp8", "fp8")
+
+    def test_a_provider_that_knows_nothing_leaves_both_none_so_old_callers_are_unaffected(self) -> None:
+        meta = metadata_from_provider(_FakeProvider([]))
+
+        assert (meta["endpoint_tag"], meta["quantization"]) == (None, None)

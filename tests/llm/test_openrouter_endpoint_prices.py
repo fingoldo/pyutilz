@@ -1,6 +1,11 @@
 """Per-endpoint OpenRouter prices: a pinned provider is priced at its own rate, not the cheapest listing's."""
 
-from pyutilz.llm.openrouter_provider._endpoint_prices import parse_endpoint_prices
+import time
+
+import pytest
+
+from pyutilz.llm.openrouter_provider import _endpoint_prices as ep
+from pyutilz.llm.openrouter_provider._endpoint_prices import claimed_quantization, parse_endpoint_prices
 
 
 def _payload():
@@ -40,3 +45,53 @@ def test_the_cache_read_rate_is_kept_when_listed_and_none_when_not():
     prices = {p.tag: p for p in parse_endpoint_prices(_payload())}
     assert prices["together"].cache_read_per_1m == 0.006
     assert prices["open-inference/fp4"].cache_read_per_1m == 0.0016
+
+
+def _quant_payload():
+    def one(provider, tag, quant):
+        item = {"provider_name": provider, "tag": tag, "pricing": {"prompt": "0.0000001", "completion": "0.0000002"}}
+        if quant is not None:
+            item["quantization"] = quant
+        return item
+
+    return {
+        "data": {
+            "endpoints": [
+                one("DeepInfra", "deepinfra/fp8", "fp8"),
+                one("DeepInfra", "deepinfra/fp8/flex", "fp8"),
+                one("DeepInfra", "deepinfra/fp4", "fp4"),
+                one("Together", "together", "unknown"),
+                one("Mystery", "mystery", None),
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def warm_cache(monkeypatch):
+    monkeypatch.setattr(ep, "_CACHE", {"vendor/model": (time.monotonic(), parse_endpoint_prices(_quant_payload()))})
+
+
+def test_the_claimed_quantization_is_parsed_and_an_absent_field_stays_none():
+    by_tag = {p.tag: p.quantization for p in parse_endpoint_prices(_quant_payload())}
+    assert by_tag["deepinfra/fp8"] == "fp8" and by_tag["together"] == "unknown" and by_tag["mystery"] is None
+
+
+def test_a_pinned_tag_names_one_endpoint_and_a_slug_names_every_endpoint_under_it(warm_cache):
+    assert claimed_quantization("vendor/model", tag="deepinfra/fp8") == "fp8"
+    assert claimed_quantization("vendor/model", tag="deepinfra") == "fp4,fp8"
+
+
+def test_an_unpinned_call_is_looked_up_by_provider_name_and_unknown_is_a_real_answer(warm_cache):
+    assert claimed_quantization("vendor/model", provider_name="together") == "unknown"
+    assert claimed_quantization("vendor/model", provider_name="DeepInfra") == "fp4,fp8"
+
+
+def test_nothing_known_is_none_never_a_guess_and_a_cold_cache_makes_no_request(warm_cache, monkeypatch):
+    def forbidden(*_a, **_k):
+        raise AssertionError("claimed_quantization must not touch the network")
+
+    monkeypatch.setattr(ep.httpx, "get", forbidden)
+    assert claimed_quantization("vendor/model", provider_name="Mystery") is None
+    assert claimed_quantization("other/model", tag="deepinfra/fp8") is None
+    assert claimed_quantization("vendor/model") is None

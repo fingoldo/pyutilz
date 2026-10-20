@@ -693,6 +693,27 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         if isinstance(cache_src, str):
             self.last_response_cache_source_id = cache_src
 
+    @property
+    def last_endpoint_tag(self) -> str | None:
+        """The endpoint tag or provider slug this provider is pinned to with fallbacks off, else None (an unpinned call is
+        served by whatever route OpenRouter picks, named after the fact in ``last_upstream_provider``)."""
+        only = getattr(self, "_provider_only", None)
+        if only and len(only) == 1 and not getattr(self, "_provider_allow_fallbacks", True):
+            return str(only[0])
+        return None
+
+    @property
+    def last_quantization(self) -> str | None:
+        """The weight format the serving provider claims (``fp8``, ``unknown`` ...), or None when nothing is known.
+
+        Read from the endpoint cache only, so a recorded call never waits on the network: call
+        ``pyutilz.llm.openrouter_provider.warm_endpoint_cache(model)`` once before a run to fill it. Several matching endpoints
+        with different labels come back comma-joined, so an ambiguous answer reads as ambiguous.
+        """
+        from pyutilz.llm.openrouter_provider._endpoint_prices import claimed_quantization
+
+        return claimed_quantization(catalogue_id(self.model_name), tag=self.last_endpoint_tag or "", provider_name=self.last_upstream_provider or "")
+
     def _input_cost_per_1m(self, model: str) -> float:
         """Return the USD cost per 1M input tokens for ``model``."""
         return _per_token_cost_pair(catalogue_id(model))[0]
