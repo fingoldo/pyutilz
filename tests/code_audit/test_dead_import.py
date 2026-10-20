@@ -293,3 +293,87 @@ import json
 """)
     findings = scan_possibly_dead_import(tmp_path)
     assert [f.file for f in findings] == ["pkg/util.py"]
+
+
+# ---- possibly_dead_import: consumer roots (tests/, benchmarks/) ---------------------------
+
+
+def _package_with_facade(tmp_path: Path) -> Path:
+    """``src/pkg/facade.py`` re-exports ``helper`` and ``orphan``; nothing in ``src/`` uses either."""
+    pkg = tmp_path / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    _write(pkg, "impl.py", """
+def helper():
+    return 1
+
+
+def orphan():
+    return 2
+""")
+    _write(pkg, "facade.py", """
+from pkg.impl import helper
+from pkg.impl import orphan
+""")
+    return pkg
+
+
+def test_possibly_dead_import_consumer_attribute_access_keeps_reexport_used(tmp_path: Path):
+    """A re-export consumed only by a test as ``facade.helper`` is live: with ``tests/`` passed as a
+    consumer root the scan of ``src/pkg`` must not report it. ``orphan`` stays flagged (no consumer)."""
+    pkg = _package_with_facade(tmp_path)
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    _write(tests, "test_facade.py", """
+import pkg.facade as facade
+
+
+def test_it():
+    assert facade.helper() == 1
+""")
+    assert [f.snippet for f in scan_possibly_dead_import(pkg)] == ["from pkg.impl import helper", "from pkg.impl import orphan"]
+    findings = scan_possibly_dead_import(pkg, consumer_roots=[tests])
+    assert [f.snippet for f in findings] == ["from pkg.impl import orphan"]
+
+
+def test_possibly_dead_import_consumer_from_import_keeps_reexport_used(tmp_path: Path):
+    pkg = _package_with_facade(tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    benchmarks.mkdir()
+    _write(benchmarks, "bench_facade.py", """
+from pkg.facade import helper
+""")
+    findings = scan_possibly_dead_import(pkg, consumer_roots=[benchmarks])
+    assert [f.snippet for f in findings] == ["from pkg.impl import orphan"]
+
+
+def test_possibly_dead_import_consumer_files_are_never_reported(tmp_path: Path):
+    """Consumer roots only add usage evidence: an unused import inside a test is not a finding of this scan."""
+    pkg = _package_with_facade(tmp_path)
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    _write(tests, "test_unused.py", """
+import os
+""")
+    assert not [f for f in scan_possibly_dead_import(pkg, consumer_roots=[tests]) if "test_unused" in f.file]
+
+
+def test_run_all_checked_passes_consumer_roots_to_dead_import_scanner(tmp_path: Path):
+    """The consumer roots reach the scanner through the public dispatch, not only when it is called directly."""
+    from pyutilz.dev.code_audit.registry import run_all_checked
+
+    pkg = _package_with_facade(tmp_path)
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    _write(tests, "test_facade.py", """
+import pkg.facade as facade
+
+
+def test_it():
+    assert facade.helper() == 1
+""")
+    without, failed = run_all_checked(pkg, checks=["possibly_dead_import"], parallel=False)
+    assert failed == {}
+    assert {f.snippet for f in without} == {"from pkg.impl import helper", "from pkg.impl import orphan"}
+    with_consumers, failed = run_all_checked(pkg, checks=["possibly_dead_import"], parallel=False, consumer_roots=[tests])
+    assert failed == {}
+    assert [f.snippet for f in with_consumers] == ["from pkg.impl import orphan"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import Iterable
 
 from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
@@ -163,7 +164,7 @@ def _from_import_names_by_file(root: Path, exclude_dirs: frozenset[str]) -> dict
     return _corpus_import_index(root, exclude_dirs)[1]
 
 
-def _corpus_import_index(root: Path, exclude_dirs: frozenset[str]) -> "tuple[set[str], dict[Path, set[str]]]":
+def _corpus_import_index(roots: "Path | Iterable[Path]", exclude_dirs: frozenset[str]) -> "tuple[set[str], dict[Path, set[str]]]":
     """Both whole-corpus indexes in ONE ``ast.walk`` per file: the attribute names and the per-file
     ``from ... import`` names.
 
@@ -174,19 +175,20 @@ def _corpus_import_index(root: Path, exclude_dirs: frozenset[str]) -> "tuple[set
     """
     attr_names: set[str] = set()
     by_file: dict[Path, set[str]] = {}
-    for py in _iter_py_files(root, exclude_dirs):
-        tree = _safe_parse(py)
-        if tree is None:
-            continue
-        names: set[str] = set()
-        for node in walk_tree(tree):
-            if isinstance(node, ast.Attribute):
-                attr_names.add(node.attr)
-            elif isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    if alias.name != "*":
-                        names.add(alias.name)
-        by_file[py] = names
+    for root in ([roots] if isinstance(roots, Path) else roots):
+        for py in _iter_py_files(root, exclude_dirs):
+            tree = _safe_parse(py)
+            if tree is None:
+                continue
+            names: set[str] = set()
+            for node in walk_tree(tree):
+                if isinstance(node, ast.Attribute):
+                    attr_names.add(node.attr)
+                elif isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        if alias.name != "*":
+                            names.add(alias.name)
+            by_file[py] = names
     return attr_names, by_file
 
 
@@ -200,6 +202,7 @@ def _is_consumed_by_another_files_from_import(name: str, this_file: Path, from_i
 def scan_possibly_dead_import(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+    consumer_roots: Iterable[Path] = (),
 ) -> list[Finding]:
     """Find a module-level ``import X``/``from X import Y`` binding that's never referenced as a
     bare name anywhere else in its own file, AND never accessed as ``<anything>.Y`` anywhere in
@@ -222,12 +225,17 @@ def scan_possibly_dead_import(
     failure mode; per ``feedback_no_padding_parametric_pins``, this scanner never manufactures a
     finding through guesswork.
 
+    ``consumer_roots`` (e.g. a repo's ``tests/`` and ``benchmarks/``) are indexed for the attribute and
+    ``from X import Y`` lookups above but never themselves scanned for findings: a re-export that only a
+    test or benchmark consumes is live, so it must not be reported as dead in the package it comes from.
+
     Severity: Low (a real but low-urgency hygiene finding -- an unused import costs nothing at
     runtime; the risk it guards against is reader confusion and import-time side-effect surprise,
     not a correctness bug).
     """
     findings: list[Finding] = []
-    corpus_attr_names, from_import_names_by_file = _corpus_import_index(root, exclude_dirs)
+    corpus_roots = [root, *(c for c in consumer_roots if c.is_dir() and c.resolve() != root.resolve())]
+    corpus_attr_names, from_import_names_by_file = _corpus_import_index(corpus_roots, exclude_dirs)
 
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)
