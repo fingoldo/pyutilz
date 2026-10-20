@@ -1,6 +1,7 @@
 """(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
 from __future__ import annotations
 
+import inspect
 from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -390,7 +391,17 @@ def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
     return dict(_SCANNERS)
 
 
-def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]") -> Optional[tuple[list[Finding], Optional[str]]]:
+def _consumer_kwargs(fn: Optional[Callable[..., list[Finding]]], consumer_roots: tuple[Path, ...]) -> dict[str, tuple[Path, ...]]:
+    """``{"consumer_roots": ...}`` when the scanner declares that parameter, else nothing.
+
+    Only the scanners that read consumers take it; the rest keep their ``(root, exclude_dirs)`` signature.
+    """
+    if not consumer_roots or fn is None:
+        return {}
+    return {"consumer_roots": consumer_roots} if "consumer_roots" in inspect.signature(fn).parameters else {}
+
+
+def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str], dict]") -> Optional[tuple[list[Finding], Optional[str]]]:
     """Module-level (picklable) trampoline for ``ProcessPoolExecutor`` -- runs one scanner and
     returns its findings. A bound/local closure can't be pickled for the cross-process call, so
     this indirection is required, not just style.
@@ -405,20 +416,26 @@ def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, fro
     fits alone can fail beside its siblings, and ``run_all`` re-runs it in-process after the pool has released them.
     Otherwise returns ``(findings, error)`` as :func:`_run_scanner` does.
     """
-    name, fn, root, exclude_dirs = args
+    name, fn, root, exclude_dirs, extra = args
     if fn is None:
         fn = _SCANNERS.get(name)
     if fn is None:  # pragma: no cover - guarded against upstream by run_all's resolution pass
         raise KeyError(f"scanner {name!r} is not available in this worker; register_scanner() it before run_all()")
     try:
-        return _run_scanner(name, fn, root, exclude_dirs, reraise_memory_error=True)
+        return _run_scanner(name, fn, root, exclude_dirs, reraise_memory_error=True, extra=extra)
     except MemoryError:
         logger.info("code_audit scanner %r ran out of memory in a worker process; re-running it after the pool closes", name)
         return None
 
 
 def _run_scanner(
-    name: str, fn: Callable[..., list[Finding]], root: Path, exclude_dirs: frozenset[str], *, reraise_memory_error: bool = False
+    name: str,
+    fn: Callable[..., list[Finding]],
+    root: Path,
+    exclude_dirs: frozenset[str],
+    *,
+    reraise_memory_error: bool = False,
+    extra: Optional[dict] = None,
 ) -> tuple[list[Finding], Optional[str]]:
     """Run one scanner, returning ``(findings, error)``; ``error`` is None unless the scanner raised.
 
@@ -428,7 +445,7 @@ def _run_scanner(
     :func:`run_all_checked` tell the caller that the check never ran, which an empty list alone cannot say.
     """
     try:
-        return fn(root, exclude_dirs=exclude_dirs), None
+        return fn(root, exclude_dirs=exclude_dirs, **(extra or {})), None
     except MemoryError:
         if reraise_memory_error:
             raise
@@ -550,7 +567,9 @@ def _select_scanners(checks: Optional[Iterable[str]]) -> list[str]:
     return selected
 
 
-def _run_scanners_parallel(selected: list[str], root: Path, exclude_dirs: frozenset[str]) -> tuple[list[Finding], dict[str, str]]:
+def _run_scanners_parallel(
+    selected: list[str], root: Path, exclude_dirs: frozenset[str], consumer_roots: tuple[Path, ...] = ()
+) -> tuple[list[Finding], dict[str, str]]:
     """Run the selected scanners across a process pool; any the pool cannot take are run in this process.
 
     Returns the findings and a ``{scanner name: error}`` map of the scanners that raised.
@@ -564,14 +583,15 @@ def _run_scanners_parallel(selected: list[str], root: Path, exclude_dirs: frozen
     # A worker resolves a built-in from its own re-imported registry (nothing to pickle); a
     # scanner registered at runtime by the parent exists only here, so its callable is sent.
     # An unpicklable one (a closure, a bound method) can't cross at all - it runs in-process.
-    tasks: list[tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]] = []
+    tasks: list[tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str], dict]] = []
     local_only: list[str] = []
     for name in selected:
         fn = _SCANNERS[name]
+        extra = _consumer_kwargs(fn, consumer_roots)
         if _module_registered(name, fn):
-            tasks.append((name, None, root, exclude_dirs))
+            tasks.append((name, None, root, exclude_dirs, extra))
         elif _is_picklable(fn):
-            tasks.append((name, fn, root, exclude_dirs))
+            tasks.append((name, fn, root, exclude_dirs, extra))
         else:
             local_only.append(name)
     out: list[Finding] = []
@@ -587,7 +607,7 @@ def _run_scanners_parallel(selected: list[str], root: Path, exclude_dirs: frozen
                     if error is not None:
                         failed[name] = error
     for name in local_only:
-        findings, error = _run_scanner(name, _SCANNERS[name], root, exclude_dirs)
+        findings, error = _run_scanner(name, _SCANNERS[name], root, exclude_dirs, extra=_consumer_kwargs(_SCANNERS[name], consumer_roots))
         out.extend(findings)
         if error is not None:
             failed[name] = error
@@ -599,6 +619,7 @@ def run_all(
     checks: Optional[Iterable[str]] = None,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
     parallel: bool = True,
+    consumer_roots: Iterable[Path] = (),
 ) -> list[Finding]:
     """Run every (or selected) scanner against ``root`` and return all
     findings in encounter order. Sort by (severity, check, file, line)
@@ -607,7 +628,7 @@ def run_all(
     A scanner that raises contributes no findings and only a WARNING log here; a caller that must not read
     that as "clean" should use :func:`run_all_checked`, which also returns the failed scanners.
     """
-    findings, _failed = run_all_checked(root, checks=checks, exclude_dirs=exclude_dirs, parallel=parallel)
+    findings, _failed = run_all_checked(root, checks=checks, exclude_dirs=exclude_dirs, parallel=parallel, consumer_roots=consumer_roots)
     return findings
 
 
@@ -616,6 +637,7 @@ def run_all_checked(
     checks: Optional[Iterable[str]] = None,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
     parallel: bool = True,
+    consumer_roots: Iterable[Path] = (),
 ) -> tuple[list[Finding], dict[str, str]]:
     """Like :func:`run_all`, but returns ``(findings, failed)`` where ``failed`` maps each scanner that raised
     to its ``"ExcType: message"`` error. A non-empty ``failed`` means that check's findings are unknown, so a
@@ -633,10 +655,11 @@ def run_all_checked(
     by running scanners concurrently across cores.
     """
     selected = _select_scanners(checks)
+    consumers = tuple(Path(c) for c in consumer_roots)
     # Only built-in scanners are cached: a scanner registered at runtime (a test's, say) is not a function of the tree alone.
     cacheable = all(_module_registered(name, _SCANNERS[name]) for name in selected)
     if cacheable:
-        digest, signature = _scan_cache.cache_key(root, selected, exclude_dirs)
+        digest, signature = _scan_cache.cache_key(root, selected, exclude_dirs, consumers)
         cached = _scan_cache.load(digest, signature)
         if cached is not None:
             return cached
@@ -644,11 +667,11 @@ def run_all_checked(
     out: list[Finding] = []
     failed: dict[str, str] = {}
     if parallel and len(selected) >= _MIN_SCANNERS_FOR_PARALLEL:
-        par_findings, failed = _run_scanners_parallel(selected, root, exclude_dirs)
+        par_findings, failed = _run_scanners_parallel(selected, root, exclude_dirs, consumers)
         out.extend(par_findings)
     else:
         for name in selected:
-            findings, error = _run_scanner(name, _SCANNERS[name], root, exclude_dirs)
+            findings, error = _run_scanner(name, _SCANNERS[name], root, exclude_dirs, extra=_consumer_kwargs(_SCANNERS[name], consumers))
             out.extend(findings)
             if error is not None:
                 failed[name] = error

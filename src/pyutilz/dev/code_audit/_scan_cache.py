@@ -42,10 +42,19 @@ def _signature(root: Path, exclude_dirs: frozenset[str]) -> Tuple[Tuple[str, int
     return tuple(entries)
 
 
-def cache_key(root: Path, selected: Iterable[str], exclude_dirs: frozenset[str]) -> Tuple[str, Tuple]:
-    """A hex digest for the run, and the signature it was computed from (stored alongside, compared on read)."""
-    signature = (_signature(root, exclude_dirs), _signature(_PACKAGE_DIR, frozenset({"__pycache__"})))
-    description = (str(root.resolve()), tuple(sorted(selected)), tuple(sorted(exclude_dirs)))
+def cache_key(root: Path, selected: Iterable[str], exclude_dirs: frozenset[str], consumer_roots: Iterable[Path] = ()) -> Tuple[str, Tuple]:
+    """A hex digest for the run, and the signature it was computed from (stored alongside, compared on read).
+
+    ``consumer_roots`` are extra trees a scanner may read (see ``scan_possibly_dead_import``): their file
+    stats join the signature, so editing a test that consumes a re-export invalidates the cached run.
+    """
+    consumers = tuple(sorted(str(c.resolve()) for c in consumer_roots))
+    signature = (
+        _signature(root, exclude_dirs),
+        _signature(_PACKAGE_DIR, frozenset({"__pycache__"})),
+        tuple((c, _signature(Path(c), exclude_dirs)) for c in consumers),
+    )
+    description = (str(root.resolve()), tuple(sorted(selected)), tuple(sorted(exclude_dirs)), consumers)
     digest = hashlib.sha256(repr(description).encode("utf-8")).hexdigest()
     return digest, signature
 
