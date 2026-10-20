@@ -9,11 +9,14 @@ price the endpoint it pinned, or see the whole spread.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 _ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{model}/endpoints"
 _TTL_SECONDS = 3600.0
@@ -38,6 +41,7 @@ def _per_1m(raw: Any) -> float | None:
     try:
         return float(raw) * 1_000_000
     except (TypeError, ValueError):
+        logger.warning("non-numeric endpoint price %r; treating that endpoint as unpriced", raw)
         return None
 
 
@@ -78,6 +82,7 @@ def endpoint_prices(model: str, *, timeout: float = 10.0) -> list[EndpointPrice]
         resp.raise_for_status()
         prices = parse_endpoint_prices(resp.json())
     except Exception:
+        logger.warning("endpoint price fetch for %s failed; returning no prices (the failure is not cached)", model, exc_info=True)
         return []
     _CACHE[model] = (now, prices)
     return prices
