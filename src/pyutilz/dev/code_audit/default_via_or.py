@@ -405,7 +405,7 @@ def _is_in_boolean_context(node: ast.AST, parent_map: dict[int, tuple[ast.AST, s
         return False
 
 
-_BOOLEAN_VALUED_CALL_NAMES = frozenset({"isinstance", "issubclass", "hasattr", "callable", "all", "any"})
+_BOOLEAN_VALUED_CALL_NAMES = frozenset({"bool", "isinstance", "issubclass", "hasattr", "callable", "all", "any"})
 
 # Attribute-form boolean reducers: ``arr.all()`` / ``series.any()`` (numpy/pandas) are exactly as
 # boolean-valued as the builtin ``all``/``any`` above, just spelled as a method call instead of a
@@ -646,7 +646,73 @@ def _is_wrapped_in_bool_call(node: ast.AST, parent_map: dict[int, tuple[ast.AST,
     return field == "args" and isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name) and parent.func.id == "bool" and len(parent.args) == 1
 
 
-def _pair_is_exempt(lhs: ast.AST, rhs: ast.AST) -> bool:
+def _is_text_fallback(rhs: ast.AST) -> bool:
+    """The RHS is a string literal or an f-string: a label or message shown when the left side is empty.
+
+    Measured on py-ci-shared (2026-10-21): 141 of 177 hits were this shape or a boolean context, and each reviewed hit was a display
+    default (``", ".join(names) or "none"``, ``name or "<module>"``, ``exc.msg or "invalid syntax"``, ``f"{x or '?'}"``). A text fallback
+    cannot change a numeric or flag setting, so the trap the scanner exists for does not arise here.
+    """
+    return isinstance(rhs, ast.JoinedStr) or (isinstance(rhs, ast.Constant) and isinstance(rhs.value, str))
+
+
+_PATH_TYPE_NAMES = frozenset({"Path", "PurePath", "PosixPath", "WindowsPath"})
+
+
+def _annotation_is_path(annotation: ast.AST | None) -> bool:
+    """``Path``, ``PurePath``... or ``Optional[Path]`` / ``Path | None``: a path object or None, never another falsy value."""
+    if annotation is None:
+        return False
+    if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name) and annotation.value.id == "Optional":
+        return _annotation_is_path(annotation.slice)
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        parts = [annotation.left, annotation.right]
+        return any(_annotation_is_path(part) for part in parts) and all(
+            _annotation_is_path(part) or (isinstance(part, ast.Constant) and part.value is None) for part in parts
+        )
+    if isinstance(annotation, ast.Name):
+        return annotation.id in _PATH_TYPE_NAMES
+    if isinstance(annotation, ast.Attribute):
+        return annotation.attr in _PATH_TYPE_NAMES
+    return False
+
+
+def _module_path_names(tree: ast.AST) -> frozenset[str]:
+    """Names this module only ever annotates as a path: a parameter or a variable whose every annotation is ``Path``-like.
+
+    A ``Path`` is never falsy, so ``start or Path.cwd()`` on a ``start: Path | None`` parameter can only substitute for ``None``.
+    One annotation of another type anywhere in the module disqualifies the name, the same direction as ``_module_boolean_names``.
+    """
+    annotated: dict[str, list[bool]] = {}
+    for node in walk_tree(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            args = node.args
+            for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+                if arg.annotation is not None:
+                    annotated.setdefault(arg.arg, []).append(_annotation_is_path(arg.annotation))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            annotated.setdefault(node.target.id, []).append(_annotation_is_path(node.annotation))
+    return frozenset(name for name, flags in annotated.items() if flags and all(flags))
+
+
+_RE_MATCH_FUNCS = frozenset({"search", "match", "fullmatch"})
+
+
+def _is_regex_pattern_alternation(lhs: ast.AST, rhs: ast.AST) -> bool:
+    """``re.search(p1, s) or re.search(p2, s)``: trying two patterns in turn, not substituting a default."""
+    def is_match(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _RE_MATCH_FUNCS
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "re"
+        )
+
+    return is_match(lhs) and is_match(rhs)
+
+
+def _pair_is_exempt(lhs: ast.AST, rhs: ast.AST, path_names: frozenset[str] = frozenset()) -> bool:
     """Whether one adjacent ``a or b`` operand pair is a reviewed non-trap shape.
 
     Every exemption the scanner knows, gathered in one predicate so the scan loop stays a loop and
@@ -660,10 +726,16 @@ def _pair_is_exempt(lhs: ast.AST, rhs: ast.AST) -> bool:
     * ``_is_alias_key_fallback`` / ``_is_getattr_alias_fallback`` -- two spellings of one field;
     * ``_lhs_default_is_also_the_or_fallback`` -- the getter's own declared default repeated as the fallback.
     """
-    if _is_trivial_default(rhs) or _is_alternative_source_read(rhs):
+    if _is_trivial_default(rhs) or _is_alternative_source_read(rhs) or _is_text_fallback(rhs):
         return True
     if _is_regex_group_alternation(lhs, rhs) or _is_same_key_on_other_receiver(lhs, rhs):
         return True
+    if _is_boolean_valued(lhs) and _is_boolean_valued(rhs):
+        return True  # logical disjunction of two booleans, not a default value
+    if isinstance(lhs, ast.Name) and lhs.id in path_names:
+        return True  # a path is never falsy: the or can only stand in for None
+    if _is_regex_pattern_alternation(lhs, rhs):
+        return True  # alternatives tried in turn, not a default substituted for a falsy value
     if _lhs_is_documented_safe(lhs) or _is_alias_key_fallback(lhs, rhs):
         return True
     return _is_getattr_alias_fallback(lhs, rhs) or _lhs_default_is_also_the_or_fallback(lhs, rhs)
@@ -695,6 +767,7 @@ def scan_default_via_or_trap(root: Path,
         rel = py.relative_to(root).as_posix()
         parent_map = _build_parent_field_map(tree)
         bool_names = _module_boolean_names(tree)
+        path_names = _module_path_names(tree)
         symbols = _enclosing_symbols(tree)
         for node in walk_tree(tree):
             if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
@@ -716,7 +789,7 @@ def scan_default_via_or_trap(root: Path,
             for position in range(len(node.values) - 1):
                 rhs = node.values[position + 1]
                 lhs = node.values[position]
-                if _pair_is_exempt(lhs, rhs) or is_line_exempt(src_lines, node.lineno, "default_via_or"):
+                if _pair_is_exempt(lhs, rhs, path_names) or is_line_exempt(src_lines, node.lineno, "default_via_or"):
                     continue
                 # Also skip when the LHS is wrapped in a non-mutating expression
                 # whose first inner Call is documented-safe (e.g. `int(os.cpu_count() or 1)`,
