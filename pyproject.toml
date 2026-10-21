@@ -675,6 +675,7 @@ DEP003 = [
     "pgvector",  # database/psycopg2_pool.py -- guarded, only used if the caller's DB has the pgvector extension
     "claude_code_sdk",  # llm/claude_code_provider.py -- guarded SDK monkey-patch block; present in dev envs with the CLI SDK installed
     "wmi",  # system/system/probing.py -- guarded, Windows-only; present on Windows dev boxes, absent in Linux CI
+    "py_ci_shared",  # dev/code_audit wrappers import it lazily; a development tool installed from requirements-dev.txt, never a runtime dependency
 ]
 
 # Interrogate: docstring coverage. Blocking at --fail-under=100 since 2026-07-09 (see the CI
