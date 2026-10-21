@@ -200,9 +200,12 @@ def test_import_cycles_sees_package_init_relative_imports(tmp_path: Path):
     _write(tmp_path, "pkg/__init__.py", "from .a import f\n")
     _write(tmp_path, "pkg/a.py", "from pkg import f\n")
     findings = scan_import_cycles(tmp_path)
-    assert len(findings) == 1
-    assert findings[0].file == "pkg/__init__.py"
-    assert findings[0].snippet == "pkg -> pkg.a -> pkg"
+    cycles = [f for f in findings if f.snippet == "pkg -> pkg.a -> pkg"]
+    assert len(cycles) == 1
+    assert cycles[0].file == "pkg/__init__.py"
+    # The shared rule also reports the order-dependent from-import in pkg/a.py (`from pkg import f` runs while pkg is
+    # still loading): a second, real defect that the pyutilz-only scanner never saw. Accepted here on purpose.
+    assert {f.file for f in findings} == {"pkg/__init__.py", "pkg/a.py"}
 
 
 def test_import_cycles_finds_a_cycle_under_a_source_tree_root(tmp_path: Path):
