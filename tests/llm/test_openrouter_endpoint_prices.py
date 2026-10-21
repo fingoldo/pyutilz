@@ -95,3 +95,32 @@ def test_nothing_known_is_none_never_a_guess_and_a_cold_cache_makes_no_request(w
     assert claimed_quantization("vendor/model", provider_name="Mystery") is None
     assert claimed_quantization("other/model", tag="deepinfra/fp8") is None
     assert claimed_quantization("vendor/model") is None
+
+
+def test_the_provider_warms_its_own_endpoint_cache_so_a_recorded_call_names_the_quantization(monkeypatch):
+    import asyncio
+
+    from pyutilz.llm.openrouter_provider import _provider
+
+    monkeypatch.setattr(ep, "_CACHE", {})
+    monkeypatch.setattr(_provider, "_ensure_catalogue_warm_async", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(ep, "endpoint_prices", lambda model, timeout=10.0: ep._CACHE.setdefault(model, (time.monotonic(), parse_endpoint_prices(_quant_payload())))[1])
+    p = _provider.OpenRouterProvider(api_key="k", model="vendor/model", provider_only=("deepinfra",), provider_allow_fallbacks=False)
+    assert p.last_quantization is None
+    asyncio.run(p._async_prepare())
+    assert p.last_quantization == "fp4,fp8"
+
+
+def test_a_failing_endpoint_fetch_never_breaks_the_call(monkeypatch):
+    import asyncio
+
+    from pyutilz.llm.openrouter_provider import _provider
+
+    def boom(model, timeout=10.0):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(_provider, "_ensure_catalogue_warm_async", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(ep, "endpoint_prices", boom)
+    p = _provider.OpenRouterProvider(api_key="k", model="vendor/model")
+    asyncio.run(p._async_prepare())
+    assert p.last_quantization is None

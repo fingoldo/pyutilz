@@ -330,6 +330,16 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         path -- see ``_ensure_catalogue_warm_async``'s docstring for the blocking-call bug this
         closes."""
         await _ensure_catalogue_warm_async()
+        await self._warm_endpoint_cache_async()
+
+    async def _warm_endpoint_cache_async(self) -> None:
+        """Fill the per-model endpoint cache off-loop so ``last_quantization`` can answer; a failure only leaves it empty."""
+        from pyutilz.llm.openrouter_provider._endpoint_prices import warm_endpoint_cache
+
+        try:
+            await asyncio.to_thread(warm_endpoint_cache, catalogue_id(self.model_name))
+        except Exception as exc:  # metadata only, a call must never fail because of it
+            logger.debug("endpoint cache warm-up skipped for %s: %s", self.model_name, exc)
 
     @property
     def context_window(self) -> int:
