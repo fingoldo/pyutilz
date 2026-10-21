@@ -8,7 +8,6 @@ here, not a runtime dependency, so it is imported only when the scanner runs.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import FrozenSet
 
@@ -59,46 +58,3 @@ def scan_import_cycles(
             )
         )
     return out
-
-
-def _strongly_connected_components(graph: dict) -> list:
-    """Tarjan's SCC. Returns a list of components (each >= 1 node); cycles are SCCs with > 1 node."""
-    index_counter = [0]
-    stack: list = []
-    lowlinks: dict = {}
-    index: dict = {}
-    on_stack: dict = {}
-    result: list = []
-
-    def strongconnect(v: str) -> None:
-        """Tarjan's DFS step: assign ``v`` an index/lowlink and pop its completed SCC off the stack."""
-        index[v] = index_counter[0]
-        lowlinks[v] = index_counter[0]
-        index_counter[0] += 1
-        stack.append(v)
-        on_stack[v] = True
-        for w in graph.get(v, ()):
-            if w not in index:
-                strongconnect(w)
-                lowlinks[v] = min(lowlinks[v], lowlinks[w])
-            elif on_stack.get(w, False):
-                lowlinks[v] = min(lowlinks[v], index[w])
-        if lowlinks[v] == index[v]:
-            comp = []
-            while True:
-                w = stack.pop()
-                on_stack[w] = False
-                comp.append(w)
-                if w == v:
-                    break
-            result.append(comp)
-
-    old_limit = sys.getrecursionlimit()
-    sys.setrecursionlimit(10_000)
-    try:
-        for v in list(graph):
-            if v not in index:
-                strongconnect(v)
-    finally:
-        sys.setrecursionlimit(old_limit)
-    return result
