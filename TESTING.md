@@ -121,7 +121,7 @@ Two meta-tests hold that structure in place:
   grandfathered at their measured size in `_loc_over_1k_baseline.json` with zero growth slack, so
   they may shrink but not grow, and no new oversized file may be added on either side. Refresh
   the baseline (`--refresh-loc-budget-baseline`) only after a real split or shrink.
-- `tests/test_meta/test_scanner_positive_and_negative_cases.py` enforces, for every scanner in
+- The scanner-cases meta-test, now in the py-ci-shared repository (its `tests/code_audit` directory, next to the scanners it checks), enforces, for every scanner in
   `get_scanners()`, that some test asserts a NON-empty result (the scanner fires on the defect)
   and some test asserts an EMPTY one (it stays silent on clean input). Both are read statically
   out of the test sources. A scanner that genuinely cannot have a clean case goes in that file's

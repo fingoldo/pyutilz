@@ -395,6 +395,11 @@ def _candidate_test_names(source: Path) -> list[str]:
     return cands
 
 
+def _is_moved_alias(source: Path) -> bool:
+    """A module whose whole job is to alias a module that moved to py-ci-shared (its text says so)."""
+    return "now lives in py_ci_shared." in source.read_text(encoding="utf-8")[:300]
+
+
 def test_every_production_module_has_a_test_file():
     test_names = _test_basenames()
     if not test_names:
@@ -406,6 +411,8 @@ def test_every_production_module_has_a_test_file():
         rel = source.relative_to(PYUTILZ_DIR).as_posix()
         if source.stem in _TEST_EXEMPT_MODULES or rel in _TEST_EXEMPT_MODULES:
             continue
+        if _is_moved_alias(source):
+            continue  # its code and its tests live in py-ci-shared; this file only aliases the old path
         if rel in _USER_DEFERRED_MODULES:
             continue
         audited += 1
