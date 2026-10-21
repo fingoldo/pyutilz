@@ -70,4 +70,4 @@ def test_every_printed_advice_has_a_test():
     for key, target in PRINTED_ADVICE_TESTS.items():
         path, _, test_name = target.partition("::")
         leaf = test_name.rsplit("::", 1)[-1]
-        assert f"def {leaf}(" in (REPO_ROOT / path).read_text(encoding="utf-8"), f"{key} names a test that does not exist: {target}"
+        assert f"def {leaf}(" in (REPO_ROOT / path).read_text(encoding="utf-8"), f"{key} names a test that does not exist: {target}"  # audit-exempt: source_text_assertion -- checks that a named test exists in a file (a name lookup), not the behaviour of the code

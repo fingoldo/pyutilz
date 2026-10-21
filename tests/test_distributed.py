@@ -130,7 +130,7 @@ class TestVersioning:
         expected_date = datetime.now().strftime("%Y.%m.%d")  # noqa: DTZ005 -- matches the production call's local-date tag
 
         assert re.fullmatch(r"\d{4}\.\d{2}\.\d{2}\.[0-9a-f]{8}", version), f"unexpected version shape {version!r}"
-        assert version == f"{expected_date}.{expected_hash}", "version must be a content hash of the calling file, not a timestamp/mtime"
+        assert version == f"{expected_date}.{expected_hash}", "version must be a content hash of the calling file, not a timestamp/mtime"  # audit-exempt: source_text_assertion -- the expected version is a content hash of the calling file, computed from its bytes; the assertion compares that hash, not the text
 
 
 class TestDistributedModulePublicSurface:

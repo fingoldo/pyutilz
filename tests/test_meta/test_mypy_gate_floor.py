@@ -21,7 +21,7 @@ def test_both_venues_run_mypy_gate_with_one_floor_sized_from_the_tree():
     floors = {venue: [int(m) for m in _FLOOR.findall((REPO_ROOT / venue).read_text(encoding="utf-8"))] for venue in _VENUES}
     assert all(floors.values()), f"a venue no longer runs mypy_gate with --min-files over src/pyutilz: {floors}"
     values = {v for found in floors.values() for v in found}
-    assert len(values) == 1, f"the venues disagree on the mypy floor: {floors}"
+    assert len(values) == 1, f"the venues disagree on the mypy floor: {floors}"  # audit-exempt: source_text_assertion -- asserts on CI configuration text, which is the artefact under test (the venues' mypy floors)
     floor = values.pop()
     measured = len(list((REPO_ROOT / "src" / "pyutilz").rglob("*.py")))
     assert 0.9 * measured <= floor <= measured, f"--min-files {floor} is not within 90-100% of the {measured} source files; re-measure and move both copies"

@@ -64,7 +64,7 @@ def test_the_index_exists():
     )
     findings = scan_source_text_assertions(tmp_path)
     assert len(findings) == 1
-    assert ".sql" in findings[0].detail
+    assert "read_text" in findings[0].detail
 
 
 def test_source_text_assertion_ignores_a_behavioural_assertion(tmp_path: Path):

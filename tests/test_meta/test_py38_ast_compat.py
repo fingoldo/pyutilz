@@ -83,7 +83,7 @@ def test_no_py38_unsafe_ast_use_in_the_package():
     offenders = []
     for py in sorted(_SRC.rglob("*.py")):
         offenders += [f"{py.relative_to(_SRC).as_posix()}:{line} {what}" for line, what in _violations(py.read_text(encoding="utf-8", errors="replace"))]
-    assert offenders == [], (
+    assert offenders == [], (  # audit-exempt: source_text_assertion -- the source is parsed and the violations are AST findings; the assertion is on those, not on a text substring
         "python 3.8 is supported: use getattr(ast, 'unparse', ast.dump)(node) instead of ast.unparse, and "
         "_base._subscript_index(node) instead of reading Subscript.slice directly:\n  " + "\n  ".join(offenders)
     )
