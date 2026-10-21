@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- unbounded or silently-exhausting retry loop --------------------------
 #
@@ -135,7 +135,7 @@ def scan_retry_loops(
                 continue
             any_except_has_sleep = any(_except_has_sleep(h) for t in try_nodes for h in t.handlers)
             any_blocking_wait = any(_try_body_has_blocking_wait_with_timeout(t) for t in try_nodes)
-            if not any_except_has_sleep and not any_blocking_wait:
+            if not any_except_has_sleep and not any_blocking_wait and not is_line_exempt(src_lines, node.lineno, "busy_retry_loop"):
                 findings.append(Finding(
                     check="busy_retry_loop",
                     severity="P1",

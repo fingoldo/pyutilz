@@ -16,7 +16,10 @@ from typing import Callable
 import pytest
 
 from pyutilz.dev.code_audit import (
+    scan_bare_except,
     scan_comment_names_missing_symbol,
+    scan_retry_loops,
+    scan_sentinel_guard_mismatch,
     scan_credential_shaped_log_args,
     scan_default_via_or_trap,
     scan_duplicate_function_body,
@@ -95,6 +98,18 @@ _SINGLE_FILE_CASES = [
         "unpicklable_resource_state",
         "import threading\n\n\nclass Holder:\n    def __init__(self):\n        self.lock = threading.Lock(){m}\n",
         id="unpicklable_resource_state",
+    ),
+    pytest.param(
+        scan_bare_except,
+        "bare_except",
+        "def f(path):\n    try:\n        return float(path)\n    except:{m}\n        return 0.0\n",
+        id="bare_except",
+    ),
+    pytest.param(
+        scan_retry_loops,
+        "busy_retry_loop",
+        "def f(q):\n    while True:{m}\n        try:\n            return q.get_nowait()\n        except Exception:\n            continue\n",
+        id="busy_retry_loop",
     ),
 ]
 
@@ -220,3 +235,42 @@ def test_import_cycle_marker_without_reason_still_reports(tmp_path: Path):
 
 def test_import_cycle_marker_for_another_check_still_reports(tmp_path: Path):
     assert _run_cycle(tmp_path, _other_check("import_cycle")) == ["import_cycle"]
+
+
+_SENTINEL_RETURNER = """
+def fetch_num_pages(url):
+    try:
+        return int(get(url).text)
+    except ValueError:
+        return 0
+"""
+
+_SENTINEL_DRIVER = """
+def run(state):
+    pages_total = fetch_num_pages(state.url)
+    if pages_total is None or (pages_total > 0 and state.done):{m}
+        return
+    mark_source_empty(state)
+"""
+
+
+def _run_sentinel(tmp_path: Path, marker: str) -> list[str]:
+    _write(tmp_path, "cdx.py", _SENTINEL_RETURNER)
+    _write(tmp_path, "driver.py", _SENTINEL_DRIVER.replace("{m}", marker))
+    return [f.check for f in scan_sentinel_guard_mismatch(tmp_path) if f.check == "sentinel_guard_mismatch"]
+
+
+def test_sentinel_guard_bare_construct_is_reported(tmp_path: Path):
+    assert _run_sentinel(tmp_path, "") == ["sentinel_guard_mismatch"]
+
+
+def test_sentinel_guard_valid_marker_suppresses(tmp_path: Path):
+    assert _run_sentinel(tmp_path, _valid("sentinel_guard_mismatch")) == []
+
+
+def test_sentinel_guard_marker_without_reason_still_reports(tmp_path: Path):
+    assert _run_sentinel(tmp_path, _no_reason("sentinel_guard_mismatch")) == ["sentinel_guard_mismatch"]
+
+
+def test_sentinel_guard_marker_for_another_check_still_reports(tmp_path: Path):
+    assert _run_sentinel(tmp_path, _other_check("sentinel_guard_mismatch")) == ["sentinel_guard_mismatch"]

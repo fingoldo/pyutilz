@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- a falsy in-band sentinel meeting a caller guard that tests `is None` ----------------------
 #
@@ -141,6 +141,8 @@ def _guard_mismatch_findings(
         if not guarded:
             continue
         name = guarded[0]
+        if is_line_exempt(src_lines, guards[name], "sentinel_guard_mismatch"):
+            continue
         where, value, ret_line = sentinel_returners[callee]
         out.append(
             Finding(

@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- bare `except:` / `except BaseException:` ----------------------------
 
@@ -59,7 +59,7 @@ def scan_bare_except(
             if not isinstance(node, ast.Try):
                 continue
             for handler in node.handlers:
-                if not _is_bare_except(handler):
+                if not _is_bare_except(handler) or is_line_exempt(src_lines, handler.lineno, "bare_except"):
                     continue
                 findings.append(Finding(
                     check="bare_except",
