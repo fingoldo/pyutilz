@@ -9,7 +9,7 @@ import logging
 import ast
 from pathlib import Path
 
-from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt, _subscript_index
 
 # --- default-via-or trap (wave 14) --------------------------------------
 
@@ -664,7 +664,7 @@ def _annotation_is_path(annotation: ast.AST | None) -> bool:
     if annotation is None:
         return False
     if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name) and annotation.value.id == "Optional":
-        return _annotation_is_path(annotation.slice)
+        return _annotation_is_path(_subscript_index(annotation))
     if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
         parts = [annotation.left, annotation.right]
         return any(_annotation_is_path(part) for part in parts) and all(
