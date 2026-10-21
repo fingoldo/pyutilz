@@ -1,74 +1,13 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
-from __future__ import annotations
+"""(internal) hardcoded_test_path now lives in py_ci_shared.code_audit.hardcoded_test_path; this module aliases it so the old path keeps working."""
 
-import ast
-import re
-from pathlib import Path
+import sys as _sys
 
-from ._base import walk_tree, Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from py_ci_shared.code_audit.hardcoded_test_path import (  # noqa: F401 - re-exported so the names stay visible to type checkers
+    _ABS_PATH_RE,
+    scan_hardcoded_absolute_path_in_test,
+)
 
-# A Windows drive-letter path ("D:\Machine Learning\...", "C:/Users/...") or a
-# POSIX developer-home path ("/home/alice/...", "/Users/bob/...", "/root/...").
-# Deliberately does NOT match a bare "/" (too many false positives on URLs,
-# docstrings, regex character classes) -- only the specific shapes a real
-# hardcoded personal-machine path takes.
-_ABS_PATH_RE = re.compile(r"(^[A-Za-z]:[\\/]|^/home/[\w.-]+/|^/Users/[\w.-]+/|^/root/)")
+from py_ci_shared.code_audit import hardcoded_test_path as _impl
 
-
-def scan_hardcoded_absolute_path_in_test(
-    root: Path,
-    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
-) -> list[Finding]:
-    """Find a hardcoded, developer-machine-specific absolute path (a Windows
-    drive letter, or a POSIX ``/home/<user>/``/``/Users/<user>/``/``/root/``
-    path) as a string literal anywhere in a test file.
-
-    Such a path exists on exactly one machine -- the author's. On every OTHER
-    machine or CI runner it silently doesn't exist, so any conditional built
-    on it (``if Path(...).exists(): ...`` guarding a fixture, a
-    ``pytest.skip``/``importorskip`` gate, a ``try/except FileNotFoundError``
-    around the literal) permanently no-ops there. The test still collects,
-    still reports green (skipped, not failed), and never shows up in a grep
-    for ``@pytest.mark.skip`` -- it occupies the mental slot of "covered"
-    while providing zero regression coverage on any machine but the one that
-    wrote it.
-
-    Deliberately narrow: only flags the specific hardcoded-personal-path
-    SHAPE (drive letter, or a home-directory-rooted path) -- a bare ``/tmp/``
-    or ``/var/``-rooted literal is common, portable, and NOT flagged, and a
-    path built from ``Path(__file__).parent`` / ``tmp_path`` / an env var is
-    the correct pattern and also not touched.
-
-    Severity: P2 (silent, permanent, single-machine test skip -- not a
-    crash, but a coverage gap that looks like coverage).
-    """
-    findings: list[Finding] = []
-    for py in _iter_py_files(root, exclude_dirs):
-        if not is_test_file(py, root):
-            continue
-        tree = _safe_parse(py)
-        if tree is None:
-            continue
-        src_lines = _read_src_lines(py)
-        rel = py.relative_to(root).as_posix()
-
-        for node in walk_tree(tree):
-            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
-                continue
-            if not _ABS_PATH_RE.match(node.value):
-                continue
-            if is_line_exempt(src_lines, node.lineno, "hardcoded_absolute_path_in_test"):
-                continue
-            findings.append(Finding(
-                check="hardcoded_absolute_path_in_test",
-                severity="P2",
-                file=rel,
-                line=node.lineno,
-                snippet=_line_text(src_lines, node.lineno),
-                detail=(
-                    f"Hardcoded developer-machine path {node.value!r} in a test file -- this path exists on "
-                    "exactly one machine; on any other, a fixture/skip-gate built on it silently and "
-                    "permanently no-ops the test there. Use a relative/tmp_path/env-var-derived path instead."
-                ),
-            ))
-    return findings
+# Runtime identity: the old path IS the moved module, so a test that rebinds a module constant reaches the code that reads it.
+_sys.modules[__name__] = _impl

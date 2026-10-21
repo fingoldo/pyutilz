@@ -1,130 +1,17 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) claimed_invariants now lives in py_ci_shared.code_audit.claimed_invariants; this module aliases it so the old path keeps working."""
 
-from __future__ import annotations
+import sys as _sys
 
-import ast
-import re
-from pathlib import Path
-
-from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
-
-# --- an invariant asserted in prose and nowhere else -----------------------------------------------
-#
-# Confirmed instances (Autopsia, 2026-07-26): a model documented as "deliberately not one of the
-# models under test" was sitting in the tournament's own candidate list; a module whose docstring
-# states the hard rule "never decompose a posterior with a different model than produced it" was
-# violated by its own caller two files away; a helper documented as emitting cause->finding rows
-# emitted them inverted.
-#
-# What makes this class expensive is that the prose is the only specification anyone reads. A reader
-# who trusts the docstring writes correct calling code against an incorrect implementation, and the
-# error surfaces far from either.
-#
-# The phrase list is short and absolute on purpose. "always" and "must" appear in ordinary
-# explanatory prose constantly; "never", "must not" and "deliberately not" are load-bearing claims a
-# reader is entitled to rely on, and they are rare enough that requiring a test per claim is cheap.
-
-_CLAIM_RE = re.compile(
-    r"\b(never|must not|may not|cannot ever|deliberately not|is not one of|guaranteed to|invariant:)\b",
-    re.IGNORECASE,
+from py_ci_shared.code_audit.claimed_invariants import (  # noqa: F401 - re-exported so the names stay visible to type checkers
+    _CLAIM_RE,
+    _callers_within,
+    _claim_sentence,
+    _is_unenforced_claim,
+    _test_corpus,
+    scan_unenforced_docstring_invariants,
 )
 
+from py_ci_shared.code_audit import claimed_invariants as _impl
 
-def _callers_within(tree: ast.AST) -> dict[str, set[str]]:
-    """``{callee_name -> {names of functions/methods in this module that call it}}``, one level of
-    indirection only (a caller's own caller is not chased further - see the docstring on the
-    transitive-enforcement check below for why one hop is the deliberate stopping point)."""
-    callers: dict[str, set[str]] = {}
-    for outer in walk_tree(tree):
-        if not isinstance(outer, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for inner in ast.walk(outer):
-            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
-                callers.setdefault(inner.func.id, set()).add(outer.name)
-    return callers
-
-
-def _test_corpus(test_roots: tuple[Path, ...], exclude_dirs: frozenset[str]) -> str:
-    """Concatenated source of every Python file under the existing ``test_roots``."""
-    test_corpus = ""
-    for troot in test_roots:
-        troot = Path(troot)
-        if not troot.exists():
-            continue
-        for py in _iter_py_files(troot, exclude_dirs):
-            test_corpus += py.read_text(encoding="utf-8", errors="replace")
-    return test_corpus
-
-
-def _is_unenforced_claim(name: str, doc: str, callers_of: dict[str, set[str]], test_corpus: str) -> bool:
-    """True when ``doc`` states an absolute claim and neither ``name`` nor a one-hop caller appears in tests."""
-    if not _CLAIM_RE.search(doc):
-        return False
-    if name in test_corpus:
-        return False
-    return not any(caller in test_corpus for caller in callers_of.get(name, ()))
-
-
-def _claim_sentence(doc: str) -> str:
-    """The first sentence of ``doc`` that carries an absolute-claim phrase, or its first 120 chars."""
-    return next((s.strip() for s in re.split(r"(?<=[.;])\s", doc) if _CLAIM_RE.search(s)), doc[:120])
-
-
-def scan_unenforced_docstring_invariants(
-    root: Path,
-    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
-    test_roots: tuple[Path, ...] = (),
-) -> list[Finding]:
-    """Find symbols whose docstring states an absolute invariant that no test names.
-
-    ``test_roots`` are the trees searched for enforcement. A symbol is considered enforced when its
-    OWN name appears anywhere in them, OR when a function in the SAME MODULE that calls it (one hop
-    only - a private helper's own direct caller, not an arbitrary chain) has its name appear there --
-    a deliberately weak bar either way, because proving that a given test checks a given sentence is
-    not decidable, and the defect being targeted is the claim NOTHING references at all.
-
-    The one-hop caller extension (2026-08-03) closes the most common false-positive shape measured in
-    practice: a PRIVATE helper (`_mondo_name_index`, `kb/gbd_prevalence.py`) whose invariant ("EXACT
-    name match only, never fuzzy") is exercised by real tests that call the PUBLIC function it lives
-    inside (`build()`) rather than the private helper directly - the normal way a private symbol gets
-    test coverage at all. Chasing more than one hop was deliberately rejected: two hops away starts
-    matching call chains a reader would not recognise as "this test covers that claim" on inspection,
-    which is the same false-confidence failure mode this whole check exists to prevent one level up.
-
-    Only functions and classes are scanned, not module docstrings: a module-level essay describing
-    design rationale is not a per-symbol contract, and including it made the check fire on prose.
-
-    Severity: P2. The claim may well be true today; the finding is that nothing will notice when it
-    stops being true.
-    """
-    if not test_roots:
-        return []
-
-    test_corpus = _test_corpus(test_roots, exclude_dirs)
-
-    findings: list[Finding] = []
-    for py in _iter_py_files(root, exclude_dirs):
-        tree = _safe_parse(py)
-        if tree is None:
-            continue
-        src_lines = _read_src_lines(py)
-        rel = py.relative_to(root).as_posix()
-        callers_of = _callers_within(tree)
-        for node in walk_tree(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue
-            doc = ast.get_docstring(node) or ""
-            if not _is_unenforced_claim(node.name, doc, callers_of, test_corpus):
-                continue
-            sentence = _claim_sentence(doc)
-            findings.append(
-                Finding(
-                    check="unenforced_docstring_invariant",
-                    severity="P2",
-                    file=rel,
-                    line=node.lineno,
-                    snippet=_line_text(src_lines, node.lineno),
-                    detail=(f'{node.name!r} documents an absolute invariant no test names: "{sentence[:160]}". Assert it, or soften the wording to what the code actually promises.'),
-                )
-            )
-    return findings
+# Runtime identity: the old path IS the moved module, so a test that rebinds a module constant reaches the code that reads it.
+_sys.modules[__name__] = _impl

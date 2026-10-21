@@ -1,213 +1,24 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) stats_key_coverage now lives in py_ci_shared.code_audit.stats_key_coverage; this module aliases it so the old path keeps working."""
 
-from __future__ import annotations
+import sys as _sys
 
-import ast
-from pathlib import Path
+from py_ci_shared.code_audit.stats_key_coverage import (  # noqa: F401 - re-exported so the names stay visible to type checkers
+    _COUNTER_ATTRS,
+    _INC_HELPERS,
+    _declared_by,
+    _dict_literal_keys,
+    _is_counter_attribute,
+    _note_key,
+    _record_class,
+    _undeclared_key_finding,
+    _written_by_augassign,
+    _written_by_call,
+    _written_by_read_modify_write,
+    _written_keys,
+    scan_stats_key_coverage,
+)
 
-from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from py_ci_shared.code_audit import stats_key_coverage as _impl
 
-# --- a counter written but never initialised by the reset that owns its dict --------------------
-#
-# An object holds a per-cycle counter dict, a reset method re-initialises it between cycles, and
-# one key is written somewhere that the reset never declares. Two things follow, and both have
-# happened in the audited codebase:
-#
-# * The key is created lazily on first write, so it is cumulative since PROCESS START while every
-#   sibling beside it is per-cycle -- and it is logged and persisted next to them as though it
-#   meant the same thing. `reconcile_skipped_small` was the one counter `_reset_stats` never reset
-#   on a crawler object that lives for the whole process.
-# * If the increment goes through a helper that does `self.stats[key] += n`, an unregistered key
-#   is a KeyError in production rather than a silent zero. That is the wave-17 `worker_crashes`
-#   regression on the same dict, and it happened again while this rule was being written: a new
-#   `overlapping_axis_skipped` counter was added, incremented through `_inc_stat`, and never
-#   declared -- caught only because one test happened to build its stats from the real initialiser.
-#
-# Three independent incidents on one dict is what makes this mechanical rather than a review note.
-# A comment in that file even records the migration from lazy `.get(k, 0) + n` counters to
-# pre-initialised ones: the sweep was done by hand once, and it missed a key.
-
-# Attribute names that look like a per-cycle counter dict.
-_COUNTER_ATTRS = {"stats", "counters", "metrics", "totals", "counts"}
-
-# Helpers that increment a key by name -- the spelling that turns a missing key into a KeyError.
-_INC_HELPERS = {"_inc_stat", "_inc_stats", "inc_stat", "bump", "_bump"}
-
-
-def _dict_literal_keys(node: ast.AST) -> set[str]:
-    """String keys of a dict literal assigned here."""
-    if isinstance(node, ast.Dict):
-        return {k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-    return set()
-
-
-def _is_counter_attribute(node: ast.AST) -> str | None:
-    """`self.stats` -> "stats", for the attribute names that look like counter dicts."""
-    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self" and node.attr in _COUNTER_ATTRS:
-        return node.attr
-    return None
-
-
-def _declared_by(method: ast.AST) -> dict[str, set[str]]:
-    """{attribute: keys} this method initialises, from `self.stats = {...}` literals."""
-    declared: dict[str, set[str]] = {}
-    for stmt in ast.walk(method):
-        # AnnAssign too -- `self.stats: dict = {...}` is the annotated spelling this project's
-        # conventions mandate, and skipping it silently disabled the whole check for such code.
-        if isinstance(stmt, ast.Assign):
-            targets: list[ast.expr] = list(stmt.targets)
-            value = stmt.value
-        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
-            targets = [stmt.target]
-            value = stmt.value
-        else:
-            continue
-        for target in targets:
-            attr = _is_counter_attribute(target)
-            if attr:
-                declared.setdefault(attr, set()).update(_dict_literal_keys(value))
-    return declared
-
-
-def _note_key(written: dict[str, int], key: ast.AST, line: int) -> None:
-    """Note a string-literal key write; a computed key cannot be checked statically."""
-    if isinstance(key, ast.Constant) and isinstance(key.value, str):
-        written.setdefault(key.value, line)
-
-
-def _written_by_augassign(node: ast.AST, attr: str, written: dict[str, int]) -> None:
-    """Record ``self.<attr>[k] += n`` as an accumulating write of ``k``."""
-    if isinstance(node, ast.AugAssign):
-        target = node.target
-        if isinstance(target, ast.Subscript) and _is_counter_attribute(target.value) == attr:
-            _note_key(written, _subscript_index(target), node.lineno)
-
-
-def _written_by_read_modify_write(node: ast.AST, attr: str, written: dict[str, int]) -> None:
-    """Record ``self.<attr>[k] = self.<attr>.get(k, 0) + n`` as an accumulating write; a bare read is not one."""
-    if isinstance(node, ast.Assign) and len(node.targets) == 1:
-        store = node.targets[0]
-        if isinstance(store, ast.Subscript) and _is_counter_attribute(store.value) == attr:
-            for sub in ast.walk(node.value):
-                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "get" and _is_counter_attribute(sub.func.value) == attr:
-                    _note_key(written, _subscript_index(store), node.lineno)
-
-
-def _written_by_call(node: ast.AST, attr: str, written: dict[str, int]) -> None:
-    """Record a ``setdefault`` on the counter attribute, or an increment helper, as registering its key argument."""
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-        if node.func.attr == "setdefault" and _is_counter_attribute(node.func.value) == attr:
-            if node.args:
-                _note_key(written, node.args[0], node.lineno)
-        # the increment-helper form: the first argument names the key
-        elif node.func.attr in _INC_HELPERS and node.args:
-            _note_key(written, node.args[0], node.lineno)
-
-
-def _written_keys(cls: ast.ClassDef, attr: str) -> dict[str, int]:
-    """{key: line} written to `self.<attr>` anywhere in this class, by any spelling."""
-    written: dict[str, int] = {}
-    # ACCUMULATING writes only. `self.stats["k"] = value` overwrites completely every cycle and
-    # is therefore safe without a declaration -- the four such keys in the audited crawler were
-    # this rule's only false positives. `+=`, `.get(k, 0) + n`, `.setdefault(k, ...)` and an
-    # increment helper all ACCUMULATE, which is where "cumulative since process start while its
-    # siblings are per-cycle" comes from.
-    for node in ast.walk(cls):
-        _written_by_augassign(node, attr, written)
-        # `self.stats[k] = self.stats.get(k, 0) + n` -- a read-modify-write, so it accumulates.
-        _written_by_read_modify_write(node, attr, written)
-        # a setdefault call on the counter attribute registers its first argument as a key
-        _written_by_call(node, attr, written)
-    return written
-
-
-def scan_stats_key_coverage(
-    root: Path,
-    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
-) -> list[Finding]:
-    """Find counter keys written to a per-cycle dict that no reset method initialises.
-
-    Such a key is cumulative since process start while every sibling beside it is per-cycle,
-    and it is logged and persisted next to them as though it meant the same thing. Where the
-    increment goes through a helper doing `self.stats[key] += n`, it is a `KeyError` in
-    production instead of a silent zero.
-
-    DECLARATIONS AND WRITES ARE MATCHED ACROSS THE PACKAGE, not within one class, because the
-    real shape is a MIXIN: `StatsMixin._reset_stats` declares the dict and `SplitMixin`
-    increments it, and the two are one object only at runtime. Scoped per class, this rule
-    missed the very bug it was written from.
-
-    The cost of that widening is false NEGATIVES -- a key declared by an unrelated class that
-    happens to use the same attribute name masks a genuine omission. It cannot produce a false
-    positive, which is the right trade for a ratchet: a check that cries wolf gets refreshed
-    without being read.
-
-    Only string-literal keys are tracked; a computed key cannot be checked against a
-    declaration statically.
-    """
-    declared: dict[str, set[str]] = {}
-    declaring_method: dict[str, str] = {}
-    writes: list[tuple[str, str, str, int, str]] = []  # (attr, key, file, line, class)
-
-    for py in _iter_py_files(root, exclude_dirs):
-        tree = _safe_parse(py)
-        if tree is None:
-            continue
-        rel = py.relative_to(root).as_posix()
-
-        for cls in walk_tree(tree):
-            if isinstance(cls, ast.ClassDef):
-                _record_class(cls, rel, declared, declaring_method, writes)
-
-    findings: list[Finding] = []
-    sources: dict[str, list[str]] = {}
-    for py in _iter_py_files(root, exclude_dirs):
-        rel = py.relative_to(root).as_posix()
-        if any(w[2] == rel for w in writes):
-            sources[rel] = _read_src_lines(py)
-
-    for attr, key, rel, line, cls_name in sorted(writes, key=lambda w: (w[2], w[3])):
-        known = declared.get(attr)
-        if known is None or key in known:
-            continue
-        findings.append(_undeclared_key_finding(attr, key, rel, line, cls_name, declaring_method[attr], sources.get(rel, [])))
-    return findings
-
-
-def _record_class(
-    cls: ast.ClassDef,
-    rel: str,
-    declared: dict[str, set[str]],
-    declaring_method: dict[str, str],
-    writes: list[tuple[str, str, str, int, str]],
-) -> None:
-    """Add one class's declared counter keys to ``declared`` and its accumulating key writes to ``writes``."""
-    for method in cls.body:
-        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for attr, keys in _declared_by(method).items():
-            if not keys:
-                continue
-            declared.setdefault(attr, set()).update(keys)
-            declaring_method.setdefault(attr, f"{cls.name}.{method.name}")
-    for attr in _COUNTER_ATTRS:
-        for key, line in _written_keys(cls, attr).items():
-            writes.append((attr, key, rel, line, cls.name))
-
-
-def _undeclared_key_finding(attr: str, key: str, rel: str, line: int, cls_name: str, declaring: str, src_lines: list[str]) -> Finding:
-    """The P2 finding for a counter key written by ``cls_name`` that ``declaring`` never initialises."""
-    return Finding(
-        check="stats_key_coverage",
-        severity="P2",
-        file=rel,
-        line=line,
-        snippet=_line_text(src_lines, line),
-        detail=(
-            f"`{cls_name}` writes `self.{attr}[{key!r}]`, which "
-            f"`{declaring}` never initialises. The key is created on first "
-            "write, so it is cumulative since process start while every sibling is "
-            "per-cycle -- and if the write goes through an increment helper, it is a "
-            "KeyError rather than a zero."
-        ),
-    )
+# Runtime identity: the old path IS the moved module, so a test that rebinds a module constant reaches the code that reads it.
+_sys.modules[__name__] = _impl

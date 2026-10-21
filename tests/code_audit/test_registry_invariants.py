@@ -282,12 +282,12 @@ def test_every_module_that_names_a_shared_gate_is_in_the_table():
     """The reverse direction: a scanner module whose docstring names a gate must be listed, so the table is complete."""
     import re
 
-    import pyutilz.dev.code_audit as pkg
+    import py_ci_shared.code_audit as impl
     from pyutilz.dev.code_audit.registry import SHARED_GATE_COUNTERPARTS
 
     gates = set(SHARED_GATE_COUNTERPARTS.values())
     named = set()
-    for path in Path(pkg.__file__).parent.glob("*.py"):
+    for path in Path(impl.__file__).parent.glob("*.py"):
         named.update(re.findall(r"Shared-gate counterpart(?: for \w+)?: (py_ci_shared\.\w+)", path.read_text(encoding="utf-8")))
     assert named, "no scanner module names a shared gate; the docstring pattern changed"
     assert named - gates == set(), "a module names a gate the table does not list"

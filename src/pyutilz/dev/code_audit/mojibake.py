@@ -1,103 +1,16 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
-from __future__ import annotations
+"""(internal) mojibake now lives in py_ci_shared.code_audit.mojibake; this module aliases it so the old path keeps working."""
 
-import re
-from pathlib import Path
+import sys as _sys
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse
-import logging
+from py_ci_shared.code_audit.mojibake import (  # noqa: F401 - re-exported so the names stay visible to type checkers
+    _MIN_RUN_LENGTH,
+    _NON_ASCII_RUN_RE,
+    _is_roundtrip_mojibake,
+    logger,
+    scan_mojibake,
+)
 
-logger = logging.getLogger(__name__)
+from py_ci_shared.code_audit import mojibake as _impl
 
-# --- round-trip-detectable mojibake ----------------------------------------
-
-# Maximal runs of consecutive non-ASCII characters shorter than this are skipped: a lone accented
-# character (rare but not impossible in a name/URL) round-tripping by coincidence is far more
-# plausible at length 1 (or 2) than a multi-character run doing so. Concretely: a 2-character
-# Cyrillic-block run split out of a longer regex character class (e.g. the "..ЯЁ" tail of a
-# ``[A-ZА-ЯЁ]`` range, where the ASCII "-" breaks the run just before it) round-trips through
-# cp1251-encode -> utf-8-decode into a legible-looking but bogus recovery purely by coincidence
-# often enough at length 2 to false-positive on legitimate source; genuine mojibake corruption
-# (an actual misread word/phrase) is essentially never only 2 characters long, so 3 is the floor
-# that keeps real detections (see test_mojibake_roundtrip_corruption_flagged, a 7-char run) while
-# dropping this class of coincidental short-range false positive.
-_MIN_RUN_LENGTH = 3
-
-_NON_ASCII_RUN_RE = re.compile(r"[^\x00-\x7F]+")
-
-
-def _is_roundtrip_mojibake(run: str) -> bool:
-    """True if ``run`` round-trips cleanly through cp1251-encode -> utf-8-decode into DIFFERENT, non-empty text."""
-    if len(run) < _MIN_RUN_LENGTH:
-        return False
-    try:
-        recovered = run.encode("cp1251").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError) as exc:
-        logger.debug("_is_roundtrip_mojibake: run does not round-trip through cp1251: %s: %s", type(exc).__name__, exc)
-        return False
-    return bool(recovered) and recovered != run
-
-
-def scan_mojibake(
-    root: Path,
-    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
-) -> list[Finding]:
-    """Find source lines containing round-trip-detectable mojibake (UTF-8 bytes misread as
-    CP1251/similar and re-saved -- a lossy clipboard/terminal round-trip is the usual cause).
-
-    Detection principle: genuine mojibake of this kind is round-trip DETECTABLE. The corrupted
-    text is itself valid Unicode (e.g. Cyrillic-block characters), so ``run.encode("cp1251")``
-    succeeds; because those bytes are the ORIGINAL character's real UTF-8 encoding misread one
-    byte at a time, decoding them back as UTF-8 (``.decode("utf-8")``) ALSO succeeds and recovers
-    legible text different from the input. This double round-trip succeeding is a strong,
-    low-false-positive signal: deliberately-authored non-ASCII text (e.g. a genuine Russian
-    comment) also survives ``.encode("cp1251")`` but its bytes essentially never form valid UTF-8
-    when decoded back, so it is correctly NOT flagged; a single already-correct special character
-    with no CP1251 mapping (e.g. ``>=`` written as U+2265) fails at the encode step and is also
-    correctly NOT flagged.
-    """
-    findings: list[Finding] = []
-    unreadable: list[str] = []
-    for py in _iter_py_files(root, exclude_dirs):
-        rel = py.relative_to(root).as_posix()
-        try:
-            text = py.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            # A source file that is not valid UTF-8 at all is the STRONGEST mojibake signal there
-            # is (e.g. saved as CP1251); skipping it would drop the very artefact this scanner
-            # exists to find.
-            findings.append(
-                Finding(
-                    check="mojibake",
-                    severity="P2",
-                    file=rel,
-                    line=1,
-                    snippet="",
-                    detail="file is not valid UTF-8, so it cannot be read as text -- re-save it as UTF-8.",
-                )
-            )
-            continue
-        except OSError as exc:
-            unreadable.append(f"{py}: {exc}")
-            continue
-        # _safe_parse also validates the file is parseable Python; reuse it as the gate (it is
-        # applied AFTER the decode above so an undecodable file is reported, not silently dropped).
-        if _safe_parse(py) is None:
-            continue
-        for lineno, line in enumerate(text.split("\n"), start=1):
-            for match in _NON_ASCII_RUN_RE.finditer(line):
-                if _is_roundtrip_mojibake(match.group()):
-                    findings.append(
-                        Finding(
-                            check="mojibake",
-                            severity="P2",
-                            file=rel,
-                            line=lineno,
-                            snippet=line.strip(),
-                            detail=("line contains round-trip-detectable mojibake (UTF-8 misread as CP1251 " "and re-saved). Re-save the file as clean UTF-8."),
-                        )
-                    )
-                    break  # one flag per line is enough to locate it
-    if unreadable:
-        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
-    return findings
+# Runtime identity: the old path IS the moved module, so a test that rebinds a module constant reaches the code that reads it.
+_sys.modules[__name__] = _impl

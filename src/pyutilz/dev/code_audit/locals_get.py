@@ -1,60 +1,12 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
-from __future__ import annotations
+"""(internal) locals_get now lives in py_ci_shared.code_audit.locals_get; this module aliases it so the old path keeps working."""
 
-import ast
-from pathlib import Path
+import sys as _sys
 
-from ._base import walk_tree, Finding, is_locals_or_globals_call, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from py_ci_shared.code_audit.locals_get import (  # noqa: F401 - re-exported so the names stay visible to type checkers
+    scan_locals_get_fragile_lookup,
+)
 
+from py_ci_shared.code_audit import locals_get as _impl
 
-def scan_locals_get_fragile_lookup(
-    root: Path,
-    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
-) -> list[Finding]:
-    """Find ``locals().get(name, default)`` / ``globals().get(name, default)``
-    used to read a conditionally-assigned local/global instead of a normal,
-    pre-initialized variable.
-
-    ``locals()``/``globals()`` return a snapshot dict at call time -- reading
-    through ``.get(...)`` works today only because the name happens to
-    already be bound in that snapshot. A refactor that renames the variable,
-    moves the read to before the conditional assignment, or extracts the
-    surrounding code into a helper (where ``locals()`` now snapshots a
-    DIFFERENT, smaller scope) silently changes this from "read the real
-    value" to "always get the default" -- no error, no warning, just a wrong
-    value. A plain variable, initialized once (``x = default`` before the
-    conditional, then reassigned inside it), doesn't have this fragility:
-    a rename/reorder/extraction breaks it loudly (``NameError``/``UnboundLocalError``)
-    instead of silently.
-
-    Severity: P1 (silent wrong-value risk on a routine refactor, not an
-    immediate bug -- the lookup is correct as written today).
-    """
-    findings: list[Finding] = []
-    for py in _iter_py_files(root, exclude_dirs):
-        tree = _safe_parse(py)
-        if tree is None:
-            continue
-        src_lines = _read_src_lines(py)
-        rel = py.relative_to(root).as_posix()
-        for node in walk_tree(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"):
-                continue
-            if not is_locals_or_globals_call(node.func.value):
-                continue
-            scope_name = node.func.value.func.id  # type: ignore[attr-defined]  # narrowed by is_locals_or_globals_call above
-            findings.append(Finding(
-                check="locals_get_fragile_lookup",
-                severity="P1",
-                file=rel,
-                line=node.lineno,
-                snippet=_line_text(src_lines, node.lineno),
-                detail=(
-                    f"{scope_name}().get(...) reads a conditionally-assigned name via a "
-                    f"scope-snapshot dict instead of a normal variable -- a rename, "
-                    f"reorder, or extraction-into-a-helper silently changes this from "
-                    f"'read the real value' to 'always get the default', with no error. "
-                    f"Use a normally-initialized variable instead."
-                ),
-            ))
-    return findings
+# Runtime identity: the old path IS the moved module, so a test that rebinds a module constant reaches the code that reads it.
+_sys.modules[__name__] = _impl

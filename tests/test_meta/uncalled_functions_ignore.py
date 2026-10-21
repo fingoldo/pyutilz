@@ -42,5 +42,6 @@ UNCALLED_FUNCTIONS_IGNORE: Dict[str, str] = {
     "fetch_generation_provider": "Public GET /generation lookup in llm.openrouter_speech returning the serving provider; glossum calls it for the manifest.",
     "reset_speech_catalogue_cache": "Public cache reset for the speech catalogue in llm.openrouter_speech, for tests and long-lived callers.",
     "_retry_after": "Private Retry-After parser in llm.openrouter_speech used through the public speech client path (called by name from its retry loop).",
+    "scan_todo_markers": "Superseded: the todo_hygiene detector moved to py_ci_shared.code_audit and scans through py_ci_shared.code_audit._todo_markers. Kept as a public name of meta_test_utils for callers outside this repository.",
     "compute_total_gpus_ram": "Public aggregate GPU RAM statistics over a list of GPU info dicts in system.system.probing; exposed by the star import of system.system; no in-repo caller.",
 }
