@@ -47,26 +47,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _rglob_test_files(root: Path) -> "typing.Iterator[Path]":
-    """``root.rglob("test_*.py")``, skipping `_DEFAULT_EXCLUDE_DIRS` - most pointedly `.claude`, which holds
-    Claude Code's agent worktrees, each a COMPLETE checkout of the repo being scanned. Without this, a
-    caller passed the repo ROOT (rather than a narrow `tests/` subtree) walks every worktree's own test
-    suite too: measured on autopsia with 30 worktrees present, `unbacked_audit_dispositions` concatenated
-    7,989 duplicate test files into its search corpus instead of the real 295, at ~810s instead of a few.
-
-    The `code_audit._base` import is DEFERRED inside the function rather than at module top-level: this
-    module (`meta_test_utils`) is itself imported BY `pyutilz.dev.code_audit.__init__` (for
-    `todo_hygiene.py`'s `scan_todo_markers`), so a top-level import back into `code_audit` is circular -
-    `ImportError: cannot import name 'ATTRIBUTION_RE' from partially initialized module`, measured live.
-    Deferring costs nothing here since this helper is never on a hot per-call path itself.
-    """
-    from pyutilz.dev.code_audit._base import _DEFAULT_EXCLUDE_DIRS
-
-    for p in root.rglob("test_*.py"):
-        if not any(part in _DEFAULT_EXCLUDE_DIRS for part in p.relative_to(root).parts[:-1]):
-            yield p
-
-
 __all__ = [
     "consumer_corpus",
     "enumerate_test_files",
@@ -96,6 +76,26 @@ __all__ = [
 # Project-specific tests can pass extra fragments via the `extra_excludes`
 # kwarg (e.g. mlframe excludes ``legacy/`` whose contents are pre-sunset).
 _DEFAULT_EXCLUDED_FRAGMENTS = ("test", "tests", "__pycache__")
+
+
+def _rglob_test_files(root: Path) -> "typing.Iterator[Path]":
+    """``root.rglob("test_*.py")``, skipping `_DEFAULT_EXCLUDE_DIRS` - most pointedly `.claude`, which holds
+    Claude Code's agent worktrees, each a COMPLETE checkout of the repo being scanned. Without this, a
+    caller passed the repo ROOT (rather than a narrow `tests/` subtree) walks every worktree's own test
+    suite too: measured on autopsia with 30 worktrees present, `unbacked_audit_dispositions` concatenated
+    7,989 duplicate test files into its search corpus instead of the real 295, at ~810s instead of a few.
+
+    The `code_audit._base` import is DEFERRED inside the function rather than at module top-level: this
+    module (`meta_test_utils`) is itself imported BY `pyutilz.dev.code_audit.__init__` (for
+    `todo_hygiene.py`'s `scan_todo_markers`), so a top-level import back into `code_audit` is circular -
+    `ImportError: cannot import name 'ATTRIBUTION_RE' from partially initialized module`, measured live.
+    Deferring costs nothing here since this helper is never on a hot per-call path itself.
+    """
+    from pyutilz.dev.code_audit._base import _DEFAULT_EXCLUDE_DIRS
+
+    for p in root.rglob("test_*.py"):
+        if not any(part in _DEFAULT_EXCLUDE_DIRS for part in p.relative_to(root).parts[:-1]):
+            yield p
 
 
 def consumer_corpus(
@@ -420,96 +420,6 @@ def scan_todo_markers(
 # ---------------------------------------------------------------------------
 # Drift tracking — count `_USER_DEFERRED_*` whitelist entries
 # ---------------------------------------------------------------------------
-
-
-_DEFERRED_PREFIXES = ("_USER_DEFERRED", "_GRANDFATHERED")
-
-
-def count_user_deferred_entries(
-    test_meta_dir: Path,
-    *,
-    extra_prefixes: Iterable[str] = (),
-) -> dict[str, int]:
-    """Count entries in every ``_USER_DEFERRED_*`` (or other listed
-    prefix) set/dict literal across every meta-test file in
-    ``test_meta_dir``.
-
-    The drift tracker compares this dict to a stored baseline; growth
-    means tech debt is accumulating without anyone noticing.
-
-    Returns
-    -------
-    dict[str, int]
-        ``{f"<test_file_stem>::<var_name>": count}`` — e.g.
-        ``{"test_dead_helpers::_USER_DEFERRED_DEAD_HELPERS": 9}``.
-    """
-    prefixes = tuple(_DEFERRED_PREFIXES) + tuple(extra_prefixes)
-    out: dict[str, int] = {}
-    if not test_meta_dir.exists():
-        return out
-    unreadable: list[str] = []
-    for py in sorted(_rglob_test_files(test_meta_dir)):
-        error = _count_deferred_in_file(py, prefixes, out)
-        if error is not None:
-            unreadable.append(error)
-    if unreadable:
-        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
-    return out
-
-
-def _count_deferred_in_file(py: Path, prefixes: tuple[str, ...], out: dict[str, int]) -> Optional[str]:
-    """Add one file's deferred-entry counts to ``out``; return a read-error message when the file is unreadable."""
-    try:
-        src = py.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        logger.warning("_count_deferred_in_file: file unreadable, reported as an error string: %s: %s", type(exc).__name__, exc)
-        return f"{py}: {exc}"
-    try:
-        tree = ast.parse(src)
-    except SyntaxError as exc:
-        logger.warning("_count_deferred_in_file: file does not parse, not counted: %s: %s", type(exc).__name__, exc)
-        return None
-    _count_deferred_in_tree(tree, py.stem, prefixes, out)
-    return None
-
-
-def _count_deferred_in_tree(tree: ast.AST, stem: str, prefixes: tuple[str, ...], out: dict[str, int]) -> None:
-    """Record ``{stem::NAME: entries}`` for every prefix-matching assignment in ``tree`` with a countable literal value."""
-    for node in ast.walk(tree):
-        # Both ``X = {...}`` (Assign) and ``X: set[str] = {...}``
-        # (AnnAssign) need to be matched — modern code typically
-        # uses the annotated form for whitelists.
-        value: Optional[ast.expr]
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-            value = node.value
-        elif isinstance(node, ast.AnnAssign):
-            targets = [node.target] if node.target else []
-            value = node.value
-        else:
-            continue
-        if value is None:
-            continue
-        for target in targets:
-            if not isinstance(target, ast.Name) or not target.id.startswith(prefixes):
-                continue
-            count = _literal_entry_count(value)
-            if count is not None:
-                out[f"{stem}::{target.id}"] = count
-
-
-def _literal_entry_count(value: ast.expr) -> Optional[int]:
-    """Number of entries in a set/list/tuple/dict literal, 0 for an empty ``set()``/``dict()`` call, else None."""
-    if isinstance(value, (ast.Set, ast.List, ast.Tuple)):
-        return len(value.elts)
-    if isinstance(value, ast.Dict):
-        return len(value.keys)
-    if isinstance(value, ast.Call) and not value.args and not value.keywords:
-        # An EMPTY ``set()`` / ``dict()`` constructor only. ``set(_LEGACY_ENTRIES)`` is
-        # also an ast.Call, and recording it as 0 made 40 tracked entries read as none --
-        # the drift tracker reported shrinking debt in exactly the case where it grew.
-        return 0
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -877,3 +787,18 @@ def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_pref
                 cited = ", ".join(citations) if citations else "nothing"
                 unbacked.append(f"{doc.relative_to(repo_root).as_posix()}:{lineno} RESOLVED cites {cited}")
     return unbacked
+
+
+def count_user_deferred_entries(
+    test_meta_dir: Path,
+    *,
+    extra_prefixes: Iterable[str] = (),
+) -> dict[str, int]:
+    """Count the entries of every ``_USER_DEFERRED_*`` (or other listed prefix) literal in a meta-test directory.
+
+    The counter lives in ``py_ci_shared.deferred_entries``; this name is kept for existing callers. It is a development
+    tool, so the import is deferred to the call.
+    """
+    from py_ci_shared.deferred_entries import count_user_deferred_entries as count
+
+    return count(test_meta_dir, extra_prefixes=extra_prefixes)
