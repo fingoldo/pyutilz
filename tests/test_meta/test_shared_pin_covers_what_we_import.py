@@ -107,9 +107,9 @@ def test_the_pin_carries_every_module_we_import():
     )
     if listing.returncode != 0:
         # CI installs from the pin into site-packages, where the installed package IS the pinned commit; the import check covers it.
-        missing = sorted(m for m in _imported_modules() if not (package_dir / f"{m}.py").exists())
+        missing = sorted(m for m in _imported_modules() if not ((package_dir / f"{m}.py").exists() or (package_dir / m).is_dir()))
         assert not missing, f"imported but absent from the installed py-ci-shared: {missing} -- bump the pin"
         return
-    in_pin = {line[:-3] for line in listing.stdout.split() if line.endswith(".py")}
+    in_pin = {line[:-3] for line in listing.stdout.split() if line.endswith(".py")} | {line for line in listing.stdout.split() if "." not in line}
     missing = sorted(m for m in _imported_modules() if m not in in_pin)
     assert not missing, f"imported but absent from the pinned {sha[:12]}: {missing} -- bump the pin"
