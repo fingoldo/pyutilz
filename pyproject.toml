@@ -369,13 +369,13 @@ dev = [
     # it is an ordinary PyPI package with no direct reference, so it belongs here, where every
     # workflow's `[dev]` install picks it up.
     "pytest-randomly>=3.12",
-    # black==26.10.0 requires Python >=3.10 (found 2026-07-19: installing dev-extras on the py3.8/
+    # black==26.10.1 requires Python >=3.10 (found 2026-07-19: installing dev-extras on the py3.8/
     # py3.9 CI matrix cells hard-failed the whole `pip install -e ".[dev]"` step, since pip can't
     # satisfy an unconditional exact pin against an interpreter the release doesn't support). The
     # marker keeps `pip install .[dev]` installable there -- those cells don't need black to run
     # pytest, matching the identical py-ci-shared marker below.
-    "black==26.10.0 ; python_version >= '3.10'",   # pinned exact, matching CI's uvx black==26.10.0 (black-filtered.yml)
-    "ruff==0.16.10",                 # pinned exact, matching RUFF_VERSION in py-ci-shared's tool_versions.py, which its ruff-blocking.yml runs --
+    "black==26.10.1 ; python_version >= '3.10'",   # pinned exact, matching CI's uvx black==26.10.1 (black-filtered.yml)
+    "ruff==0.17.1",                 # pinned exact, matching RUFF_VERSION in py-ci-shared's tool_versions.py, which its ruff-blocking.yml runs --
                                     # an open range here is exactly how mlframe's prior v0.8.6 pre-commit-
                                     # vs-CI drift went unnoticed for a long time (2026-07-18 architecture review).
     "mypy==2.4.0 ; python_version >= '3.10'",  # no mypy 2.x is published for 3.8/3.9, and the gate runs on 3.11; pinned exact, matching CI's mypy-full.yml `mypy-version` and .pre-commit-config.yaml's
