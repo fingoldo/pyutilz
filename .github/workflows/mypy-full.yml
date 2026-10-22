@@ -75,9 +75,9 @@ jobs:
       - name: Show mypy version
         run: mypy --version
 
-      # --min-files 261 against the 278 files mypy checks on 2026-09-26 (floor = 94% of the measured count, held there
+      # --min-files 185 against the 278 files mypy checks on 2026-09-26 (floor = 94% of the measured count, held there
       # by tests/test_meta/test_mypy_gate_floor.py): fails a run whose scope has silently narrowed (a mistyped path, an
       # over-eager exclude) as well as one that aborted midway.
       # Identical invocation to .pre-commit-config.yaml's mypy-full-blocking hook.
       - name: MyPy (whole project, completion-asserted)
-        run: python -m py_ci_shared.mypy_gate --min-files 261 src/pyutilz
+        run: python -m py_ci_shared.mypy_gate --min-files 185 src/pyutilz

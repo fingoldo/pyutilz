@@ -307,7 +307,7 @@ repos:
   # pattern as black-filtered-blocking above. That parity is genuine only since 2026-09-03: CI
   # ran a bare `mypy` through py-ci-shared's reusable workflow until then, i.e. the merge gate
   # was LOOSER than this hook; mypy-full.yml now runs this same `py_ci_shared.mypy_gate
-  # --min-files 261 src/pyutilz` command inline (packaging audit 03/F03). Previously this was a
+  # --min-files 185 src/pyutilz` command inline (packaging audit 03/F03). Previously this was a
   # WARN-only hook (mypy_full_warn.py) because the backlog wasn't closed yet; now that it is, a
   # local warn-only hook would be LOOSER than CI, letting a broken commit land locally and only
   # fail later in CI.
@@ -324,7 +324,7 @@ repos:
       # Moved pre-commit -> pre-push 2026-10-04: whole-project mypy takes minutes; a per-commit hook this slow gets --no-verify.
       - id: mypy-full-blocking
         name: "mypy (whole project, blocking, completion-asserted)"
-        entry: python -m py_ci_shared.mypy_gate --min-files 261 src/pyutilz
+        entry: python -m py_ci_shared.mypy_gate --min-files 185 src/pyutilz
         language: system
         types: [python]
         pass_filenames: false

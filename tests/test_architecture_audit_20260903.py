@@ -257,7 +257,8 @@ def test_no_scanner_submodule_leaks_onto_the_facade_attribute_surface():
 
     import py_ci_shared.code_audit as facade
 
-    leaked = sorted(name for name, value in vars(facade).items() if isinstance(value, types.ModuleType) and value.__name__.startswith(facade.__name__ + "."))
+    # ``cli`` is the deliberate `python -m` submodule; it binds on the package once imported and is not a scanner.
+    leaked = sorted(name for name, value in vars(facade).items() if isinstance(value, types.ModuleType) and value.__name__.startswith(facade.__name__ + ".") and name != "cli")
     assert not leaked, f"submodule(s) still bound on the facade: {leaked}"
 
 
