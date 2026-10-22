@@ -52,7 +52,7 @@ def test_f01_sparse_memory_usage_returns_a_real_int():
 
 def test_f02_both_reexport_patch_scanners_acknowledge_each_other():
     """Neither module used to mention the other; a triager could not tell one finding from two."""
-    from pyutilz.dev.code_audit import patch_target_is_a_reexport, reexport_patch_target
+    from py_ci_shared.code_audit import patch_target_is_a_reexport, reexport_patch_target
 
     assert "reexport_patch_target.py" in (patch_target_is_a_reexport.__doc__ or "")
     assert "patch_target_is_a_reexport.py" in (reexport_patch_target.__doc__ or "")
@@ -60,7 +60,7 @@ def test_f02_both_reexport_patch_scanners_acknowledge_each_other():
 
 def test_f02_only_one_of_the_pair_runs_by_default():
     """Both stay registered (so the emitted check id is re-runnable), but only one is on by default."""
-    from pyutilz.dev.code_audit.registry import OPT_IN_ONLY, get_scanners
+    from py_ci_shared.code_audit.registry import OPT_IN_ONLY, get_scanners
 
     scanners = get_scanners()
     assert "patch_target_is_a_reexport" in scanners
@@ -71,7 +71,7 @@ def test_f02_only_one_of_the_pair_runs_by_default():
 
 def test_f02_dotted_helper_is_the_shared_one():
     """The scanner's private `_dotted` copy of `_base.dotted_name` is gone (duplicate_function_body)."""
-    from pyutilz.dev.code_audit import patch_target_is_a_reexport
+    from py_ci_shared.code_audit import patch_target_is_a_reexport
 
     assert not hasattr(patch_target_is_a_reexport, "_dotted")
     assert patch_target_is_a_reexport.dotted_name.__module__.endswith("_base")

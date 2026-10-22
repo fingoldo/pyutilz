@@ -86,12 +86,12 @@ def _rglob_test_files(root: Path) -> "typing.Iterator[Path]":
     7,989 duplicate test files into its search corpus instead of the real 295, at ~810s instead of a few.
 
     The `code_audit._base` import is DEFERRED inside the function rather than at module top-level: this
-    module (`meta_test_utils`) is itself imported BY `pyutilz.dev.code_audit.__init__` (for
+    module (`meta_test_utils`) is itself imported BY `py_ci_shared.code_audit.__init__` (for
     `todo_hygiene.py`'s `scan_todo_markers`), so a top-level import back into `code_audit` is circular -
     `ImportError: cannot import name 'ATTRIBUTION_RE' from partially initialized module`, measured live.
     Deferring costs nothing here since this helper is never on a hot per-call path itself.
     """
-    from pyutilz.dev.code_audit._base import _DEFAULT_EXCLUDE_DIRS
+    from py_ci_shared.code_audit._base import _DEFAULT_EXCLUDE_DIRS
 
     for p in root.rglob("test_*.py"):
         if not any(part in _DEFAULT_EXCLUDE_DIRS for part in p.relative_to(root).parts[:-1]):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-from pyutilz.dev.code_audit import (
+from py_ci_shared.code_audit import (
     Finding,
 )
 
@@ -22,8 +22,8 @@ def _oom_outside_parent(root, exclude_dirs=None, *, parent_pid: int):
 def test_cli_renders_and_gates_on_an_unknown_severity(tmp_path: Path, capsys, monkeypatch):
     """F200 regression: ``sev_order.get(f.severity, 99) <= cutoff`` deleted an unrecognised severity
     at EVERY --min-severity setting and the exit code ignored it too."""
-    from pyutilz.dev.code_audit import cli as _cli
-    from pyutilz.dev.code_audit import main as cli_main
+    from py_ci_shared.code_audit import cli as _cli
+    from py_ci_shared.code_audit.cli import main as cli_main
 
     stray = Finding.__new__(Finding)
     object.__setattr__(stray, "check", "stray")

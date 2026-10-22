@@ -742,8 +742,8 @@ warn_unreachable = true
 # Strict-mode beachhead (mirrors mlframe's approach): small, cohesive, stable-surface subpackages
 # verified clean under strict mode.
 # Established 2026-07-06:
-# - dev.code_audit (11 files): a self-contained lint/audit CLI tool, already clean with no
-#   changes needed.
+# - dev.code_audit (11 files): moved to py-ci-shared 2026-10-22, where it is typed and gated;
+#   the pyutilz copy and its mypy override were removed.
 # - stats (2 files): numba-jitted normality tests; fixed 2 real errors in the njit-fallback
 #   stub (missing annotations on the *args/**kwargs decorator pattern).
 # Added 2026-09-02, each independently verified clean under the strict flags before being listed:
@@ -767,7 +767,6 @@ warn_unreachable = true
 # clean, same policy as mlframe.
 [[tool.mypy.overrides]]
 module = [
-    "pyutilz.dev.code_audit.*",
     "pyutilz.stats.*",
     "pyutilz.text.secrets_scrub",
     "pyutilz.system.single_flight_cache",

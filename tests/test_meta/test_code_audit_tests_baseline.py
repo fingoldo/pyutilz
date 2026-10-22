@@ -1,4 +1,4 @@
-"""Meta-test: run pyutilz.dev.code_audit's TEST-QUALITY scanners against ``tests/`` itself.
+"""Meta-test: run py_ci_shared.code_audit's TEST-QUALITY scanners against ``tests/`` itself.
 
 Companion to :mod:`test_code_audit_baseline`, which scans ``src/pyutilz`` only. The 2026-09-02
 test-suite audit (F01) found that the repo ships test-quality scanners with full unit coverage

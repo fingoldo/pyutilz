@@ -25,7 +25,7 @@ import warnings
 from pathlib import Path
 
 import pyutilz
-from pyutilz.dev.code_audit import scan_uncached_constant_cost_probe
+from py_ci_shared.code_audit import scan_uncached_constant_cost_probe
 
 SRC_DIR = Path(pyutilz.__file__).resolve().parent
 

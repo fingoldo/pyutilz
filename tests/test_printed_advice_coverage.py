@@ -21,7 +21,7 @@ PRINTED_ADVICE_TESTS = {
     "src/pyutilz/core/pythonlib/filesystem.py::_read_verified_pickle#1": "tests/test_printed_advice_messages.py::test_load_file_refusal_names_allow_unverified",
     "src/pyutilz/database/db/schema.py::_alternate_values_clause#1": "tests/test_printed_advice_messages.py::test_alternate_values_fragment_refusal_names_raw_sql",
     "src/pyutilz/database/db/upsert.py::build_upsert_query#1": "tests/test_printed_advice_messages.py::test_upsert_raw_fragment_refusal_names_raw_sql",
-    "src/pyutilz/dev/code_audit/registry.py::register_scanner#1": "tests/code_audit/test_registry_invariants.py::test_duplicate_scanner_registration_error_names_allow_override",
+    "src/py_ci_shared/code_audit/registry.py::register_scanner#1": "tests/code_audit/test_registry_invariants.py::test_duplicate_scanner_registration_error_names_allow_override",
     "src/pyutilz/text/strings/configfiles.py::_normalise_encryption#1": "tests/test_printed_advice_messages.py::test_xor_encryption_warning_names_base64_spelling",
     "src/pyutilz/dev/freevar_analysis.py::split_out_module#1": "tests/test_dev_freevar_analysis.py::test_refusal_to_split_names_back_import_ok_escape_hatch",
     "src/pyutilz/dev/logginglib.py::init_logging#1": "tests/test_logginglib.py::TestInitLoggingStderrAdvice::test_failed_stderr_reconfigure_is_logged_with_its_errors_replace_note",

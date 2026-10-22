@@ -14,23 +14,22 @@ def test_facade_reexports_are_same_objects():
     facade must re-export every public symbol as the SAME object the
     cohesive submodule defines. Guards against a future submodule shuffle
     silently changing the public import surface."""
-    import pyutilz.dev.code_audit as facade
-    from pyutilz.dev.code_audit._base import Finding as _Finding
-    from pyutilz.dev.code_audit.mutable_defaults import scan_mutable_defaults as _smd
-    from pyutilz.dev.code_audit.closures import scan_late_binding_closures as _slbc
-    from pyutilz.dev.code_audit.default_via_or import scan_default_via_or_trap as _sdvot
-    from pyutilz.dev.code_audit.broad_except import scan_broad_except_swallows as _sbes
-    from pyutilz.dev.code_audit.nan_equality import scan_nan_equality as _sne
-    from pyutilz.dev.code_audit.mutation_during_iteration import scan_mutation_during_iteration as _smdi
-    from pyutilz.dev.code_audit.sql_lint import scan_sql_limit_without_order_by as _sslwob, scan_sql_offset_pagination as _ssop
-    from pyutilz.dev.code_audit.dead_cli_flags import scan_dead_cli_flags as _sdcf
-    from pyutilz.dev.code_audit.silent_escalation import scan_log_only_except as _sloe, DEFAULT_ESCALATION_ATTRS as _DEA
-    from pyutilz.dev.code_audit.sql_migrations import scan_sql_migration_idempotency as _ssmi
-    from pyutilz.dev.code_audit.duplicate_conditions import scan_duplicate_conditions as _sdc
-    from pyutilz.dev.code_audit.missed_await import scan_missed_await as _sma
-    from pyutilz.dev.code_audit.redundant_test_fit import scan_redundant_test_fit_calls as _srtfc
-    from pyutilz.dev.code_audit.registry import run_all as _ra, get_scanners as _get_scanners
-    from pyutilz.dev.code_audit.cli import main as _main
+    import py_ci_shared.code_audit as facade
+    from py_ci_shared.code_audit._base import Finding as _Finding
+    from py_ci_shared.code_audit.mutable_defaults import scan_mutable_defaults as _smd
+    from py_ci_shared.code_audit.closures import scan_late_binding_closures as _slbc
+    from py_ci_shared.code_audit.default_via_or import scan_default_via_or_trap as _sdvot
+    from py_ci_shared.code_audit.broad_except import scan_broad_except_swallows as _sbes
+    from py_ci_shared.code_audit.nan_equality import scan_nan_equality as _sne
+    from py_ci_shared.code_audit.mutation_during_iteration import scan_mutation_during_iteration as _smdi
+    from py_ci_shared.code_audit.sql_lint import scan_sql_limit_without_order_by as _sslwob, scan_sql_offset_pagination as _ssop
+    from py_ci_shared.code_audit.dead_cli_flags import scan_dead_cli_flags as _sdcf
+    from py_ci_shared.code_audit.silent_escalation import scan_log_only_except as _sloe, DEFAULT_ESCALATION_ATTRS as _DEA
+    from py_ci_shared.code_audit.sql_migrations import scan_sql_migration_idempotency as _ssmi
+    from py_ci_shared.code_audit.duplicate_conditions import scan_duplicate_conditions as _sdc
+    from py_ci_shared.code_audit.missed_await import scan_missed_await as _sma
+    from py_ci_shared.code_audit.redundant_test_fit import scan_redundant_test_fit_calls as _srtfc
+    from py_ci_shared.code_audit.registry import run_all as _ra, get_scanners as _get_scanners
 
     assert facade.Finding is _Finding
     assert facade.scan_mutable_defaults is _smd
@@ -52,7 +51,6 @@ def test_facade_reexports_are_same_objects():
     assert facade.get_scanners is _get_scanners
     # The mutable registry itself is NOT part of the facade -- only the read-only accessor is.
     assert not hasattr(facade, "SCANNERS")
-    assert facade.main is _main
     # Every scanner in the registry is the facade-level attribute of the same name -- see
     # test_registry_and_facade_are_in_bijection for the full both-ways invariant.
     scanners = facade.get_scanners()
@@ -64,7 +62,7 @@ def test_facade_reexports_are_same_objects():
 
 def test_cli_json_output(tmp_path: Path, capsys):
     _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
-    from pyutilz.dev.code_audit import main as cli_main
+    from py_ci_shared.code_audit.cli import main as cli_main
     cli_main([str(tmp_path), "--format", "json"])
     from pyutilz.core import jsonlib as _jsonlib
     out = capsys.readouterr().out

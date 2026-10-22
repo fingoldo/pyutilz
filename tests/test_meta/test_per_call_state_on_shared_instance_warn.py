@@ -27,7 +27,7 @@ import warnings
 from pathlib import Path
 
 import pyutilz
-from pyutilz.dev.code_audit import scan_per_call_state_on_shared_instance
+from py_ci_shared.code_audit import scan_per_call_state_on_shared_instance
 
 SRC_DIR = Path(pyutilz.__file__).resolve().parent
 

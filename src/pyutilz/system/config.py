@@ -77,7 +77,7 @@ class TomlLiveConfig:
 
     def __getstate__(self) -> dict:
         """Drop the unpicklable ``threading.Lock`` (a fresh one is created in ``__setstate__``) --
-        flagged by ``pyutilz.dev.code_audit.unpicklable_resource_state``; this config object isn't
+        flagged by ``py_ci_shared.code_audit.unpicklable_resource_state``; this config object isn't
         on any current pickling path, but the guard is cheap and matches the repo-wide convention."""
         state = self.__dict__.copy()
         state["_lock"] = None

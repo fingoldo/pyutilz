@@ -100,7 +100,7 @@ class UtilizationMonitor:
 
     def __getstate__(self) -> dict:
         """Drop the unpicklable ``threading.Event``/``threading.Thread`` (fresh ones are created in
-        ``__setstate__``) -- flagged by ``pyutilz.dev.code_audit.unpicklable_resource_state``; this
+        ``__setstate__``) -- flagged by ``py_ci_shared.code_audit.unpicklable_resource_state``; this
         monitor isn't on any current pickling path, but the guard is cheap and matches the repo-wide
         convention. The restored instance is NOT running -- call ``start()`` again if needed."""
         state = self.__dict__.copy()

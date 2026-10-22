@@ -11,7 +11,7 @@ from ._helpers import _write
 def test_cli_min_severity_does_not_weaken_exit_code(tmp_path: Path):
     """Regression: --min-severity previously filtered `findings` BEFORE the exit-code check,
     so a real P1 finding silently exited 0 once filtered out of the display."""
-    from pyutilz.dev.code_audit import main as cli_main
+    from py_ci_shared.code_audit.cli import main as cli_main
 
     _write(tmp_path, "bad.py", """
 async def process(item):

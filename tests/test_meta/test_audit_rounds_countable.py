@@ -20,7 +20,7 @@ FINDING_ID_RE = re.compile(r"^((?:F|MT-)\d+(?=\.)|[A-Z]+-\d+(?= \())")
 # Section headings of the preventive-meta-tests report's inventory, prose rather than findings.
 NOT_FINDINGS = (
     "`tests/test_meta/` - 40 test modules, 15 baseline JSON files",
-    "`src/pyutilz/dev/code_audit/` - 59 scanner modules",
+    "`src/py_ci_shared/code_audit/` - 59 scanner modules",
     "`py-ci-shared/src/py_ci_shared/` - 21 modules, 1 consumed by pyutilz's meta-suite",
     "`.pre-commit-config.yaml` - about 15 hooks, most blocking",
 )

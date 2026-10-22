@@ -61,7 +61,7 @@ def test_no_resource_acquired_outside_a_with_block():
     constructors, which include ``subprocess.Popen`` (claude_code_provider.py) and the ``open`` family. The scan runs over the
     whole production tree with no exemptions and currently reports nothing, so any new bare acquisition fails here.
     """
-    from pyutilz.dev.code_audit.resource_handle_safety import scan_resource_handle_safety
+    from py_ci_shared.code_audit.resource_handle_safety import scan_resource_handle_safety
 
     hits = scan_resource_handle_safety(SRC_ROOT)
     lines = [f"{h.file}:{h.line}: {h.snippet}" for h in hits]
@@ -70,7 +70,7 @@ def test_no_resource_acquired_outside_a_with_block():
 
 def test_resource_handle_scan_flags_a_bare_popen(tmp_path):
     """Teeth check: the scan above is only meaningful if it reports a bare Popen when one is planted."""
-    from pyutilz.dev.code_audit.resource_handle_safety import scan_resource_handle_safety
+    from py_ci_shared.code_audit.resource_handle_safety import scan_resource_handle_safety
 
     (tmp_path / "bad.py").write_text('import subprocess\np = subprocess.Popen(["x"])\n', encoding="utf-8")
     hits = scan_resource_handle_safety(tmp_path)

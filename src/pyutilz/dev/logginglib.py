@@ -587,7 +587,7 @@ def debugged(max_retries: int = 3) -> Callable[[Callable[..., Any]], Callable[..
 # caller so that independent sites never share a window: two different errors throttled together
 # means the second one is invisible whenever the first is firing.
 #
-# `pyutilz.dev.code_audit`'s `unthrottled_hot_loop_log` check looks for the call sites this exists
+# `py_ci_shared.code_audit`'s `unthrottled_hot_loop_log` check looks for the call sites this exists
 # to serve, so the check and the helper now live in the same package.
 
 #: ``min_interval`` for a message that should appear once per process: ``log_throttle(key, ONCE)``.

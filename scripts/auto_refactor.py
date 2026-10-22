@@ -63,10 +63,10 @@ def _build_mutable_default_index(root: Path) -> dict:
     list[(line, severity, detail)].
 
     Replaces the per-file regex match the previous version performed.
-    Delegates to ``pyutilz.dev.code_audit.scan_mutable_defaults`` so the
+    Delegates to ``py_ci_shared.code_audit.scan_mutable_defaults`` so the
     detection logic stays in one place (importable + CLI-testable).
     """
-    from pyutilz.dev.code_audit import scan_mutable_defaults
+    from py_ci_shared.code_audit import scan_mutable_defaults
     findings = scan_mutable_defaults(root)
     index: dict = {}
     for f in findings:

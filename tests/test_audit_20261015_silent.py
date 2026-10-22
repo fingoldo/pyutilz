@@ -16,9 +16,9 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from pyutilz.dev.code_audit import register_scanner
-from pyutilz.dev.code_audit.broad_except import scan_broad_except_swallows
-from pyutilz.dev.code_audit.registry import _SCANNERS, run_all, run_all_checked
+from py_ci_shared.code_audit import register_scanner
+from py_ci_shared.code_audit.broad_except import scan_broad_except_swallows
+from py_ci_shared.code_audit.registry import _SCANNERS, run_all, run_all_checked
 
 
 def _write(root: Path, name: str, text: str) -> None:

@@ -1,4 +1,4 @@
-"""Meta-test: run pyutilz.dev.code_audit's own scanners against pyutilz's
+"""Meta-test: run py_ci_shared.code_audit's own scanners against pyutilz's
 own source (self-scan), baseline-driven per this directory's snapshot-style
 meta-test convention (see test_logger_lazy_formatting.py). Mutable default arguments are this self-scan's
 ``mutable_default`` check alone: it flags every constructor the retired hand-rolled
@@ -304,7 +304,7 @@ consumer of dev.code_audit (glossum_backend_scripts, llm_bench,
 realtime_applications, production_scrapers, mlframe, algopacksimple) --
 pyutilz eats its own dog food, and (like every other consumer) uses the
 shared harness in py_ci_shared.code_audit_meta rather than a hand-rolled
-copy. See ``pyutilz/src/pyutilz/dev/code_audit/__init__.py`` for what
+copy. See ``pyutilz/src/py_ci_shared/code_audit/__init__.py`` for what
 each check catches.
 """
 

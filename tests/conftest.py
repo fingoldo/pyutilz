@@ -255,11 +255,11 @@ def _reset_process_lifetime_module_state():
     yield
     for module_name, attr in (
         ("pyutilz.database.psycopg2_pool", "_conn_last_used"),
-        ("pyutilz.dev.code_audit.console_unicode", "_UNREADABLE_INIT_WARNED"),
+        ("py_ci_shared.code_audit.console_unicode", "_UNREADABLE_INIT_WARNED"),
         ("pyutilz.dev.logginglib", "_log_throttle_last"),
         ("pyutilz.llm._claude_models", "_warned_unknown"),
-        ("pyutilz.dev.code_audit._base", "_SRC_LINES_CACHE"),
-        ("pyutilz.dev.code_audit.comment_names_missing_symbol", "_COMMENT_TEXTS_CACHE"),
+        ("py_ci_shared.code_audit._base", "_SRC_LINES_CACHE"),
+        ("py_ci_shared.code_audit.comment_names_missing_symbol", "_COMMENT_TEXTS_CACHE"),
         ("pyutilz.dev.logginglib", "_log_throttle_counts"),
         ("pyutilz.llm.factory", "_pending_close_tasks"),
     ):
@@ -276,7 +276,7 @@ def _isolate_code_audit_check_aliases(monkeypatch: pytest.MonkeyPatch):
     The table is filled at import time, so it must not be cleared (that would lose the aliases for every later test);
     a test that registers an alias gets a private copy that is dropped with the monkeypatch.
     """
-    module = sys.modules.get("pyutilz.dev.code_audit.registry")
+    module = sys.modules.get("py_ci_shared.code_audit.registry")
     if module is not None:
         monkeypatch.setattr(module, "_CHECK_ALIASES", dict(module._CHECK_ALIASES))
     yield

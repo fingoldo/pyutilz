@@ -156,7 +156,7 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
 
     def __getstate__(self) -> dict:
         """Drop the unpicklable ``threading.RLock`` (a fresh one is created in ``__setstate__``) --
-        flagged by ``pyutilz.dev.code_audit.unpicklable_resource_state``; this cache isn't on any
+        flagged by ``py_ci_shared.code_audit.unpicklable_resource_state``; this cache isn't on any
         current pickling path, but the guard is cheap and matches the repo-wide convention.
 
         Also drops the derived ``_plan_cache``: it holds compiled lookup plans keyed by entry

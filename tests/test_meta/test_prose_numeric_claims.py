@@ -43,7 +43,7 @@ def _shipped_module_count() -> int:
 
 
 def _scanner_count() -> int:
-    from pyutilz.dev.code_audit import get_scanners
+    from py_ci_shared.code_audit import get_scanners
 
     return len(get_scanners())
 

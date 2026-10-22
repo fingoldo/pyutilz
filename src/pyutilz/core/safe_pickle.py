@@ -99,7 +99,7 @@ class _PathLockEntry:
         """Drop the unpicklable ``threading.Lock`` (a fresh one is created in ``__setstate__``);
         this class isn't on any current pickling path, but it's the same live-resource-survives-only-
         because-nobody-pickles-the-parent-yet precondition flagged repo-wide by
-        ``pyutilz.dev.code_audit.unpicklable_resource_state``."""
+        ``py_ci_shared.code_audit.unpicklable_resource_state``."""
         return {"refcount": self.refcount}
 
     def __setstate__(self, state: dict) -> None:

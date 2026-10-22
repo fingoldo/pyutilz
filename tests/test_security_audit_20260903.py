@@ -196,7 +196,7 @@ class TestSafeParseRecursionError:
         input tuned to blow the stack on one leg parses fine on another - the old form asserted the
         parser's limits rather than the handler, and failed on twelve of the matrix's legs.
         """
-        from pyutilz.dev.code_audit import _base
+        from py_ci_shared.code_audit import _base
 
         src = tmp_path / "generated.py"
         src.write_text("x = 1\n", encoding="utf-8")
@@ -205,7 +205,7 @@ class TestSafeParseRecursionError:
         assert _base._safe_parse(src) is None
 
     def test_a_valid_file_still_parses(self, tmp_path):
-        from pyutilz.dev.code_audit._base import _safe_parse, clear_parse_cache
+        from py_ci_shared.code_audit._base import _safe_parse, clear_parse_cache
 
         ok = tmp_path / "ok.py"
         ok.write_text("x = 1\n", encoding="utf-8")

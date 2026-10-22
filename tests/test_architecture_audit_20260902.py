@@ -283,7 +283,7 @@ def test_strings_import_does_not_pull_pandas_eagerly():
 
 
 def test_scanner_registry_is_not_public_on_the_facade():
-    import pyutilz.dev.code_audit as facade
+    import py_ci_shared.code_audit as facade
 
     assert not hasattr(facade, "SCANNERS")
     assert "SCANNERS" not in facade.__all__
@@ -291,7 +291,7 @@ def test_scanner_registry_is_not_public_on_the_facade():
 
 
 def test_get_scanners_returns_a_copy_so_mutation_cannot_corrupt_run_all():
-    from pyutilz.dev.code_audit import get_scanners
+    from py_ci_shared.code_audit import get_scanners
 
     first = get_scanners()
     name = next(iter(first))
@@ -300,7 +300,7 @@ def test_get_scanners_returns_a_copy_so_mutation_cannot_corrupt_run_all():
 
 
 def test_deprecated_scanners_alias_warns_and_hands_back_a_copy():
-    from pyutilz.dev.code_audit import registry
+    from py_ci_shared.code_audit import registry
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -311,7 +311,7 @@ def test_deprecated_scanners_alias_warns_and_hands_back_a_copy():
 
 
 def test_registry_module_still_raises_for_unknown_attributes():
-    from pyutilz.dev.code_audit import registry
+    from py_ci_shared.code_audit import registry
 
     with pytest.raises(AttributeError):
         registry.NoSuchName

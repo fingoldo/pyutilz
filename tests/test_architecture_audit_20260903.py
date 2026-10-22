@@ -130,7 +130,7 @@ def test_no_exception_anywhere_in_a_domain_escapes_its_root(package_name, root_n
 
 
 def test_is_test_file_accepts_every_convention_the_scanners_used_to_disagree_about():
-    from pyutilz.dev.code_audit._base import is_test_file
+    from py_ci_shared.code_audit._base import is_test_file
 
     root = Path("/repo")
     assert is_test_file(root / "tests" / "test_a.py", root)
@@ -143,7 +143,7 @@ def test_is_test_file_accepts_every_convention_the_scanners_used_to_disagree_abo
 def test_is_test_file_directory_check_is_relative_to_the_scan_root():
     """`Path.parts` is absolute: a checkout living under a directory named `tests` must not make
     every production module in it read as test code."""
-    from pyutilz.dev.code_audit._base import is_test_file
+    from py_ci_shared.code_audit._base import is_test_file
 
     # Built from parts rather than written as a literal: a checkout path spelled out in a test is
     # a path that exists on exactly one machine.
@@ -152,7 +152,7 @@ def test_is_test_file_directory_check_is_relative_to_the_scan_root():
 
 
 def test_is_test_file_extra_globs_widen_it_for_a_custom_layout():
-    from pyutilz.dev.code_audit._base import is_test_file
+    from py_ci_shared.code_audit._base import is_test_file
 
     root = Path("/repo")
     assert not is_test_file(root / "src" / "check_pricing.py", root)
@@ -161,7 +161,7 @@ def test_is_test_file_extra_globs_widen_it_for_a_custom_layout():
 
 def test_no_scanner_module_defines_its_own_test_file_predicate():
     """The whole point of the shared helper: thirteen private re-implementations, six semantics."""
-    import pyutilz.dev.code_audit as facade
+    import py_ci_shared.code_audit as facade
 
     package_dir = Path(facade.__file__).parent
     offenders = []
@@ -203,7 +203,7 @@ def test_test_focused_scanners_agree_on_a_tests_dir_file_without_a_test_prefix(t
     Before the shared predicate, half this catalogue skipped such a file entirely and reported
     nothing, indistinguishable from a clean result.
     """
-    from pyutilz.dev.code_audit import run_all
+    from py_ci_shared.code_audit import run_all
 
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
@@ -216,27 +216,28 @@ def test_test_focused_scanners_agree_on_a_tests_dir_file_without_a_test_prefix(t
 
 
 def test_describe_scanners_covers_every_registered_check():
-    from pyutilz.dev.code_audit import describe_scanners, get_scanners
+    from py_ci_shared.code_audit import describe_scanners, get_scanners
 
     assert set(describe_scanners()) == set(get_scanners())
 
 
 def test_describe_scanners_marks_exactly_the_opt_in_checks():
-    from pyutilz.dev.code_audit import OPT_IN_ONLY, describe_scanners
+    from py_ci_shared.code_audit import OPT_IN_ONLY, describe_scanners
 
     marked = {name for name, entry in describe_scanners().items() if entry["opt_in"]}
     assert marked == set(OPT_IN_ONLY)
 
 
 def test_every_described_check_carries_a_summary():
-    from pyutilz.dev.code_audit import describe_scanners
+    from py_ci_shared.code_audit import describe_scanners
 
     undescribed = sorted(name for name, entry in describe_scanners().items() if not entry["summary"])
     assert not undescribed, f"registered check(s) with no summary line: {undescribed}"
 
 
 def test_cli_list_checks_prints_the_catalogue_and_marks_opt_ins(capsys):
-    from pyutilz.dev.code_audit import OPT_IN_ONLY, get_scanners, main
+    from py_ci_shared.code_audit import OPT_IN_ONLY, get_scanners
+    from py_ci_shared.code_audit.cli import main
 
     assert main(["--list-checks"]) == 0
     out = capsys.readouterr().out
@@ -254,21 +255,21 @@ def test_cli_list_checks_prints_the_catalogue_and_marks_opt_ins(capsys):
 def test_no_scanner_submodule_leaks_onto_the_facade_attribute_surface():
     import types
 
-    import pyutilz.dev.code_audit as facade
+    import py_ci_shared.code_audit as facade
 
     leaked = sorted(name for name, value in vars(facade).items() if isinstance(value, types.ModuleType) and value.__name__.startswith(facade.__name__ + "."))
     assert not leaked, f"submodule(s) still bound on the facade: {leaked}"
 
 
 def test_the_deliberate_stdlib_reexports_survive_the_sweep():
-    import pyutilz.dev.code_audit as facade
+    import py_ci_shared.code_audit as facade
 
     assert facade.ast.__name__ == "ast"
     assert facade.sys.__name__ == "sys"
 
 
 def test_a_submodule_is_still_importable_on_demand():
-    from pyutilz.dev.code_audit import closures
+    from py_ci_shared.code_audit import closures
 
     # The old path is an alias of the module that moved to py-ci-shared, so the module reports its new home.
     assert closures.__name__.endswith("code_audit.closures")
@@ -388,9 +389,9 @@ def test_both_scanners_share_one_definition_of_a_caching_decorator():
     """`@functools.cache` widened in one copy and not the other was the drift this closes."""
     import ast
 
-    from pyutilz.dev.code_audit._base import is_cached
-    from pyutilz.dev.code_audit.redundant_test_fit import is_cached as from_redundant_test_fit
-    from pyutilz.dev.code_audit.uncached_constant_cost_probe import is_cached as from_probe
+    from py_ci_shared.code_audit._base import is_cached
+    from py_ci_shared.code_audit.redundant_test_fit import is_cached as from_redundant_test_fit
+    from py_ci_shared.code_audit.uncached_constant_cost_probe import is_cached as from_probe
 
     assert from_redundant_test_fit is is_cached
     assert from_probe is is_cached
@@ -403,9 +404,9 @@ def test_both_scanners_share_one_definition_of_a_caching_decorator():
 def test_both_scanners_share_one_definition_of_a_scope_call():
     import ast
 
-    from pyutilz.dev.code_audit._base import is_locals_or_globals_call
-    from pyutilz.dev.code_audit.locals_get import is_locals_or_globals_call as from_locals_get
-    from pyutilz.dev.code_audit.locals_globals_output import is_locals_or_globals_call as from_output
+    from py_ci_shared.code_audit._base import is_locals_or_globals_call
+    from py_ci_shared.code_audit.locals_get import is_locals_or_globals_call as from_locals_get
+    from py_ci_shared.code_audit.locals_globals_output import is_locals_or_globals_call as from_output
 
     assert from_locals_get is is_locals_or_globals_call
     assert from_output is is_locals_or_globals_call
@@ -416,7 +417,7 @@ def test_both_scanners_share_one_definition_of_a_scope_call():
 def test_dotted_name_says_nothing_rather_than_a_partial_for_a_non_name_root():
     import ast
 
-    from pyutilz.dev.code_audit._base import dotted_name
+    from py_ci_shared.code_audit._base import dotted_name
 
     assert dotted_name(ast.parse("a.b.c", mode="eval").body) == "a.b.c"
     assert dotted_name(ast.parse("registry[k].run", mode="eval").body) == ""
@@ -426,7 +427,7 @@ def test_no_private_helper_name_is_defined_twice_across_scanner_modules():
     """The collisions that remain must be genuinely one helper, not two rules sharing a name."""
     import re
 
-    import pyutilz.dev.code_audit as facade
+    import py_ci_shared.code_audit as facade
 
     package_dir = Path(facade.__file__).parent
     definitions: dict[str, list[str]] = {}
@@ -441,36 +442,3 @@ def test_no_private_helper_name_is_defined_twice_across_scanner_modules():
 
 
 # --- F14: the record checker is not a member of the scanner package -------------------------------
-
-
-def test_field_text_agreement_lives_outside_the_scanner_package():
-    import pyutilz.dev.field_text_agreement as moved
-
-    assert moved.__name__ == "pyutilz.dev.field_text_agreement"
-    assert moved.check_record.__module__ == "pyutilz.dev.field_text_agreement"
-
-
-def test_the_old_import_path_still_resolves_to_the_same_objects():
-    import pyutilz.dev.code_audit as facade
-    import pyutilz.dev.code_audit.field_text_agreement as shim
-    import pyutilz.dev.field_text_agreement as moved
-
-    for name in ("check_record", "check_records", "check_all", "cues_in_text", "FieldTextRule", "AGREE"):
-        assert getattr(shim, name) is getattr(moved, name)
-        assert getattr(facade, name) is getattr(moved, name)
-
-
-def test_every_module_left_in_the_scanner_package_is_a_source_scanner():
-    """The package's contract, now true without an allowlist entry for the record checker. The scanners live in py-ci-shared."""
-    import py_ci_shared.code_audit as facade
-
-    package_dir = Path(facade.__file__).parent
-    non_scanner = []
-    infrastructure = {"__init__.py", "_base.py", "_scan_cache.py", "_todo_markers.py", "registry.py"}
-    for py in sorted(package_dir.glob("*.py")):
-        if py.name in infrastructure:
-            continue
-        text = py.read_text(encoding="utf-8", errors="replace")
-        if "def scan_" not in text:
-            non_scanner.append(py.name)
-    assert not non_scanner, f"module(s) in the scanner package that define no scanner: {non_scanner}"

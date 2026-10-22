@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pyutilz.dev.code_audit import (
+from py_ci_shared.code_audit import (
     Finding,
     run_all,
     scan_dead_public_callables,
@@ -72,14 +72,14 @@ class TestWorkerPoolSizing:
     ``_MIN_SCANNERS_PER_WORKER``'s sweep); these pin the fix so it cannot silently regress."""
 
     def _workers_for(self, n_scanners: int) -> int:
-        from pyutilz.dev.code_audit.registry import _MIN_SCANNERS_PER_WORKER, _physical_cpu_count
+        from py_ci_shared.code_audit.registry import _MIN_SCANNERS_PER_WORKER, _physical_cpu_count
 
         return max(2, min(_physical_cpu_count(), n_scanners // _MIN_SCANNERS_PER_WORKER))
 
     def test_physical_count_does_not_exceed_logical(self):
         import os
 
-        from pyutilz.dev.code_audit.registry import _physical_cpu_count
+        from py_ci_shared.code_audit.registry import _physical_cpu_count
 
         physical = _physical_cpu_count()
         assert physical >= 1
@@ -93,7 +93,7 @@ class TestWorkerPoolSizing:
             assert self._workers_for(n) <= n // 5, f"{n} scanners spawned too many workers"
 
     def test_worker_count_is_capped_by_physical_cores(self):
-        from pyutilz.dev.code_audit.registry import _physical_cpu_count
+        from py_ci_shared.code_audit.registry import _physical_cpu_count
 
         assert self._workers_for(10_000) == _physical_cpu_count()
 
@@ -127,7 +127,7 @@ def test_finding_md_row_format():
 
 def test_cli_exits_nonzero_on_p1(tmp_path: Path, capsys):
     _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
-    from pyutilz.dev.code_audit import main as cli_main
+    from py_ci_shared.code_audit.cli import main as cli_main
     rc = cli_main([str(tmp_path), "--format", "markdown"])
     assert rc == 1
     out = capsys.readouterr().out
@@ -137,7 +137,7 @@ def test_cli_exits_nonzero_on_p1(tmp_path: Path, capsys):
 
 def test_cli_exits_zero_on_clean(tmp_path: Path, capsys):
     _write(tmp_path, "ok.py", "def f(x=None):\n    return x\n")
-    from pyutilz.dev.code_audit import main as cli_main
+    from py_ci_shared.code_audit.cli import main as cli_main
     rc = cli_main([str(tmp_path)])
     assert rc == 0
 
@@ -146,7 +146,7 @@ def test_cli_exits_zero_on_clean(tmp_path: Path, capsys):
 
 
 def test_dunder_main_module_execution_delegates_to_cli_main(tmp_path: Path):
-    """``python -m pyutilz.dev.code_audit <root>`` runs the ``if __name__ == '__main__'`` guard in
+    """``python -m py_ci_shared.code_audit <root>`` runs the ``if __name__ == '__main__'`` guard in
     __main__.py, which only executes under real module execution (never when pytest imports the
     module normally) -- exercised here via a real subprocess."""
     import subprocess
@@ -154,7 +154,7 @@ def test_dunder_main_module_execution_delegates_to_cli_main(tmp_path: Path):
 
     _write(tmp_path, "ok.py", "def f(x=None):\n    return x\n")
     result = subprocess.run(  # nosec B603 -- fixed local argv, no shell, no untrusted input
-        [sys.executable, "-m", "pyutilz.dev.code_audit", str(tmp_path)],
+        [sys.executable, "-m", "py_ci_shared.code_audit", str(tmp_path)],
         capture_output=True,
         text=True,
         timeout=60,
@@ -201,7 +201,7 @@ def test_every_tree_walking_scanner_agrees_between_a_relative_and_absolute_root(
     """
     import os
 
-    from pyutilz.dev.code_audit import scan_import_cycles, scan_redundant_test_fit_calls
+    from py_ci_shared.code_audit import scan_import_cycles, scan_redundant_test_fit_calls
 
     pkg = tmp_path / ".claude" / "worktrees" / "agent-1" / "proj"
     (pkg / "tests").mkdir(parents=True)
@@ -234,7 +234,7 @@ def test_every_tree_walking_scanner_agrees_between_a_relative_and_absolute_root(
 
 
 def test_normalise_text_deletes_intra_word_hyphens_so_both_spellings_are_one_token():
-    from pyutilz.dev.code_audit.field_text_agreement import normalise_text
+    from py_ci_shared.code_audit.field_text_agreement import normalise_text
 
     assert normalise_text("Ante-Mortem") == normalise_text("antemortem") == "antemortem"
     assert normalise_text("POST-mortem") == "postmortem"
@@ -243,7 +243,7 @@ def test_normalise_text_deletes_intra_word_hyphens_so_both_spellings_are_one_tok
 def test_normalise_text_leaves_edge_and_digit_adjacent_hyphens_alone():
     """Only a hyphen BETWEEN two letters joins a compound; a leading/trailing one or a
     letter-digit boundary is meaningful punctuation, not a spelling variant."""
-    from pyutilz.dev.code_audit.field_text_agreement import normalise_text
+    from py_ci_shared.code_audit.field_text_agreement import normalise_text
 
     assert normalise_text("co-2") == "co-2"
     assert normalise_text("-lead") == "-lead"
@@ -251,14 +251,14 @@ def test_normalise_text_leaves_edge_and_digit_adjacent_hyphens_alone():
 
 
 def test_normalise_text_collapses_whitespace_and_underscores():
-    from pyutilz.dev.code_audit.field_text_agreement import normalise_text
+    from py_ci_shared.code_audit.field_text_agreement import normalise_text
 
     assert normalise_text("  Multiple   spaces\tand\nnewlines  ") == "multiple spaces and newlines"
     assert normalise_text("snake_case_name") == "snake case name"
 
 
 def test_normalise_text_handles_none_and_non_strings():
-    from pyutilz.dev.code_audit.field_text_agreement import normalise_text
+    from py_ci_shared.code_audit.field_text_agreement import normalise_text
 
     assert normalise_text(None) == ""
     assert normalise_text("") == ""
@@ -266,7 +266,7 @@ def test_normalise_text_handles_none_and_non_strings():
 
 
 def test_check_all_returns_one_report_per_rule_keyed_by_name():
-    from pyutilz.dev.code_audit import FieldTextRule, check_all
+    from py_ci_shared.code_audit.field_text_agreement import FieldTextRule, check_all
 
     rows = [
         {"subject": "haemorrhage", "object": "vital hanging", "temporal_class": "antemortem"},
@@ -284,7 +284,7 @@ def test_check_all_returns_one_report_per_rule_keyed_by_name():
 def test_check_all_includes_vocabulary_less_rules_instead_of_dropping_them():
     """A rule with no cues must appear as 100% uncheckable, not vanish from the output -- an
     unmeasured pair silently missing from a report reads as a pair that passed."""
-    from pyutilz.dev.code_audit import FieldTextRule, check_all
+    from py_ci_shared.code_audit.field_text_agreement import FieldTextRule, check_all
 
     rows = [{"object": "anything", "manner": "blunt"}]
     reports = check_all([FieldTextRule(name="manner", field="manner", text_fields=("object",))], rows)
@@ -296,7 +296,7 @@ def test_check_all_includes_vocabulary_less_rules_instead_of_dropping_them():
 
 
 def test_check_all_accepts_explicit_record_ids():
-    from pyutilz.dev.code_audit import check_all
+    from py_ci_shared.code_audit.field_text_agreement import check_all
 
     rows = [{"subject": "", "object": "vital hanging", "temporal_class": "postmortem"}]
     reports = check_all([_temporal_rule()], rows, ids=["record-7"])
@@ -306,7 +306,7 @@ def test_check_all_accepts_explicit_record_ids():
 
 
 def test_get_scanners_returns_a_populated_registry_of_callables():
-    from pyutilz.dev.code_audit import get_scanners
+    from py_ci_shared.code_audit import get_scanners
 
     scanners = get_scanners()
     assert isinstance(scanners, dict)
@@ -320,7 +320,7 @@ def test_get_scanners_returns_a_populated_registry_of_callables():
 def test_get_scanners_returns_a_copy_so_callers_cannot_corrupt_the_shared_registry():
     """The documented reason this accessor exists at all: ``get_scanners().pop(...)`` must not
     silently disarm a scanner for every subsequent run_all() in the same process."""
-    from pyutilz.dev.code_audit import get_scanners
+    from py_ci_shared.code_audit import get_scanners
 
     first = get_scanners()
     victim = next(iter(first))

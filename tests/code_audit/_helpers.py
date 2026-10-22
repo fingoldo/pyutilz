@@ -19,7 +19,7 @@ def _write(tmp_path: Path, name: str, source: str) -> Path:
 
 def _temporal_rule():
     """A representative FieldTextRule: the forensic temporal_class pair, cues and anti-cues included."""
-    from pyutilz.dev.code_audit import FieldTextRule
+    from py_ci_shared.code_audit.field_text_agreement import FieldTextRule
 
     return FieldTextRule(
         name="temporal_class",

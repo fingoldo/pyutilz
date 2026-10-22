@@ -61,7 +61,7 @@ def _test_py_files() -> list[Path]:
     """Every test module. The module-size rule is about what a human can hold in their head
     while editing, which does not stop at the ``src/`` boundary: ``tests/test_code_audit.py``
     reached 11306 lines while the production side of the same feature was being deliberately
-    split into one module per scanner under ``src/pyutilz/dev/code_audit/`` to respect it."""
+    split into one module per scanner under ``src/py_ci_shared/code_audit/`` to respect it."""
     return sorted((REPO_ROOT / "tests").rglob("*.py"))
 
 
