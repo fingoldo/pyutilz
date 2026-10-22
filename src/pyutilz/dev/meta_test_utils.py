@@ -801,4 +801,5 @@ def count_user_deferred_entries(
     """
     from py_ci_shared.deferred_entries import count_user_deferred_entries as count
 
-    return count(test_meta_dir, extra_prefixes=extra_prefixes)
+    counted: dict[str, int] = count(test_meta_dir, extra_prefixes=extra_prefixes)
+    return counted
