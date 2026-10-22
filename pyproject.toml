@@ -657,6 +657,7 @@ DEP001 = [
     "matplotlib",  # dev/notebook_init.py -- guarded, notebook-only
     "seaborn",  # dev/notebook_init.py -- guarded, notebook-only
     "claude_code_sdk",  # llm/claude_code_provider.py -- guarded SDK monkey-patch block
+    "py_ci_shared",  # dev/code_audit aliases and the deferred-entry counter import it; a development tool from requirements-dev.txt, absent on the 3.8 legs
     "anyio",  # llm/claude_code_provider.py -- inside the same guarded claude_code_sdk block
     "botocore",  # performance/kernel_tuning/remote.py -- guarded, S3 remote-cache is opt-in
     "wmi",  # system/system/probing.py -- guarded, Windows-only

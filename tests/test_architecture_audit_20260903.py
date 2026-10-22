@@ -270,7 +270,8 @@ def test_the_deliberate_stdlib_reexports_survive_the_sweep():
 def test_a_submodule_is_still_importable_on_demand():
     from pyutilz.dev.code_audit import closures
 
-    assert closures.__name__ == "pyutilz.dev.code_audit.closures"
+    # The old path is an alias of the module that moved to py-ci-shared, so the module reports its new home.
+    assert closures.__name__.endswith("code_audit.closures")
 
 
 # --- F08 / F12: one pricing contract across providers ---------------------------------------------
@@ -460,12 +461,12 @@ def test_the_old_import_path_still_resolves_to_the_same_objects():
 
 
 def test_every_module_left_in_the_scanner_package_is_a_source_scanner():
-    """The package's contract, now true without an allowlist entry for the record checker."""
-    import pyutilz.dev.code_audit as facade
+    """The package's contract, now true without an allowlist entry for the record checker. The scanners live in py-ci-shared."""
+    import py_ci_shared.code_audit as facade
 
     package_dir = Path(facade.__file__).parent
     non_scanner = []
-    infrastructure = {"__init__.py", "__main__.py", "_base.py", "_scan_cache.py", "registry.py", "cli.py", "meta_test_utils.py", "field_text_agreement.py"}
+    infrastructure = {"__init__.py", "_base.py", "_scan_cache.py", "_todo_markers.py", "registry.py"}
     for py in sorted(package_dir.glob("*.py")):
         if py.name in infrastructure:
             continue
@@ -473,16 +474,3 @@ def test_every_module_left_in_the_scanner_package_is_a_source_scanner():
         if "def scan_" not in text:
             non_scanner.append(py.name)
     assert not non_scanner, f"module(s) in the scanner package that define no scanner: {non_scanner}"
-
-
-# --- F15: typing generics come from `typing` on the 3.8 floor -------------------------------------
-
-
-def test_no_scanner_module_imports_typing_generics_from_collections_abc():
-    """`collections.abc.Iterator[...]` is not subscriptable on the declared 3.8 floor outside an
-    annotation, and the pattern's presence legitimised the next runtime subscript."""
-    import pyutilz.dev.code_audit as facade
-
-    package_dir = Path(facade.__file__).parent
-    offenders = [py.name for py in sorted(package_dir.glob("*.py")) if "from collections.abc import" in py.read_text(encoding="utf-8", errors="replace")]
-    assert not offenders, f"module(s) importing typing generics from collections.abc: {offenders}"

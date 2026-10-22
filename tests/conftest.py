@@ -15,9 +15,17 @@ if sys.version_info < (3, 9):
     from pathlib import Path as _Path
 
     _here = _Path(__file__).resolve().parent
-    _top_level_import = _re.compile(r"^(?:from|import) py_ci_shared\b", _re.M)
+    # The code_audit detectors and the deferred-entry counter live in py-ci-shared now (pyutilz keeps aliases that import
+    # it), so a test that imports them, at module level or inside a function, cannot run here either.
+    _needs_shared_tooling = _re.compile(
+        r"^(?:from|import) py_ci_shared\b"
+        r"|^[ \t]*(?:from|import)[ \t]+pyutilz\.dev\.code_audit\b"
+        r"|^[ \t]*from[ \t]+pyutilz\.dev[ \t]+import[ \t]+(?:\w+,[ \t]*)*code_audit\b"
+        r"|\bcount_user_deferred_entries\b",
+        _re.M,
+    )
     collect_ignore = sorted(
-        p.relative_to(_here).as_posix() for p in _here.rglob("test_*.py") if _top_level_import.search(p.read_text(encoding="utf-8", errors="replace"))
+        p.relative_to(_here).as_posix() for p in _here.rglob("test_*.py") if _needs_shared_tooling.search(p.read_text(encoding="utf-8", errors="replace"))
     )
 
 # ===========================================================================
