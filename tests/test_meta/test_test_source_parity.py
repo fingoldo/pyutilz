@@ -330,6 +330,21 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_consistent_param_naming_per_annotated_type": "meta-test — flags a concrete annotated type spelled with different first-param names within one module",
     "test_naming_convention_consistency": "meta-test — flags non-snake_case public functions mixed into an otherwise snake_case module",
     "test_deprecation_warnings_present": "meta-test — flags docstring-only deprecation notices with no warnings.warn() call",
+    "test_audit_20261015_silent": "cross-cutting regression tests for the 2026-10-15 silent-failure, security and numerics findings S-01..S-14, P-03, N-02, over several modules; one test per finding",
+    "test_docs_inventory_parity": "meta-test over the documented inventories (extras descriptions, README tables, audit index) against their sources of truth; no production module to pair with",
+    "test_hw_fingerprint_probe_state": "covers hw_fingerprint in pyutilz.performance.kernel_tuning.cache (the cache_base probe state)",
+    "test_llm_core_audit_20260926": "cross-cutting regression tests for audits/implemented/2026-09-26/30_llm_core.md (CORE-*) over the llm core modules",
+    "test_llm_percallattr_first_touch_threads": "covers PerCallAttr in pyutilz.llm.base under concurrent first touch (2026-09-03 F10)",
+    "test_llm_stream_progress": "covers the streamed-call progress path: pyutilz.llm._progress as seen through the deepseek provider's PerCallAttr",
+    "test_module_state_reset_and_script_root": "meta-test over the test suite's conftest and the module-state reset helpers in pyutilz.dev and pyutilz.llm; no single production module",
+    "test_printed_advice_coverage": "py-ci-shared printed_advice gate over every advising literal in src/pyutilz; cross-cutting by design",
+    "test_providers_coverage_20260926": "cross-cutting regression tests for audits/implemented/2026-09-26/20_providers_coverage.md (PROV-*) over the provider modules",
+    "test_resource_release_gate": "py-ci-shared resource-release gate applied to three reviewed modules; cross-cutting by design",
+    "test_retry_lazy": "covers pyutilz.llm._retry (the lazily built tenacity policy; private module)",
+    "test_shared_checks_wired": "consumption point of the cross-project py-ci-shared checks plus this repository's allowlists; no single production module",
+    "test_typing_lint_hygiene_audit_20260903": "cross-cutting regression tests for audits/2026-09-03/06-typing-lint-hygiene.md over core, data and database modules",
+    "test_uncached_constant_cost_probe_warn": "meta-test (warn-only) over the whole src/pyutilz tree for constant-cost work on dispatch paths; cross-cutting",
+    "test_uncalled_functions_gate": "meta-test over the whole src/pyutilz tree and its uncalled-functions classification file; cross-cutting",
 }
 
 # Source modules surfaced by the forward-direction audit but explicitly
