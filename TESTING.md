@@ -103,7 +103,7 @@ areas go in the matching subfolder; everything else (including the rest of `syst
 `monitoring.py`, `parallel.py`, `distributed.py` — which predate this convention and stayed at
 flat-root for historical reasons) goes at `tests/` root as `test_<module_name>.py`.
 
-`tests/code_audit/` mirrors `src/pyutilz/dev/code_audit/` one-for-one: one `test_<family>.py` per
+`tests/code_audit/` mirrors the code_audit scanner package of py-ci-shared one-for-one: one `test_<family>.py` per
 scanner family, named after the source module it exercises (`test_mutable_defaults.py` for
 `mutable_defaults.py`), plus a few files named after an audit wave rather than a scanner
 (`test_audit_20260903_scanner_fixes_a_l.py`) where the wave's fixes landed as one reviewed set and
