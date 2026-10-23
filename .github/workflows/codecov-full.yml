@@ -194,7 +194,7 @@ jobs:
           coverage report --rcfile=.coveragerc-merged
 
       - name: Upload combined coverage to Codecov
-        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@a27708158418f1ee67e039426c61ccf9705f9d70  # unreleased 1.23.3  # pragma: allowlist secret
+        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@cf55a29bdda6cc1bd049bc068376405bd1b7678d  # v1.23.3  # pragma: allowlist secret
         with:
           files: ./coverage-full.xml
           flags: combined
