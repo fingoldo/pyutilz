@@ -49,7 +49,7 @@ Blind spots the 2026-09-02 wave exposed:
 - **`test_lock_discipline_consistency.py` requires an existing lock.** Its rule is "a name assigned at least once inside `with <lock>:` must always be". A per-call attribute written on a shared provider instance with *no* lock anywhere is invisible to it, which is why `09/F08` (OpenRouter per-call metadata race, round 2 of the same defect), `09/F09` (`_last_json_schema_applied` clobbered) and `09/F58` (`token_counter._encoding_cache` unlocked) all survived it.
 - **`test_resource_handle_safety.py` checks acquisition sites, not lifecycle transitions.** `09/F52` (`LoginAndGetCookies()` restarts Selenium without quitting the old driver) and `09/F11` (LRU eviction closes an httpx client another caller still holds) are lifecycle, not acquisition.
 
-### `src/pyutilz/dev/code_audit/` - 59 scanner modules
+#### `src/pyutilz/dev/code_audit/` - 59 scanner modules (now in py-ci-shared)
 
 Substantial and genuinely good coverage of the classes it targets: `bare_except`, `broad_except`, `silent_escalation`, `skip_masking_except`, `unraised_exceptions`, `network_timeout`, `mutable_defaults`, `missed_await`, `closures`, `nan_equality`, `mutation_during_iteration`, `sql_lint`, `sql_migrations`, `docstring_args`, `measurement_hygiene`, `vacuous_assertions`, `duplicate_conditions`, `near_duplicate_function_body`, `uncurated_star_export`, `domain_boundary`, `import_cycles`, `unpicklable_resource_state`, `readonly_to_numpy_mutation`.
 
