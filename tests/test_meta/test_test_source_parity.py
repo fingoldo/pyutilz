@@ -254,8 +254,6 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_gate_integrity": "meta-test over .pre-commit-config.yaml / .github/workflows / pyproject.toml -- no production module to pair with",
     "test_optional_dep_preconditions": "meta-test over the TEST suite itself -- pins that a test states the optional extra it needs; no production module to pair with",
     "test_markers_registered": "meta-test over the TEST suite and pyproject -- every pytest marker used is registered, via py_ci_shared.pytest_markers; no production module to pair with",
-    "test_retry_lazy": "covers pyutilz.llm._retry (the lazily built tenacity policy; private module, which this gate does not index)",
-    "test_llm_stream_progress": "covers pyutilz.llm._progress (private module, which this gate does not index)",
     "test_llm_factory": "covers pyutilz.llm.factory",
     "test_llm_base": "covers pyutilz.llm.base",
     "test_llm_providers": "cross-cutting — covers ALL provider modules together",
@@ -332,15 +330,9 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_consistent_param_naming_per_annotated_type": "meta-test — flags a concrete annotated type spelled with different first-param names within one module",
     "test_naming_convention_consistency": "meta-test — flags non-snake_case public functions mixed into an otherwise snake_case module",
     "test_deprecation_warnings_present": "meta-test — flags docstring-only deprecation notices with no warnings.warn() call",
-    "test_audit_20261015_silent": "cross-cutting regression tests for the 2026-10-15 silent-failure, security and numerics findings S-01..S-14, P-03, N-02, over several modules; one test per finding",
     "test_docs_inventory_parity": "meta-test over the documented inventories (extras descriptions, README tables, audit index) against their sources of truth; no production module to pair with",
-    "test_llm_core_audit_20260926": "cross-cutting regression tests for audits/implemented/2026-09-26/30_llm_core.md (CORE-*) over the llm core modules",
-    "test_module_state_reset_and_script_root": "meta-test over the test suite's conftest and the module-state reset helpers in pyutilz.dev and pyutilz.llm; no single production module",
-    "test_printed_advice_coverage": "py-ci-shared printed_advice gate over every advising literal in src/pyutilz; cross-cutting by design",
-    "test_providers_coverage_20260926": "cross-cutting regression tests for audits/implemented/2026-09-26/20_providers_coverage.md (PROV-*) over the provider modules",
     "test_resource_release_gate": "py-ci-shared resource-release gate applied to three reviewed modules; cross-cutting by design",
     "test_shared_checks_wired": "consumption point of the cross-project py-ci-shared checks plus this repository's allowlists; no single production module",
-    "test_typing_lint_hygiene_audit_20260903": "cross-cutting regression tests for audits/2026-09-03/06-typing-lint-hygiene.md over core, data and database modules",
     "test_uncached_constant_cost_probe_warn": "meta-test (warn-only) over the whole src/pyutilz tree for constant-cost work on dispatch paths; cross-cutting",
     "test_uncalled_functions_gate": "meta-test over the whole src/pyutilz tree and its uncalled-functions classification file; cross-cutting",
 }
@@ -447,7 +439,9 @@ def test_every_test_file_has_a_target():
     """Reverse direction — flag test files whose name doesn't correspond
     to a real production module. Looser test (warning-only at present —
     intentional, covered cases are real)."""
-    sources_by_stem = {p.stem: p for p in _production_modules()}
+    # A test may be named for a private module (``_retry`` -> ``test_retry``): private modules are matched here, not required.
+    private = [py for py in PYUTILZ_DIR.rglob("*.py") if py.name.startswith("_") and py.name != "__init__.py" and "__pycache__" not in py.parts]
+    sources_by_stem = {p.stem.lstrip("_"): p for p in [*_production_modules(), *private]}
     aliases = set(pyutilz._MODULE_ALIASES.keys())
     orphan: list[str] = []
     for stem in sorted(_test_basenames()):
