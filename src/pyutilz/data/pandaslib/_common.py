@@ -59,7 +59,7 @@ def display(obj: object) -> None:
     """Show ``obj`` through IPython.display.display, importing IPython on the first call."""
     from IPython.display import display as _display
 
-    return _display(obj)
+    _display(obj)
 
 
 def markdown(text: str) -> object:
