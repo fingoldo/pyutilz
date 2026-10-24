@@ -84,7 +84,7 @@ def prefixize_columns(
     # Build column mapping once instead of duplicating 3 times
     columns = {col: special_prefixes.get(col, prefix) + sep + col if col not in exclusions else col for col in df.columns}
     if inplace:
-        df.rename(columns=columns, inplace=True)
+        df.columns = [columns[col] for col in df.columns]
     else:
         df = df.rename(columns=columns, inplace=False)
     return df, columns
@@ -652,8 +652,5 @@ def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_siz
             else:
                 logger.warning(f"Removing constant columns {susp_columns}")
 
-        if len(susp_columns) > 20:
-            df.drop(columns=susp_columns, inplace=True)
-        else:
-            for var in susp_columns:
-                del df[var]
+        for var in susp_columns:
+            del df[var]

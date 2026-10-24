@@ -88,7 +88,7 @@ def concat_and_flush_df_list(
             return joined_df
         else:
             if set_index:
-                joined_df.set_index(set_index, inplace=True)
+                joined_df = joined_df.set_index(set_index)
             getattr(joined_df, write_fcn)(f"{file_name}.{write_extension}")
             return joined_df
     return None
