@@ -334,7 +334,6 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_docs_inventory_parity": "meta-test over the documented inventories (extras descriptions, README tables, audit index) against their sources of truth; no production module to pair with",
     "test_hw_fingerprint_probe_state": "covers hw_fingerprint in pyutilz.performance.kernel_tuning.cache (the cache_base probe state)",
     "test_llm_core_audit_20260926": "cross-cutting regression tests for audits/implemented/2026-09-26/30_llm_core.md (CORE-*) over the llm core modules",
-    "test_llm_percallattr_first_touch_threads": "covers PerCallAttr in pyutilz.llm.base under concurrent first touch (2026-09-03 F10)",
     "test_llm_stream_progress": "covers the streamed-call progress path: pyutilz.llm._progress as seen through the deepseek provider's PerCallAttr",
     "test_module_state_reset_and_script_root": "meta-test over the test suite's conftest and the module-state reset helpers in pyutilz.dev and pyutilz.llm; no single production module",
     "test_printed_advice_coverage": "py-ci-shared printed_advice gate over every advising literal in src/pyutilz; cross-cutting by design",
