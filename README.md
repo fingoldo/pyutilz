@@ -4,8 +4,6 @@
 [![MyPy](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml/badge.svg?branch=master&event=push)](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml?query=branch%3Amaster)
 [![Black](https://github.com/fingoldo/pyutilz/actions/workflows/black-filtered.yml/badge.svg?branch=master&event=push)](https://github.com/fingoldo/pyutilz/actions/workflows/black-filtered.yml?query=branch%3Amaster)
 [![coverage](https://img.shields.io/codecov/c/github/fingoldo/pyutilz/master?label=coverage)](https://codecov.io/gh/fingoldo/pyutilz)
-[![codecov-numba](https://img.shields.io/codecov/c/github/fingoldo/pyutilz/master?flag=numba-disabled&label=codecov-numba)](https://codecov.io/gh/fingoldo/pyutilz/flags)
-[![codecov-full](https://img.shields.io/codecov/c/github/fingoldo/pyutilz/master?flag=combined&label=codecov-full)](https://codecov.io/gh/fingoldo/pyutilz/flags)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 [![Python 3.8-3.14](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://github.com/fingoldo/pyutilz)
@@ -361,8 +359,8 @@ rows = safe_execute("SELECT * FROM {} WHERE id = %s".format(table), (user_id,)) 
 ## Testing
 
 Exact test counts and coverage percentages are intentionally not pinned here -- they drift with
-every commit and go stale silently. The codecov badges at the top of this file carry the current line
-coverage (plain, numba-disabled, and the merged `codecov-full` flag); for the current test count
+every commit and go stale silently. The codecov badge at the top of this file carries the current line
+coverage; for the current test count
 run `pytest --collect-only -q`. See [TESTING.md](TESTING.md) for the static meta-test suite,
 live LLM tests, and how to run with coverage.
 
