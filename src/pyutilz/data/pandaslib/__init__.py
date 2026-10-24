@@ -54,7 +54,10 @@ from ._common import (
 # IPython display helpers are only present when IPython is installed; mirror the
 # original module which bound these names conditionally.
 if HAS_IPYTHON:
-    from ._common import display, Markdown, Latex
+    from ._common import display, latex, markdown
+
+    Markdown = markdown
+    Latex = latex
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Public functions/classes, re-exported from the cohesive submodules

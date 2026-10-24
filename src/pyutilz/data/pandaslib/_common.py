@@ -48,12 +48,32 @@ from pyutilz.core.pythonlib import to_float  # noqa: F401
 import ctypes  # noqa: F401
 from multiprocessing import Array  # noqa: F401
 
-# Make IPython optional
-try:
-    from IPython.display import display, Markdown, Latex  # noqa: F401
-    HAS_IPYTHON = True
-except ImportError:
-    HAS_IPYTHON = False
+# Make IPython optional. Presence is checked without importing it: importing IPython costs seconds, and this module is
+# imported by every pandaslib user. The display helpers below import it on first call, so the names stay available.
+import importlib.util as _importlib_util
+
+HAS_IPYTHON = _importlib_util.find_spec("IPython") is not None
+
+
+def display(obj: object) -> None:
+    """Show ``obj`` through IPython.display.display, importing IPython on the first call."""
+    from IPython.display import display as _display
+
+    return _display(obj)
+
+
+def markdown(text: str) -> object:
+    """Build an IPython.display.Markdown object from ``text``, importing IPython on the first call."""
+    from IPython.display import Markdown as _Markdown
+
+    return _Markdown(text)
+
+
+def latex(text: str) -> object:
+    """Build an IPython.display.Latex object from ``text``, importing IPython on the first call."""
+    from IPython.display import Latex as _Latex
+
+    return _Latex(text)
 
 from pyutilz.system.system import tqdmu  # noqa: F401
 from os.path import join, sep  # noqa: F401
