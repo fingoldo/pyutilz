@@ -38,7 +38,15 @@ def test_every_printed_advice_has_a_test():
 
     source_files = sorted(p for p in (REPO_ROOT / "src" / "pyutilz").rglob("*.py") if "__pycache__" not in p.parts)
     assert_printed_advice_registered(source_files, REPO_ROOT, PRINTED_ADVICE_TESTS)
+    import importlib.util
+
     for key, target in PRINTED_ADVICE_TESTS.items():
         path, _, test_name = target.partition("::")
-        leaf = test_name.rsplit("::", 1)[-1]
-        assert f"def {leaf}(" in (REPO_ROOT / path).read_text(encoding="utf-8"), f"{key} names a test that does not exist: {target}"  # audit-exempt: source_text_assertion -- checks that a named test exists in a file (a name lookup), not the behaviour of the code
+        spec = importlib.util.spec_from_file_location(f"_printed_advice_target_{len(key)}", REPO_ROOT / path)
+        assert spec is not None and spec.loader is not None, f"{key} names a test file that does not exist: {target}"
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        found = module
+        for part in test_name.split("::"):
+            assert hasattr(found, part), f"{key} names a test that does not exist: {target}"
+            found = getattr(found, part)

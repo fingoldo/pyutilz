@@ -21,8 +21,6 @@ _ALLOWLIST = {
     "tests/test_distributed.py": "version is the content hash of the calling file, so the test must read those bytes to pin the contract.",
     "tests/test_meta/test_mypy_gate_floor.py": "the mypy floor is written into pre-commit and CI config text; the contract is that text, read as data.",
     "tests/test_meta/test_py38_ast_compat.py": "a source lint over the package by design: it parses src/ and flags Python 3.8-unsafe AST spellings.",
-    "tests/test_printed_advice_coverage.py": "scans the package source for advising literals, mirroring the gate that owns the registry.",
-    "tests/test_typing_lint_hygiene_audit_20260903.py": "asserts a banned batch-stamped type-ignore justification is absent from src text; a lint by design.",
 }
 
 
