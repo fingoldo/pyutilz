@@ -62,13 +62,13 @@ jobs:
           full = os.environ["EVENT_NAME"] in ("pull_request", "schedule") or os.environ.get("FORCE_FULL") == "true"
           versions = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
           if full:
-              legs = [{"os": "ubuntu-latest", "python-version": v} for v in versions]
+              legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-latest", "python-version": v} for v in versions]
               legs += [{"os": "windows-latest", "python-version": v} for v in versions]
               # macos-latest is arm64 and setup-python publishes no 3.8/3.9 build for it, so the floor
               # runs on the Intel image instead of being dropped.
               legs += [{"os": "macos-15-intel" if v in ("3.8", "3.9") else "macos-latest", "python-version": v} for v in versions]
           else:
-              legs = [{"os": "ubuntu-latest", "python-version": v} for v in ("3.8", "3.11", "3.14")]
+              legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-latest", "python-version": v} for v in ("3.8", "3.11", "3.14")]
               legs += [{"os": "windows-latest", "python-version": "3.11"}, {"os": "macos-latest", "python-version": "3.11"}]
           print("matrix=" + json.dumps({"include": legs}))
           PY
