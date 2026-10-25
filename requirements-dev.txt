@@ -21,3 +21,9 @@ py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared@905de1ad959b1d912535
 # none of the 21 CI legs. Unlike py-ci-shared above it is an ordinary PyPI package with no direct
 # reference, so nothing kept it out of project metadata; every workflow's `[dev]` install now
 # gets it. Do not re-add it here: two declarations are two things to drift.
+
+# spacy 3.8.16 raises OverflowError in spacy/tokenizer.pyx while loading the en_core_web_sm 3.8.0 model on the CI legs;
+# 3.8.13 loads it and the suite runs green on it, with numpy held below 2.4 (2.4 reaches the same tokenizer path).
+# Marked for Python >=3.9: spacy 3.8 has no Python 3.8 build, and the 3.8 legs run without the spacy tests.
+spacy==3.8.13 ; python_version >= '3.9'
+numpy<2.4 ; python_version >= '3.9'
