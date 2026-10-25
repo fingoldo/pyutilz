@@ -86,7 +86,7 @@ def prefixize_columns(
     if inplace:
         df.columns = [columns[col] for col in df.columns]
     else:
-        df = df.rename(columns=columns, inplace=False)
+        df = df.rename(columns=columns)
     return df, columns
 
 
