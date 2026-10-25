@@ -14,6 +14,7 @@ PYUTILZ_DIR = Path(__file__).resolve().parents[2] / "src" / "pyutilz"
 # Runs every scanner over the whole production tree, which took over 120 s on the macOS CI runner (the global limit).
 # The timeout is raised for this one gate only, so a hang still fails instead of running forever.
 @pytest.mark.timeout(400)
+@pytest.mark.xdist_group("code_audit_production_tree")
 def test_no_code_audit_scanner_crashes_on_the_production_tree():
     from py_ci_shared.code_audit.registry import run_all_checked
 

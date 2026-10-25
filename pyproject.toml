@@ -428,6 +428,7 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short --strict-markers -ra --timeout=120"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "xdist_group: keeps the marked tests on one xdist worker, so the code-audit scan memo they share is hit",
     "gpu: marks tests requiring GPU (deselected in default CI; no GPU runner)",
     "live: marks tests requiring live provider API keys (skipped by default; pass --run-live to execute)"
 ]

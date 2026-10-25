@@ -105,6 +105,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 # py-ci-shared requires python>=3.9, so tests/conftest.py ignores this module on the 3.8 legs; on every other leg a
 # missing install fails collection instead of skipping the gate.
 from py_ci_shared.code_audit_meta import assert_no_new_code_audit_findings
@@ -128,6 +130,7 @@ _TEST_QUALITY_CHECKS = [
 ]
 
 
+@pytest.mark.xdist_group("code_audit_production_tree")
 def test_no_new_test_quality_findings_in_the_test_suite(request):
     assert_no_new_code_audit_findings(
         root=TESTS_DIR,
