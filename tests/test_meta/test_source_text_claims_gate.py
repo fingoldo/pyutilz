@@ -17,11 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS_ROOT = REPO_ROOT / "tests"
 _BASELINE_PATH = Path(__file__).resolve().parent / "_source_text_claims_baseline.json"
 
-_ALLOWLIST = {
-    "tests/test_distributed.py": "version is the content hash of the calling file, so the test must read those bytes to pin the contract.",
-    "tests/test_meta/test_mypy_gate_floor.py": "the mypy floor is written into pre-commit and CI config text; the contract is that text, read as data.",
-    "tests/test_meta/test_py38_ast_compat.py": "a source lint over the package by design: it parses src/ and flags Python 3.8-unsafe AST spellings.",
-}
+_ALLOWLIST = {}
 
 
 def _test_files() -> list[Path]:
