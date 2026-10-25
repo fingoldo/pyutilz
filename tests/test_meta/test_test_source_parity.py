@@ -310,7 +310,6 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_smoke_untested_modules": "smoke suite — covers 8 untested modules under one parametrize",
     "test_llm_account_credits": "cross-cutting — covers OpenRouter check_account_limits across providers",
     "test_llm_supports_json_mode": "cross-cutting — pins supports_json_mode() across all providers",
-    "test_capture_signature": "covers pyutilz.dev.meta_test_utils.capture_signature (a single function, not a like-named production module)",
     "test_publish_workflow_version_check": "CI-process test — covers .github/workflows/publish.yml's tag-vs-version check, not a source module",
     "test_verbose_param_consistency": "cross-cutting — pins `verbose: bool` annotation across pandaslib.dtypes/frames and polarslib's truthiness-only verbose family",
     "test_no_module_reload": "meta-test — bans importlib.reload() outside a reviewed whitelist (module-identity-corruption guard)",
