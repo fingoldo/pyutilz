@@ -133,9 +133,10 @@ jobs:
         # py-ci-shared requires python>=3.9: the requirement's marker skips it on the 3.8 legs, where
         # conftest ignores the meta-tests that import it; on every other leg a missing install fails.
         uv pip install -r requirements-dev.txt
-        # numpy 2.4 breaks the spacy tokenizer the en_core_web_sm 3.8.0 model loads (OverflowError in spacy/tokenizer.pyx,
-        # observed on the ubuntu-latest 3.11 leg); the pin is CI-only and lifts once a spacy release supports the new numpy.
-        uv pip install "numpy<2.4"
+        # spacy 3.8.16 raises OverflowError in spacy/tokenizer.pyx while loading the en_core_web_sm 3.8.0 model in CI; the
+        # same model loads under spacy 3.8.13 (the version the suite runs green on locally), so CI pins that version. Its
+        # numpy is held below 2.4 on the same line for the same reason. CI-only: the package's own requirements are unchanged.
+        uv pip install "spacy==3.8.13" "numpy<2.4"
 
     - name: Download nltk punkt_tab data
       # [nlp] installs the nltk PACKAGE but not its corpora -- those are a separate runtime
