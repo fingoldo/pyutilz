@@ -19,6 +19,7 @@ if sys.version_info < (3, 9):
     # it), so a test that imports them, at module level or inside a function, cannot run here either.
     _needs_shared_tooling = _re.compile(
         r"^[ \t]*(?:from|import)[ \t]+py_ci_shared\b"
+        r"|^[ \t]*from[ \t]+pyutilz\.dev\.meta_test_utils\b"
         r"|^[ \t]*(?:from|import)[ \t]+pyutilz\.dev\.code_audit\b"
         r"|^[ \t]*from[ \t]+pyutilz\.dev[ \t]+import[ \t]+(?:\w+,[ \t]*)*code_audit\b"
         r"|\bcount_user_deferred_entries\b",
