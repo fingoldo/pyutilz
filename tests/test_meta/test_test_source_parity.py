@@ -56,11 +56,8 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # which exercises every provider through a shared parametrize matrix.
     "anthropic_provider": "covered by test_llm_providers.py + test_llm_base.py",
     "claude_code_provider": "covered by test_llm_providers.py",
-    "deepseek_provider": "covered by test_llm_deepseek.py + test_llm_providers.py",
     "gemini_provider": "covered by test_llm_providers.py",
     "openai_provider": "covered by test_llm_providers.py",
-    "openrouter_provider": "covered by test_llm_providers.py + test_llm_account_credits.py",
-    "xai_provider": "covered by test_llm_xai.py + test_llm_providers.py",
     "exceptions": "trivial exception class definitions; no logic to test",
     "openai_compat": "covered by test_llm_openai_compat.py",
     "meta_test_utils": "tooling for the meta-test suite — exercised by every meta-test that imports it",
