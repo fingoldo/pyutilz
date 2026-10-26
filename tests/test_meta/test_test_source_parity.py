@@ -142,7 +142,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "legacy": "database/db subpackage split (PascalCase compatibility wrappers); covered jointly by test_db_extra.py",
     "sentences": "text/similarity subpackage split; covered jointly by test_similarity.py",
     "openai_tokens": "moved out of core/openai.py; covered by test_llm_core_openai.py",
-    "array_summary": "covered by test_smoke_untested_modules.py (smoke parametrize)",
     "unpicklable_resource_state": "code_audit scanner; covered by tests/code_audit/test_unpicklable_resource_state.py",
     "bare_except": "code_audit scanner; covered by tests/code_audit/test_bare_except.py",
     "console_unicode": "code_audit scanner; covered by tests/code_audit/test_console_unicode.py",
