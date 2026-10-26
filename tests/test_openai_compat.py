@@ -32,7 +32,7 @@ class _TestProvider(OpenAICompatibleProvider):
 
 
 def _make_provider(model: str = "test-model") -> _TestProvider:
-    return _TestProvider(api_key="test-key", model=model)
+    return _TestProvider(api_key="test-key", model=model)  # pragma: allowlist secret
 
 
 def _mock_response(status_code: int = 200, body: dict | None = None, text: str = "") -> httpx.Response:
