@@ -36,7 +36,7 @@ pip install pyutilz[prefect]          # prefect, requests (pyutilz.system.schedu
 pip install pyutilz[tensorflow]       # tensorflow (system.parallel.set_tf_gpu only)
 pip install pyutilz[gpu]              # cupy -- see the caveat below
 pip install pyutilz[docs]             # mkdocs-material, to build this documentation site
-pip install pyutilz[dev]              # pydantic + pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + pytest-xdist + pytest-randomly + ruff + black + mypy + bandit + sqlglot
+pip install pyutilz[dev]              # pydantic + pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + pytest-xdist + pytest-randomly + hypothesis + ruff + black + mypy + bandit + sqlglot
 ```
 
 `[all]` = `pandas,polars,database,web,cloud,nlp,llm,system,stats,speedups`. It deliberately leaves out four
