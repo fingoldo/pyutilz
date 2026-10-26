@@ -18,7 +18,7 @@ if sys.version_info < (3, 9):
     # The code_audit detectors and the deferred-entry counter live in py-ci-shared now (pyutilz keeps aliases that import
     # it), so a test that imports them, at module level or inside a function, cannot run here either.
     _needs_shared_tooling = _re.compile(
-        r"^(?:from|import) py_ci_shared\b"
+        r"^[ \t]*(?:from|import)[ \t]+py_ci_shared\b"
         r"|^[ \t]*(?:from|import)[ \t]+pyutilz\.dev\.code_audit\b"
         r"|^[ \t]*from[ \t]+pyutilz\.dev[ \t]+import[ \t]+(?:\w+,[ \t]*)*code_audit\b"
         r"|\bcount_user_deferred_entries\b",
