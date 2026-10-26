@@ -205,7 +205,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # text/strings was split from a single >1000-LOC module into a subpackage;
     # every submodule is exercised jointly through the ``strings`` facade by
     # tests/test_strings*.py.
-    "basics": "text/strings subpackage; covered by test_strings.py",
     "jsonutils": "text/strings subpackage; covered by test_strings.py",
     "textentropy": "text/strings subpackage; covered by test_strings.py",
     "webtext": "text/strings subpackage; covered by test_strings.py",
