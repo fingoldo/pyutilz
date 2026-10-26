@@ -337,7 +337,9 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         from pyutilz.llm.openrouter_provider._endpoint_prices import warm_endpoint_cache
 
         try:
-            await asyncio.to_thread(warm_endpoint_cache, catalogue_id(self.model_name))
+            # asyncio.to_thread is 3.9+ and this package still supports 3.8; run_in_executor is the same off-loop dispatch there.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, warm_endpoint_cache, catalogue_id(self.model_name))
         except Exception as exc:  # metadata only, a call must never fail because of it
             logger.debug("endpoint cache warm-up skipped for %s: %s", self.model_name, exc)
 
