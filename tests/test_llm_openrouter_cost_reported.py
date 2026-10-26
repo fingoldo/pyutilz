@@ -14,7 +14,7 @@ pytest.importorskip("httpx")
 pytest.importorskip("pydantic")
 
 # Imported after the optional-dependency skips, which is what they are for.
-from tests.test_llm_openrouter import _provider
+from tests.llm.test_openrouter_provider import _provider
 
 
 def test_the_call_says_whether_a_cost_was_reported():
