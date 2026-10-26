@@ -356,6 +356,9 @@ dev = [
     "pytest-instafail>=0.5",
     "pytest-progress>=1.3",
     "pytest-timeout>=2.1",
+    # tests/test_similarity.py importorskips hypothesis; undeclared, it skipped the whole similarity suite on the 3.8 leg
+    # and left its coverage (~0.4 points of the 85% gate) out. pip picks the newest hypothesis each interpreter accepts.
+    "hypothesis>=6.0",
     # ci.yml runs the suite with `-n auto --dist=loadgroup` (4 vCPU runners); loadgroup honours any
     # @pytest.mark.xdist_group pin. pytest-cov merges worker data itself.
     "pytest-xdist>=3.5",
@@ -617,6 +620,7 @@ GPUtil = "GPUtil"
 # import UserAgent`, not a static `import` deptry's scanner can detect.
 DEP002 = [
     "sqlglot",  # parses the query builders' output in tests/test_meta/test_generated_sql_property.py; deptry scans src/ only, so a test-only dep can never look used
+    "hypothesis",  # property-based tests in tests/test_similarity.py import it through importorskip; deptry scans src/ only
     "selenium",
     "undetected-chromedriver",
     "boto3",
