@@ -116,11 +116,11 @@ class SpeechError(LLMProviderError, RuntimeError):
     """A speech request failed; ``status`` is the HTTP status (0 when none), ``retryable`` whether another try could help.
 
     ``details`` carries the diagnostics of the last attempt: ``status``, ``kind``, ``body`` (first 2000 characters),
-    ``retry_after_s`` (None when absent), ``generation_id`` and ``content_type``.
+    ``retry_after_s`` (None when absent), ``generation_id`` and ``content_type``. The constructor keeps the HTTP status,
+    the retry flag and the failure kind next to the message.
     """
 
     def __init__(self, message: str, status: int = 0, retryable: bool = False, kind: str = "other", details: Optional[Mapping[str, Any]] = None) -> None:
-        """Keep the HTTP status, the retry flag and the failure kind next to the message."""
         super().__init__(message)
         self.status = status
         self.retryable = retryable
@@ -685,6 +685,7 @@ class OpenRouterSpeech:
     at once; the call then raises :class:`SpeechError` with kind ``cancelled`` (naming the last failed attempt, if any).
     A request already in flight is not interrupted. ``max_call_s`` bounds the whole call: a retry that would start after
     the budget raises the last failure instead. ``max_audio_bytes`` caps a 200 body; a larger one is refused, not retried.
+    The constructor stores the client settings and checks that an API key and an HTTP client are available.
     """
 
     def __init__(
@@ -702,7 +703,6 @@ class OpenRouterSpeech:
         max_audio_bytes: int = MAX_AUDIO_BYTES,
         max_call_s: float = MAX_CALL_S,
     ) -> None:
-        """Store the client settings and check that an API key and an HTTP client are available."""
         if not api_key:
             raise ValueError("OpenRouter API key not provided")
         if client is None and httpx is None:
