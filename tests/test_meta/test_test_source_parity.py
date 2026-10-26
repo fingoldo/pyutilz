@@ -64,7 +64,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # Modules covered jointly by ``tests/test_smoke_untested_modules.py``
     # (parametrized smoke suite). Each will graduate to a dedicated
     # test file when behavioural coverage is added.
-    "openai": "covered by test_smoke_untested_modules.py (smoke parametrize)",
     "filemaker": "covered by test_smoke_untested_modules.py",
     "db": "covered by test_smoke_untested_modules.py",
     "deltalakes": "covered by test_smoke_untested_modules.py",
