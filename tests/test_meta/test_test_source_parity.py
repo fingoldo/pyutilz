@@ -206,7 +206,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # every submodule is exercised jointly through the ``strings`` facade by
     # tests/test_strings*.py.
     "basics": "text/strings subpackage; covered by test_strings.py",
-    "configfiles": "text/strings subpackage; covered by test_strings.py",
     "jsonutils": "text/strings subpackage; covered by test_strings.py",
     "textentropy": "text/strings subpackage; covered by test_strings.py",
     "webtext": "text/strings subpackage; covered by test_strings.py",
