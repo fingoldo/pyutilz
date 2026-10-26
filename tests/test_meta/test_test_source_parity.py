@@ -54,7 +54,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "web": "namespace; behaviour in browser/proxy/web sub-modules",
     # LLM provider modules are covered jointly by tests/test_llm_providers.py
     # which exercises every provider through a shared parametrize matrix.
-    "anthropic_provider": "covered by test_llm_providers.py + test_llm_base.py",
     "claude_code_provider": "covered by test_llm_providers.py",
     "gemini_provider": "covered by test_llm_providers.py",
     "openai_provider": "covered by test_llm_providers.py",
