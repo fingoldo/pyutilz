@@ -82,7 +82,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and
     # tests/test_smoke_untested_modules.py (via the ``db`` facade).
-    "sql_helpers": "database/db subpackage; covered by test_db_extra.py + test_smoke_untested_modules.py",
     "upsert": "database/db subpackage; covered by test_db_extra.py + test_smoke_untested_modules.py",
     # data/pandaslib was split from a single >1000-LOC module into a subpackage;
     # every submodule is exercised jointly through the ``pandaslib`` facade by
