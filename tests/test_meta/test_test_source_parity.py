@@ -44,27 +44,21 @@ TESTS_DIR = REPO_ROOT / "tests"
 # path relative to ``src/pyutilz/`` (exempts exactly that one module) -- use the
 # path form whenever the stem is generic enough to collide, e.g. ``base``.
 _TEST_EXEMPT_MODULES: dict[str, str] = {
-    "version": "single-line constant; no behaviour to test",
     "benchmark": "performance/kernel_tuning/benchmark.py — covered by tests/test_kernel_tuning_benchmark.py, renamed 2026-07-21 to stop being confusable with test_dev_benchmarking.py (pyutilz.dev.benchmarking)",
     "config": "module-level constants/literals only — no functions",
     # Sub-package boundary modules are pure namespaces; behaviour lives
     # in the modules under them.
-    "cloud": "namespace stub with one helper covered indirectly",
     "system": "namespace; behaviour split across distributed/parallel/monitoring",
     "web": "namespace; behaviour in browser/proxy/web sub-modules",
     # LLM provider modules are covered jointly by tests/test_llm_providers.py
     # which exercises every provider through a shared parametrize matrix.
     "claude_code_provider": "covered by test_llm_providers.py",
-    "gemini_provider": "covered by test_llm_providers.py",
     "openai_provider": "covered by test_llm_providers.py",
     "meta_test_utils": "tooling for the meta-test suite — exercised by every meta-test that imports it",
     # Modules covered jointly by ``tests/test_smoke_untested_modules.py``
     # (parametrized smoke suite). Each will graduate to a dedicated
     # test file when behavioural coverage is added.
-    "filemaker": "covered by test_smoke_untested_modules.py",
     "db": "covered by test_smoke_untested_modules.py",
-    "deltalakes": "covered by test_smoke_untested_modules.py",
-    "dashlib": "covered by test_smoke_untested_modules.py",
     "notebook_init": "covered by test_smoke_untested_modules.py",
     # dev/code_audit was split from a single >1000-LOC module into a
     # subpackage; the tests were split the same way, into the
