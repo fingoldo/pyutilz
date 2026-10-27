@@ -78,7 +78,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # tests/test_meta/test_scanner_positive_and_negative_cases.py.
     "packages": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "objects": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
-    "numerics": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "datetimes": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "stackutils": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "filesystem": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
