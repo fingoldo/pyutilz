@@ -48,15 +48,12 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "config": "module-level constants/literals only — no functions",
     # Sub-package boundary modules are pure namespaces; behaviour lives
     # in the modules under them.
-    "system": "namespace; behaviour split across distributed/parallel/monitoring",
-    "web": "namespace; behaviour in browser/proxy/web sub-modules",
     # LLM provider modules are covered jointly by tests/test_llm_providers.py
     # which exercises every provider through a shared parametrize matrix.
     "claude_code_provider": "covered by test_llm_providers.py",
     # Modules covered jointly by ``tests/test_smoke_untested_modules.py``
     # (parametrized smoke suite). Each will graduate to a dedicated
     # test file when behavioural coverage is added.
-    "db": "covered by test_smoke_untested_modules.py",
     # dev/code_audit was split from a single >1000-LOC module into a
     # subpackage; the tests were split the same way, into the
     # tests/code_audit/ package of one test_<family>.py per scanner
@@ -116,7 +113,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "system/system/misc.py": "system/system subpackage split; covered by test_system.py + test_system_extra.py + test_system_extra2.py",
     "system/system/probing.py": "system/system subpackage split; covered by test_system_extra2.py + test_system_extra3.py + tests/system/test_hardware_detection.py",
     "system/system/sysinfo.py": "system/system subpackage split; get_system_info covered by test_system.py + test_dev_fixes_regression.py + test_distributed.py",
-    "web/proxy/base.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
     "web/proxy/decodo.py": "web/proxy subpackage; covered by test_proxy.py (TestDecodoProvider / TestDecodoSubscription / TestDecodoTrafficReport)",
     "web/proxy/ip_check.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
     "web/proxy/session.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
