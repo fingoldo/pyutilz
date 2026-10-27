@@ -57,7 +57,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "claude_code_provider": "covered by test_llm_providers.py",
     "gemini_provider": "covered by test_llm_providers.py",
     "openai_provider": "covered by test_llm_providers.py",
-    "exceptions": "trivial exception class definitions; no logic to test",
     "meta_test_utils": "tooling for the meta-test suite — exercised by every meta-test that imports it",
     # Modules covered jointly by ``tests/test_smoke_untested_modules.py``
     # (parametrized smoke suite). Each will graduate to a dedicated
