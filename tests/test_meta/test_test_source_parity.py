@@ -74,7 +74,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "regjobs": "database/db subpackage split; covered jointly by test_db_extra.py",
     "legacy": "database/db subpackage split (PascalCase compatibility wrappers); covered jointly by test_db_extra.py",
     "sentences": "text/similarity subpackage split; covered jointly by test_similarity.py",
-    "openai_tokens": "moved out of core/openai.py; covered by test_llm_core_openai.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and
