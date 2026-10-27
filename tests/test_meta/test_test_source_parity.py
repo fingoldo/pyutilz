@@ -71,7 +71,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "connection": "database/db subpackage split; covered jointly by test_db_extra.py + test_database_extra2.py",
     "execution": "database/db subpackage split; covered jointly by test_db_extra.py + test_database_extra2.py",
     "schema": "database/db subpackage split; covered jointly by test_db_extra.py + test_database_extra2.py",
-    "regjobs": "database/db subpackage split; covered jointly by test_db_extra.py",
     "sentences": "text/similarity subpackage split; covered jointly by test_similarity.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
