@@ -67,7 +67,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "redislib": "covered by test_smoke_untested_modules.py",
     "dashlib": "covered by test_smoke_untested_modules.py",
     "notebook_init": "covered by test_smoke_untested_modules.py",
-    "tokenizers": "covered by test_smoke_untested_modules.py",
     # dev/code_audit was split from a single >1000-LOC module into a
     # subpackage; the tests were split the same way, into the
     # tests/code_audit/ package of one test_<family>.py per scanner
