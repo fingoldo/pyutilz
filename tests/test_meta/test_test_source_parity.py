@@ -79,7 +79,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "packages": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "objects": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "datetimes": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
-    "stackutils": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "filesystem": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "hardware": "core/pythonlib subpackage split; covered by test_pythonlib*.py + test_cuda_home_autodetect.py",
     "columns": "data/polarslib subpackage split; covered jointly by test_polarslib*.py",
