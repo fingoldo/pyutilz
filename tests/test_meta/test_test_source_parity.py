@@ -53,7 +53,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # LLM provider modules are covered jointly by tests/test_llm_providers.py
     # which exercises every provider through a shared parametrize matrix.
     "claude_code_provider": "covered by test_llm_providers.py",
-    "openai_provider": "covered by test_llm_providers.py",
     # Modules covered jointly by ``tests/test_smoke_untested_modules.py``
     # (parametrized smoke suite). Each will graduate to a dedicated
     # test file when behavioural coverage is added.
