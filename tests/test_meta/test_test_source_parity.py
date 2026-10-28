@@ -78,7 +78,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # every submodule is exercised jointly through the ``pandaslib`` facade by
     # tests/test_pandaslib.py (+ test_pandaslib_extra.py / test_pandaslib_extra2.py).
     "dtypes": "data/pandaslib subpackage; covered by test_pandaslib.py",
-    "io_ops": "data/pandaslib subpackage; covered by test_pandaslib.py",
     "benchmarks": "data/pandaslib subpackage; covered by test_pandaslib.py",
     # performance/kernel_tuning/cache was split from a single >1000-LOC module
     # into a subpackage; every submodule is exercised jointly through the
