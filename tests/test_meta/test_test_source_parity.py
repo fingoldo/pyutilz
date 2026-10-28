@@ -63,7 +63,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # tests/test_meta/test_scanner_positive_and_negative_cases.py.
     "packages": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "hardware": "core/pythonlib subpackage split; covered by test_pythonlib*.py + test_cuda_home_autodetect.py",
-    "columns": "data/polarslib subpackage split; covered jointly by test_polarslib*.py",
     "aggregations": "data/polarslib subpackage split; covered jointly by test_polarslib*.py",
     "binning": "data/polarslib subpackage split; covered jointly by test_polarslib*.py",
     "connection": "database/db subpackage split; covered jointly by test_db_extra.py + test_database_extra2.py",
