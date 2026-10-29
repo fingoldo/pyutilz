@@ -82,7 +82,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # test_cache_concurrency.py, test_cache_facade.py re-export sensor).
     "cache_base": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_class": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
-    "cache_hooks": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_persistence": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_sweeping": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_tuning": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
@@ -113,6 +112,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
 # but cover a real concern. Reverse-direction whitelist.
 _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
+    "test_mutation_teeth": "cross-cutting meta-test: mutation teeth over the production lines a commit changed, via the py-ci-shared harness",
     "test_audit_20261015_runtime": "cross-cutting regression tests for the 2026-10-15 audit findings C-01, C-02, C-03, C-07, C-08, C-09, R-01, R-02, R-03, S-10, X-07, X-18, P-05 over the database, config, cache and resilience modules",
     "test_printed_advice_messages": "cross-cutting: the refusal messages that advise a keyword (load_file, _alternate_values_clause, build_upsert_query, _normalise_encryption), each pinned by the printed-advice gate",
     "test_audit_20261015_unassigned": "regression tests for the 2026-10-15 audit findings C-04 (system.parallel mmap unlink) and R-04 (pandaslib benchmark temp folder)",
