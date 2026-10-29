@@ -126,3 +126,18 @@ class TestProvenanceChanged:
     def test_a_gpu_name_one_side_could_not_read_is_not_a_change(self):
         unknown = {**self._BASE, "gpu_summary": {"cc_major": 8, "cc_minor": 6, "name": None}}
         assert cache_base.provenance_changed(self._BASE, unknown) is False
+
+
+class TestProvenanceFieldsEachMatter:
+    @pytest.mark.parametrize("field", ["cuda_runtime_version", "cupy_version", "numba_version", "numpy_version"])
+    def test_a_library_version_bump_is_a_change(self, field):
+        old = dict(TestProvenanceChanged._BASE)
+        new = {**old, field: "99.9"}
+        assert cache_base.provenance_changed(old, new) is True
+
+    @pytest.mark.parametrize("gpu_field", ["cc_major", "cc_minor"])
+    def test_a_compute_capability_change_is_a_change(self, gpu_field):
+        old = dict(TestProvenanceChanged._BASE)
+        changed = dict(old["gpu_summary"])
+        changed[gpu_field] = 99
+        assert cache_base.provenance_changed(old, {**old, "gpu_summary": changed}) is True
