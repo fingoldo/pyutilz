@@ -316,3 +316,78 @@ class TestTryCreateMarkerPaths:
         with caplog.at_level("WARNING"):
             assert cache._try_create_marker(marker) is True
         assert any("fallback marker cannot be created" in rec.getMessage() for rec in caplog.records)
+
+
+class TestMarkerLogTextAndDescriptors:
+    def test_a_published_marker_goes_through_a_hardlink_not_the_fallback(self, cache, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with caplog.at_level("WARNING"):
+            assert cache._try_create_marker(marker) is True
+        assert not any("marker link unsupported" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_held_marker_names_its_exception_class_first(self, cache, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("held")
+        with caplog.at_level("DEBUG"):
+            assert cache._try_create_marker(marker) is False
+        assert any("claim marker already held by another process: FileExistsError: " in rec.getMessage() for rec in caplog.records)
+
+    def test_a_fallback_held_marker_names_its_exception_class_first(self, cache, monkeypatch, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("held")
+
+        def no_links(*args, **kwargs):
+            raise OSError(1, "hard links unsupported")
+
+        monkeypatch.setattr(cache_sweeping.os, "link", no_links)
+        with caplog.at_level("DEBUG"):
+            assert cache._try_create_marker(marker) is False
+        assert any("fallback claim held by another process: FileExistsError: " in rec.getMessage() for rec in caplog.records)
+
+    def test_an_unwritable_fallback_marker_names_its_exception_class_first(self, cache, monkeypatch, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        real_open = os.open
+
+        def no_links(*args, **kwargs):
+            raise OSError(1, "hard links unsupported")
+
+        def denied_marker(path, *args, **kwargs):
+            if str(path) == marker:
+                raise PermissionError(13, "denied")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(cache_sweeping.os, "link", no_links)
+        monkeypatch.setattr(cache_sweeping.os, "open", denied_marker)
+        with caplog.at_level("WARNING"):
+            assert cache._try_create_marker(marker) is True
+        assert any("treated as owner: PermissionError: " in rec.getMessage() for rec in caplog.records)
+
+    def test_every_descriptor_opened_by_the_fallback_is_closed(self, cache, monkeypatch):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        opened, closed = [], []
+        real_open, real_close = os.open, os.close
+
+        def recording_open(path, *args, **kwargs):
+            fd = real_open(path, *args, **kwargs)
+            opened.append(fd)
+            return fd
+
+        def recording_close(fd):
+            closed.append(fd)
+            return real_close(fd)
+
+        def no_links(*args, **kwargs):
+            raise OSError(1, "hard links unsupported")
+
+        monkeypatch.setattr(cache_sweeping.os, "link", no_links)
+        monkeypatch.setattr(cache_sweeping.os, "open", recording_open)
+        monkeypatch.setattr(cache_sweeping.os, "close", recording_close)
+        assert cache._try_create_marker(marker) is True
+        assert opened and set(opened) <= set(closed)
