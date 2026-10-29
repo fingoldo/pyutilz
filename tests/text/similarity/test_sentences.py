@@ -66,3 +66,31 @@ class TestWordPairSimilarity:
 
     def test_a_short_word_inside_a_longer_one_is_scored_by_the_window_and_the_edit_distance(self):
         assert sim._word_pair_similarity("ab", "xxab", 1) == pytest.approx(0.75)
+
+
+class TestGreedyMatch:
+    def test_two_pairs_are_picked_best_first_and_each_is_recorded_on_both_sides(self):
+        res, matched_a, matched_b = sim._greedy_match([[0.9, 0.1], [0.2, 0.8]], 2, 2, 2)
+        assert res == pytest.approx(1.7)
+        assert matched_a == pytest.approx([0.9, 0.8])
+        assert matched_b == pytest.approx([0.9, 0.8])
+
+    def test_a_single_pick_leaves_the_other_words_unmatched(self):
+        res, matched_a, matched_b = sim._greedy_match([[0.9, 0.1], [0.2, 0.8]], 2, 2, 1)
+        assert res == pytest.approx(0.9)
+        assert matched_a == pytest.approx([0.9, 0.0])
+        assert matched_b == pytest.approx([0.9, 0.0])
+
+    def test_a_row_is_not_skipped_after_its_neighbour_is_taken(self):
+        res, _matched_a, _matched_b = sim._greedy_match([[0.9, 0.1], [0.2, 0.8]], 2, 2, 2)
+        assert res == pytest.approx(1.7)
+
+    def test_a_tie_goes_to_the_later_column(self):
+        _res, _matched_a, matched_b = sim._greedy_match([[0.5, 0.5], [0.0, 0.0]], 2, 2, 1)
+        assert matched_b == pytest.approx([0.0, 0.5])
+
+    def test_an_all_zero_matrix_scores_zero(self):
+        res, matched_a, matched_b = sim._greedy_match([[0.0, 0.0], [0.0, 0.0]], 2, 2, 2)
+        assert res == 0.0
+        assert matched_a == [0.0, 0.0]
+        assert matched_b == [0.0, 0.0]
