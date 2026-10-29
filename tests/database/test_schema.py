@@ -296,3 +296,9 @@ class TestSuggestJsonOptimizationLogging:
         monkeypatch.setattr(_facade, "safe_execute", lambda sql, *args, **kwargs: next(answers))
         result = schema.suggest_json_optimization("items", "data", fields=["gone", "color"])
         assert result == {"color": "x"}
+
+
+class TestSuggestJsonOptimizationZeroTotal:
+    def test_a_field_whose_counts_are_all_zero_is_not_suggested_and_does_not_divide_by_zero(self, monkeypatch):
+        result, _fake = _suggest(monkeypatch, [("x", 0)])
+        assert result == {}
