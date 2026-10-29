@@ -92,3 +92,76 @@ class TestValueDistribution:
 
     def test_no_null_is_reported_as_such(self):
         assert schema._value_distribution([("x", 2), ("y", 1)]) == (False, "x", 2, 3)
+
+
+class _Recorder:
+    def __init__(self, returned_id=7):
+        self.calls = []
+        self.returned_id = returned_id
+
+    def __call__(self, sql, params=None, *args, **kwargs):
+        self.calls.append((sql, tuple(params) if params is not None else None))
+        return [[self.returned_id]]
+
+
+@pytest.fixture
+def db(monkeypatch):
+    recorder = _Recorder()
+    monkeypatch.setattr(_facade, "safe_execute", recorder)
+    return recorder
+
+
+class TestGetIdByKeyField:
+    def test_the_null_sentinel_is_returned_without_a_query(self, db):
+        assert schema.get_id_by_key_field_and_insert_if_needed({}, "t", "null") == "null"
+        assert db.calls == []
+
+    def test_a_known_key_returns_its_stored_id_without_a_query(self, db):
+        assert schema.get_id_by_key_field_and_insert_if_needed({"red": 3}, "t", "red") == 3
+        assert db.calls == []
+
+    def test_a_new_key_is_inserted_with_the_default_name_column_and_remembered(self, db):
+        enums = {}
+        assert schema.get_id_by_key_field_and_insert_if_needed(enums, "colors", "red") == 7
+        sql, params = db.calls[0]
+        assert sql.startswith("insert into colors (name) values (%s) on conflict (name)")
+        assert "returning id" in sql
+        assert params == ("red",)
+        assert enums == {"red": 7}
+
+    def test_none_defaults_fall_back_to_name_and_id_columns(self, db):
+        schema.get_id_by_key_field_and_insert_if_needed({}, "colors", "red", key_field_name=None, id_field_name=None, alternate_fields_names=None, unique_constraint_fields=None)
+        sql, _params = db.calls[0]
+        assert "insert into colors (name)" in sql
+        assert "returning id" in sql
+
+    def test_a_string_key_is_passed_as_text_and_a_numeric_key_as_is(self, db):
+        schema.get_id_by_key_field_and_insert_if_needed({}, "t", 5)
+        schema.get_id_by_key_field_and_insert_if_needed({}, "t", 5, key_is_not_string=True)
+        assert db.calls[0][1] == ("5",)
+        assert db.calls[1][1] == (5,)
+
+    def test_an_explicit_unique_constraint_names_the_conflict_target(self, db):
+        schema.get_id_by_key_field_and_insert_if_needed({}, "t", "x", key_field_name="code", unique_constraint_fields="code,region")
+        assert "on conflict (code,region)" in db.calls[0][0]
+
+    def test_alternate_fields_are_inserted_with_their_values(self, db):
+        schema.get_id_by_key_field_and_insert_if_needed({}, "colors", "red", alternate_fields_names="hex", alternate_fields_values=["#f00"])
+        sql, params = db.calls[0]
+        assert "insert into colors (name , hex) values (%s,%s)" in sql
+        assert params == ("red", "#f00")
+
+    def test_alternate_fields_only_inserts_without_the_key_column(self, db):
+        schema.get_id_by_key_field_and_insert_if_needed({}, "colors", "red", alternate_fields_names="hex", alternate_fields_values=["#f00"], use_alternate_fields_only=True)
+        sql, params = db.calls[0]
+        assert "insert into colors (hex) values (%s)" in sql
+        assert params == ("#f00",)
+
+    def test_an_update_timestamp_is_added_to_the_conflict_update(self, db):
+        schema.get_id_by_key_field_and_insert_if_needed({}, "colors", "red", add_updated_at_timestamp="updated_at")
+        assert "updated_at" in db.calls[0][0]
+
+    def test_an_invalid_table_name_is_refused_before_any_query(self, db):
+        with pytest.raises(SQLValidationError):
+            schema.get_id_by_key_field_and_insert_if_needed({}, "colors; drop table x", "red")
+        assert db.calls == []
