@@ -1,0 +1,47 @@
+name: Mutation teeth
+
+# The mutation sweep only runs when PYUTILZ_RUN_MUTATION=1 (the meta-test skips otherwise, in about 3 seconds).
+# This weekly run sets it and sweeps the production lines changed in the last seven days.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-teeth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+
+    - name: Install the package and its dev requirements
+      env:
+        UV_SYSTEM_PYTHON: "1"
+      run: |
+        uv pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
+        uv pip install -r requirements-dev.txt
+
+    - name: Pick the base commit one week back
+      run: |
+        base=$(git rev-list -1 --before="7 days ago" HEAD)
+        echo "PYUTILZ_MUTATION_BASE=${base}" >> "$GITHUB_ENV"
+
+    - name: Run the mutation-teeth meta-test
+      env:
+        PYUTILZ_RUN_MUTATION: "1"
+      run: pytest tests/test_meta/test_mutation_teeth.py -p no:randomly -q --no-cov --durations=20

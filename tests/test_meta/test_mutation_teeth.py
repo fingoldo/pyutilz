@@ -47,6 +47,7 @@ def _changed_production_modules() -> list[Path]:
 _MODULES = _changed_production_modules()
 
 
+@pytest.mark.skipif(os.environ.get("PYUTILZ_RUN_MUTATION") != "1", reason="mutation sweep runs only in the weekly mutation-teeth workflow (PYUTILZ_RUN_MUTATION=1)")
 @pytest.mark.skipif(not _MODULES, reason=f"no changed src/pyutilz module with a dedicated test file against {BASE_REV}")
 @pytest.mark.parametrize("module", _MODULES, ids=lambda p: p.as_posix())
 def test_changed_lines_are_killed_by_their_module_tests(module, request):
