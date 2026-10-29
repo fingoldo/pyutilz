@@ -129,9 +129,9 @@ class TestGarbageCollectionDefaults:
 
     def test_an_unlistable_directory_is_logged_and_skipped(self, tmp_path, monkeypatch, caplog):
         def _fails(pattern):
-            raise OSError(13, "denied")
+            raise PermissionError(13, "denied")
 
         monkeypatch.setattr(cache_persistence_module._glob, "glob", _fails)
         with caplog.at_level("DEBUG"):
             _Cache()._gc_kernel_dir(str(tmp_path), keep=1)
-        assert any("GC skipped" in rec.getMessage() for rec in caplog.records)
+        assert any(rec.getMessage().endswith("GC skipped: PermissionError: [Errno 13] denied") for rec in caplog.records)
