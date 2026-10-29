@@ -75,3 +75,36 @@ class TestCastAndDtypes:
         castable = columns.polars_castable_int_dtypes()
         assert pl.Int64 in castable and pl.UInt64 in castable
         assert pl.Float64 not in castable
+
+
+class TestColumnBoundaries:
+    def test_a_column_with_a_null_is_reported_by_the_nan_finder(self):
+        df = pl.DataFrame({"a": [1.0, None], "b": [1.0, 2.0]})
+        assert columns.find_nan_cols(df).columns == ["a"]
+
+    def test_clean_numeric_defaults_to_a_zero_filler(self):
+        df = pl.DataFrame({"x": [float("inf")]})
+        assert df.select(columns.clean_numeric(pl.col("x"))).to_series().to_list() == [0.0]
+
+    def test_the_castable_integer_dtypes_include_int128_when_polars_has_it(self):
+        if hasattr(pl, "Int128"):
+            assert pl.Int128 in columns.polars_castable_int_dtypes()
+
+    def test_an_integer_exactly_at_the_float32_limit_is_not_flagged(self, caplog):
+        with caplog.at_level("WARNING"):
+            columns.cast_f64_to_f32(pl.DataFrame({"x": [2**24, -(2**24)]}))
+        assert not any("beyond 2**24" in rec.getMessage() for rec in caplog.records)
+
+    def test_an_integer_one_past_the_float32_limit_is_flagged_by_name(self, caplog):
+        with caplog.at_level("WARNING"):
+            columns.cast_f64_to_f32(pl.DataFrame({"x": [2**24 + 1]}))
+        assert any("['x']" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_negative_integer_one_past_the_float32_limit_is_flagged(self, caplog):
+        with caplog.at_level("WARNING"):
+            columns.cast_f64_to_f32(pl.DataFrame({"x": [-(2**24) - 1]}))
+        assert any("beyond 2**24" in rec.getMessage() for rec in caplog.records)
+
+    def test_kurtosis_on_constant_data_is_cleaned_to_the_filler(self):
+        df = pl.DataFrame({"k": [2.0, 2.0, 2.0]})
+        assert df.select(columns.apply_agg_func_safe(pl.col("k").kurtosis(), "kurtosis")).to_series().to_list() == [0.0]
