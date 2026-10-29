@@ -40,3 +40,29 @@ class TestCoverageGate:
 
     def test_the_same_partial_match_scores_without_the_gate(self):
         assert sim.sentences_similarity(["ALPHA", "BETA"], ["ALPHA"]) == pytest.approx(0.5)
+
+
+class TestWordPairSimilarity:
+    def test_an_empty_word_scores_zero(self):
+        assert sim._word_pair_similarity("", "abc", 1) == 0.0
+
+    def test_identical_words_score_one(self):
+        assert sim._word_pair_similarity("abc", "abc", 1) == 1.0
+
+    def test_a_word_at_exactly_the_length_threshold_is_still_scored(self):
+        assert sim._word_pair_similarity("abc", "abz", 3) == pytest.approx(2 / 3)
+
+    def test_a_word_below_the_length_threshold_scores_zero(self):
+        assert sim._word_pair_similarity("ab", "abz", 3) == 0.0
+
+    def test_a_shared_prefix_earns_the_prefix_floor_scaled_by_its_length(self):
+        assert sim._word_pair_similarity("abc", "abcdef", 1) == pytest.approx(0.9 + 0.1 * 3 / 6)
+
+    def test_a_single_shared_character_does_not_earn_the_prefix_floor(self):
+        assert sim._word_pair_similarity("a", "ab", 1) == pytest.approx(0.75)
+
+    def test_equal_length_words_use_the_edit_distance_alone(self):
+        assert sim._word_pair_similarity("abcd", "abce", 1) == pytest.approx(0.75)
+
+    def test_a_short_word_inside_a_longer_one_is_scored_by_the_window_and_the_edit_distance(self):
+        assert sim._word_pair_similarity("ab", "xxab", 1) == pytest.approx(0.75)
