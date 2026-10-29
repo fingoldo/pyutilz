@@ -71,3 +71,21 @@ class TestEnvOverride:
         cache = ktc.KernelTuningCache(in_memory=True)
         cache.get_or_tune("matmul", dims={"n": 4}, tuner=lambda: [], axes=["n"], fallback="fallback", env_key="PYUTILZ_TEST_FORCE_MATMUL", hooks=recorder)
         assert recorder.overrides == []
+
+
+class TestRejectionReport:
+    def test_a_rejected_region_is_reported_as_a_warning_with_its_numbers(self, caplog):
+        bad = {"max_abs_diff": 1.0, "block": 8}
+        with caplog.at_level("WARNING"):
+            _Cache()._apply_equiv_gate("matmul", [bad], 1e-3)
+        messages = [rec.getMessage() for rec in caplog.records if rec.levelname == "WARNING"]
+        assert len(messages) == 1
+        assert messages[0].startswith("kernel_tuning_cache: matmul region ")
+        assert "REJECTED -- max_abs_diff=1.000e+00 > equiv_tol=1.000e-03" in messages[0]
+        assert messages[0].endswith("not persisting it.")
+
+    def test_the_hook_receives_the_divergence_as_its_reason(self):
+        recorder = _Recorder()
+        bad = {"max_abs_diff": 1.0, "block": 8}
+        _Cache()._apply_equiv_gate("matmul", [bad], 1e-3, hooks=recorder)
+        assert recorder.winners == [("matmul", bad, "rejected: diverges 1.000e+00>1.000e-03")]
