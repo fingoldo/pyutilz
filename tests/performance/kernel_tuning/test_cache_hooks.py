@@ -69,3 +69,33 @@ class TestLoggerHooksMessages:
 class TestDefault:
     def test_the_module_default_is_a_logger_hooks_instance(self):
         assert isinstance(cache_hooks._DEFAULT_HOOKS, LoggerHooks)
+
+
+class TestLoggedMessageText:
+    @staticmethod
+    def _one(caplog, call):
+        with caplog.at_level(logging.DEBUG, logger=cache_hooks.logger.name):
+            call()
+        assert len(caplog.records) == 1
+        return caplog.records[0].getMessage()
+
+    def test_an_env_override_names_the_kernel_and_the_forced_choice(self, caplog):
+        message = self._one(caplog, lambda: LoggerHooks().env_override("matmul", "naive"))
+        assert message == "kernel_tuning_cache: matmul env override -> 'naive'"
+
+    def test_a_miss_names_the_kernel_then_the_dims(self, caplog):
+        message = self._one(caplog, lambda: LoggerHooks().cache_miss("matmul", {"n": 4}))
+        assert message == "kernel_tuning_cache: matmul cache miss {'n': 4}"
+
+    def test_a_sweep_start_names_the_kernel_and_its_axes(self, caplog):
+        with caplog.at_level(logging.INFO, logger=cache_hooks.logger.name):
+            LoggerHooks().sweep_start("matmul", ["n", "m"])
+        assert caplog.records[0].getMessage() == "kernel_tuning_cache: matmul sweep starting (axes=['n', 'm'])"
+
+    def test_a_winner_names_the_kernel_the_reason_and_the_region(self, caplog):
+        message = self._one(caplog, lambda: LoggerHooks().winner_chosen("matmul", {"block": 8}, "fastest"))
+        assert message == "kernel_tuning_cache: matmul winner (fastest): {'block': 8}"
+
+    def test_a_self_healed_marker_names_the_kernel(self, caplog):
+        message = self._one(caplog, lambda: LoggerHooks().concurrent_sweep_detected("matmul"))
+        assert message == "kernel_tuning_cache: matmul reclaiming stale sweep marker (self-heal)"
