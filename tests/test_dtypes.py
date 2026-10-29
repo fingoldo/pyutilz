@@ -118,3 +118,68 @@ class TestOptimizeDtypes:
         out = dtypes.optimize_dtypes(df, verbose=False, inplace=False, max_categories=None)
         assert out["zip"].dtype == object
         assert out["zip"].tolist() == ["01234", "02345", "01234"]
+
+
+class TestOptimizeDtypeSwitches:
+    @staticmethod
+    def _frame():
+        return pd.DataFrame(
+            {
+                "i": np.array([1, 2, 3], dtype=np.int64),
+                "f": np.array([1.0, 2.0, 3.0]),
+                "s": pd.Series(["a", "a", "b"], dtype=object),
+                "g": np.array([1.5, 2.25, 3.125]),
+            }
+        )
+
+    @staticmethod
+    def _dtypes(df):
+        return {col: str(df[col].dtype) for col in df.columns}
+
+    def test_the_default_shrinks_integers_floats_and_low_cardinality_text(self):
+        out = dtypes.optimize_dtypes(self._frame(), verbose=False, inplace=False)
+        assert self._dtypes(out) == {"i": "uint8", "f": "uint8", "s": "category", "g": "float32"}
+
+    def test_reduce_size_off_leaves_every_column_as_it_was(self):
+        out = dtypes.optimize_dtypes(self._frame(), verbose=False, inplace=False, reduce_size=False)
+        assert self._dtypes(out) == {"i": "int64", "f": "float64", "s": "category", "g": "float64"}
+
+    def test_float_to_int_off_keeps_integral_floats_as_floats(self):
+        out = dtypes.optimize_dtypes(self._frame(), verbose=False, inplace=False, float_to_int=False)
+        assert out["f"].dtype == np.float32
+
+    def test_float_to_float_off_keeps_fractional_floats_as_float64(self):
+        out = dtypes.optimize_dtypes(self._frame(), verbose=False, inplace=False, float_to_float=False)
+        assert out["g"].dtype == np.float64
+
+    def test_text_above_the_category_limit_stays_object(self):
+        out = dtypes.optimize_dtypes(self._frame(), verbose=False, inplace=False, max_categories=1)
+        assert out["s"].dtype == object
+
+    def test_no_category_limit_leaves_text_alone(self):
+        out = dtypes.optimize_dtypes(self._frame(), verbose=False, inplace=False, max_categories=None)
+        assert out["s"].dtype == object
+
+    def test_a_skipped_column_keeps_its_dtype(self):
+        out = dtypes.optimize_dtypes(self._frame(), verbose=False, inplace=False, skip_columns=["f"])
+        assert out["f"].dtype == np.float64
+
+    def test_use_uint_off_picks_signed_integers(self):
+        out = dtypes.optimize_dtypes(self._frame(), verbose=False, inplace=False, use_uint=False)
+        assert out["i"].dtype == np.int8
+
+    def test_inplace_true_changes_the_callers_frame_and_returns_it(self):
+        df = self._frame()
+        returned = dtypes.optimize_dtypes(df, verbose=False, inplace=True)
+        assert returned is df
+        assert df["i"].dtype == np.uint8
+
+    def test_inplace_false_leaves_the_callers_frame_untouched(self):
+        df = self._frame()
+        dtypes.optimize_dtypes(df, verbose=False, inplace=False)
+        assert df["i"].dtype == np.int64
+
+    def test_verbose_reports_the_new_dtypes_at_info(self, caplog):
+        with caplog.at_level("INFO"):
+            dtypes.optimize_dtypes(self._frame(), verbose=True, inplace=False)
+        assert any(rec.levelname == "INFO" and rec.getMessage().startswith("Going to use the following new dtypes") for rec in caplog.records)
