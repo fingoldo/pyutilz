@@ -82,7 +82,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # test_cache_concurrency.py, test_cache_facade.py re-export sensor).
     "cache_base": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_class": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
-    "cache_persistence": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     # text/strings was split from a single >1000-LOC module into a subpackage;
     # every submodule is exercised jointly through the ``strings`` facade by
     # tests/test_strings*.py.
