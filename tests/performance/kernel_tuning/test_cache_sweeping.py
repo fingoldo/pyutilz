@@ -371,16 +371,17 @@ class TestMarkerLogTextAndDescriptors:
     def test_every_descriptor_opened_by_the_fallback_is_closed(self, cache, monkeypatch):
         marker = cache._marker_path("matmul", "v1")
         os.makedirs(os.path.dirname(marker), exist_ok=True)
-        opened, closed = [], []
+        # Descriptor numbers are reused once closed, so track the set still open rather than comparing lists.
+        still_open = set()
         real_open, real_close = os.open, os.close
 
         def recording_open(path, *args, **kwargs):
             fd = real_open(path, *args, **kwargs)
-            opened.append(fd)
+            still_open.add(fd)
             return fd
 
         def recording_close(fd):
-            closed.append(fd)
+            still_open.discard(fd)
             return real_close(fd)
 
         def no_links(*args, **kwargs):
@@ -390,4 +391,4 @@ class TestMarkerLogTextAndDescriptors:
         monkeypatch.setattr(cache_sweeping.os, "open", recording_open)
         monkeypatch.setattr(cache_sweeping.os, "close", recording_close)
         assert cache._try_create_marker(marker) is True
-        assert opened and set(opened) <= set(closed)
+        assert still_open == set()
