@@ -78,13 +78,10 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # Each is really covered by the cited file(s), verified by word-boundary
     # references to the module's own public names.
     "system/hardware_monitor.py": "covered by tests/system/test_hardware_detection.py (get_hardware_info) + test_system_audit_fixes.py",
-    "system/scheduling/prefect.py": "covered by test_system_audit_fixes.py (get_running_flows / wait_for_absense_of_tasks / get_schema)",
-    "system/system/fsutils.py": "system/system subpackage split; covered by test_system.py + test_system_extra2.py + test_system_domain_extra.py",
     "system/system/memory.py": "system/system subpackage split; covered by test_system.py + test_system_extra2.py + test_system_extra3.py",
     "system/system/misc.py": "system/system subpackage split; covered by test_system.py + test_system_extra.py + test_system_extra2.py",
     "system/system/probing.py": "system/system subpackage split; covered by test_system_extra2.py + test_system_extra3.py + tests/system/test_hardware_detection.py",
     "system/system/sysinfo.py": "system/system subpackage split; get_system_info covered by test_system.py + test_dev_fixes_regression.py + test_distributed.py",
-    "web/proxy/decodo.py": "web/proxy subpackage; covered by test_proxy.py (TestDecodoProvider / TestDecodoSubscription / TestDecodoTrafficReport)",
     "web/proxy/session.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
     "web/web/downloads.py": "web/web subpackage split; covered by test_web_extra.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
     "web/web/fetching.py": "web/web subpackage split; covered by test_web_extra.py + test_web_concurrency.py",
