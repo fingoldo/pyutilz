@@ -141,3 +141,24 @@ class TestDecideSteal:
         assert pid == 0
         assert age == float("inf")
         assert owner_dead is True
+
+
+class TestIncompleteMarkerBoundaries:
+    def test_a_tiny_positive_start_time_is_a_complete_marker(self, cache, tmp_path):
+        marker = tmp_path / "tiny.INPROGRESS"
+        _write_marker(str(marker), {"pid": os.getpid(), "start_ts": 0.05, "host": cache_base.hw_fingerprint()})
+        should_steal, _pid, _age, _dead, _budget = cache._decide_steal(str(marker))
+        assert should_steal is True
+
+    def test_pid_one_is_a_complete_marker(self, cache, tmp_path):
+        marker = tmp_path / "pid1.INPROGRESS"
+        _write_marker(str(marker), {"pid": 1, "start_ts": time.time() - 3600, "host": cache_base.hw_fingerprint()})
+        should_steal, pid, _age, _dead, _budget = cache._decide_steal(str(marker))
+        assert pid == 1
+        assert should_steal is True
+
+    def test_a_zero_start_time_with_a_fresh_file_is_incomplete_not_stale(self, cache, tmp_path):
+        marker = tmp_path / "zero.INPROGRESS"
+        _write_marker(str(marker), {"pid": os.getpid(), "start_ts": 0.0, "host": cache_base.hw_fingerprint()})
+        should_steal, _pid, _age, _dead, _budget = cache._decide_steal(str(marker))
+        assert should_steal is False
