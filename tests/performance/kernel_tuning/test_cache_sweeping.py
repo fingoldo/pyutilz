@@ -118,3 +118,26 @@ class TestStealing:
         os.utime(marker, (old, old))
         with cache._claim_sweep("matmul", "v1", _Recorder()) as owns:
             assert owns is True
+
+
+class TestDecideSteal:
+    def test_a_marker_from_another_host_is_not_judged_dead_by_a_local_pid_probe(self, cache, tmp_path):
+        marker = tmp_path / "other.INPROGRESS"
+        _write_marker(str(marker), {"pid": _DEAD_PID, "start_ts": time.time(), "host": "some-other-machine"})
+        should_steal, _pid, _age, owner_dead, _budget = cache._decide_steal(str(marker))
+        assert owner_dead is False
+        assert should_steal is False
+
+    def test_a_zero_pid_with_a_fresh_file_is_a_peer_still_writing(self, cache, tmp_path):
+        marker = tmp_path / "half.INPROGRESS"
+        _write_marker(str(marker), {"pid": 0, "start_ts": time.time() - 3600})
+        should_steal, pid, _age, _dead, _budget = cache._decide_steal(str(marker))
+        assert pid == 0
+        assert should_steal is False
+
+    def test_a_missing_marker_is_stealable_because_its_age_is_unknown(self, cache, tmp_path):
+        should_steal, pid, age, owner_dead, _budget = cache._decide_steal(str(tmp_path / "absent.INPROGRESS"))
+        assert should_steal is True
+        assert pid == 0
+        assert age == float("inf")
+        assert owner_dead is True
