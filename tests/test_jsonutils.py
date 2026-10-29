@@ -251,3 +251,12 @@ class TestAttributeLoopKeepsGoing:
                 return "kept"
 
         assert jsonutils.jsonize_atrtributes(_Mixed()) == {"b_good": "kept"}
+
+
+class TestSkippedFunctionDoesNotEndTheLoop:
+    def test_a_builtin_before_a_plain_attribute_is_skipped_and_the_plain_one_kept(self):
+        class _Holder:
+            a_fn = len
+            b_val = 3
+
+        assert jsonutils.jsonize_atrtributes(_Holder(), skip_functions=True) == {"b_val": 3}
