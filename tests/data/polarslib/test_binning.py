@@ -88,3 +88,70 @@ class TestFrequenciesAndMutualInformation:
     def test_dropping_nulls_ignores_the_precomputed_entropies(self):
         df = pl.DataFrame({"a": [0, 0, 1, 1], "b": [0, 0, 1, 1]})
         assert binning.mi_for_column(df, {}, "a", "b", drop_nulls=True) == pytest.approx(math.log(2))
+
+
+class TestGroupFreqsDefaults:
+    def test_nulls_are_their_own_group_by_default(self):
+        assert binning._group_freqs(pl.DataFrame({"a": [0, 1, None]}), "a").size == 3
+
+    def test_a_single_row_is_a_full_distribution(self):
+        assert list(binning._group_freqs(pl.DataFrame({"a": [7]}), "a")) == [1.0]
+
+
+class TestMiDefaultsCountNulls:
+    def test_default_mi_uses_the_precomputed_marginals_with_nulls_counted(self):
+        df = pl.DataFrame({"a": [0, 1, None, None], "b": [0, 1, 0, 1]})
+        entropies = {"a": binning.entropy_for_column(df, "a"), "b": binning.entropy_for_column(df, "b")}
+        assert binning.mi_for_column(df, entropies, "a", "b") == pytest.approx(0.5 * math.log(2))
+
+
+class TestUnsignedMaxima:
+    def test_uint32_holds_exactly_its_largest_bin(self):
+        assert binning._resolve_bin_dtype(pl.UInt32, 2**32, False) == pl.UInt32
+
+    def test_uint32_one_bin_too_small_widens_to_int64(self):
+        assert binning._resolve_bin_dtype(pl.UInt32, 2**32 + 1, False) == pl.Int64
+
+    def test_uint64_holds_exactly_its_largest_bin(self):
+        assert binning._resolve_bin_dtype(pl.UInt64, 2**64, False) == pl.UInt64
+
+    def test_uint64_one_bin_too_small_names_the_bin_count(self):
+        with pytest.raises(ValueError) as exc:
+            binning._resolve_bin_dtype(pl.UInt64, 2**64 + 1, False)
+        assert str(exc.value) == f"num_bins={2**64 + 1} exceeds the range even of Int64 bin_dtype"
+
+
+class TestWideningBoundaries:
+    def test_an_int16_dtype_widens_to_int32_at_exactly_the_int32_max(self):
+        assert binning._resolve_bin_dtype(pl.Int16, 2**31, False) == pl.Int32
+
+    def test_widening_is_logged_with_its_arguments_when_verbose(self, caplog):
+        with caplog.at_level("WARNING"):
+            binning._resolve_bin_dtype(pl.UInt8, 257, True)
+        assert f"bin_dtype={pl.UInt8} can't hold num_bins-1=256; auto-widening to {pl.Int16}" in [rec.getMessage() for rec in caplog.records]
+
+    def test_widening_is_silent_when_not_verbose(self, caplog):
+        with caplog.at_level("WARNING"):
+            binning._resolve_bin_dtype(pl.UInt8, 257, False)
+        assert caplog.records == []
+
+
+class TestFloatBinningInputs:
+    def test_a_non_decimal_column_passes_through_untouched(self):
+        expr = pl.col("x")
+        out_expr, lo, hi = binning._float_binning_inputs(expr, 1, 5, False)
+        assert out_expr is expr
+        assert isinstance(lo, int) and isinstance(hi, int)
+
+    def test_a_decimal_column_is_cast_and_its_bounds_floated(self):
+        _out_expr, lo, hi = binning._float_binning_inputs(pl.col("x"), 1, 5, True)
+        assert isinstance(lo, float) and lo == 1.0
+        assert isinstance(hi, float) and hi == 5.0
+
+
+class TestDecimalColumnDetection:
+    def test_only_the_decimal_columns_are_reported(self):
+        if binning._DECIMAL_DTYPE is None:
+            pytest.skip("this polars build has no Decimal dtype")
+        df = pl.DataFrame({"d": [1.5], "f": [2.5]}).with_columns(pl.col("d").cast(pl.Decimal(10, 2)))
+        assert binning._decimal_columns(df) == {"d"}
