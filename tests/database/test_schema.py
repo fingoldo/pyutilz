@@ -193,3 +193,71 @@ class TestGetIdIdentifierValidation:
         with pytest.raises(SQLValidationError):
             schema.get_id_by_key_field_and_insert_if_needed({}, "colors", "red", **kwargs)
         assert db.calls == []
+
+
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def __call__(self, sql, params=None, *args, **kwargs):
+        self.calls.append(sql)
+        return self.rows
+
+
+def _suggest(monkeypatch, rows, **kwargs):
+    fake = _Rows(rows)
+    monkeypatch.setattr(_facade, "safe_execute", fake)
+    result = schema.suggest_json_optimization("items", "data", fields=["color"], **kwargs)
+    return result, fake
+
+
+class TestSuggestJsonOptimization:
+    def test_the_query_groups_the_field_values_by_frequency(self, monkeypatch):
+        _result, fake = _suggest(monkeypatch, [("x", 6), ("y", 4)])
+        assert " ".join(fake.calls[0].split()) == (
+            "select data->>'color' as val,count(*) as qty from items where data is not null group by data->>'color' order by qty desc"
+        )
+
+    def test_a_value_holding_exactly_the_share_is_suggested(self, monkeypatch):
+        result, _fake = _suggest(monkeypatch, [("x", 5), ("y", 5)])
+        assert result == {"color": "x"}
+
+    def test_a_value_below_the_share_is_not_suggested(self, monkeypatch):
+        result, _fake = _suggest(monkeypatch, [("x", 6), ("y", 4)], min_occurence_percent=0.7)
+        assert result == {}
+
+    def test_a_tie_keeps_the_first_most_frequent_value(self, monkeypatch):
+        result, _fake = _suggest(monkeypatch, [("x", 5), ("y", 5)])
+        assert result["color"] == "x"
+
+    def test_a_frequent_value_is_not_suggested_when_nulls_also_occur(self, monkeypatch):
+        result, _fake = _suggest(monkeypatch, [("x", 6), (None, 4)])
+        assert result == {}
+
+    def test_more_values_than_the_display_limit_are_logged_with_an_ellipsis(self, monkeypatch, caplog):
+        rows = [(f"v{i}", 10 - i) for i in range(6)]
+        with caplog.at_level("INFO"):
+            _suggest(monkeypatch, rows, max_vals=5)
+        assert any(rec.getMessage().startswith("color ") and rec.getMessage().endswith("...") for rec in caplog.records)
+
+    def test_an_invalid_table_is_refused_before_any_query(self, monkeypatch):
+        fake = _Rows([])
+        monkeypatch.setattr(_facade, "safe_execute", fake)
+        with pytest.raises(SQLValidationError):
+            schema.suggest_json_optimization("items; drop table x", "data", fields=["color"])
+        assert fake.calls == []
+
+    def test_an_invalid_json_column_is_refused_before_any_query(self, monkeypatch):
+        fake = _Rows([])
+        monkeypatch.setattr(_facade, "safe_execute", fake)
+        with pytest.raises(SQLValidationError):
+            schema.suggest_json_optimization("items", "data; drop", fields=["color"])
+        assert fake.calls == []
+
+    def test_an_invalid_json_key_is_refused_before_any_query(self, monkeypatch):
+        fake = _Rows([])
+        monkeypatch.setattr(_facade, "safe_execute", fake)
+        with pytest.raises(SQLValidationError):
+            schema.suggest_json_optimization("items", "data", fields=["color'; drop"])
+        assert fake.calls == []
