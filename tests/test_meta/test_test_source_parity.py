@@ -45,7 +45,6 @@ TESTS_DIR = REPO_ROOT / "tests"
 # path form whenever the stem is generic enough to collide, e.g. ``base``.
 _TEST_EXEMPT_MODULES: dict[str, str] = {
     "benchmark": "performance/kernel_tuning/benchmark.py — covered by tests/test_kernel_tuning_benchmark.py, renamed 2026-07-21 to stop being confusable with test_dev_benchmarking.py (pyutilz.dev.benchmarking)",
-    "config": "module-level constants/literals only — no functions",
     # Sub-package boundary modules are pure namespaces; behaviour lives
     # in the modules under them.
     # LLM provider modules are covered jointly by tests/test_llm_providers.py
