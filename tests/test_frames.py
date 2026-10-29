@@ -69,3 +69,42 @@ class TestPrefixizeColumns:
         df = pd.DataFrame({"a": [1]})
         _, columns = frames.prefixize_columns(df, "src", sep="-")
         assert columns == {"a": "src-a"}
+
+
+class TestNullifyBoundaries:
+    def test_a_value_repeated_past_the_default_threshold_is_nulled(self):
+        df = pd.DataFrame({"v": ["std"] * 301})
+        frames.nullify_standard_values(df, "v")
+        assert df["v"].isna().all()
+
+    def test_a_value_at_exactly_the_default_threshold_is_kept(self):
+        df = pd.DataFrame({"v": ["std"] * 300})
+        frames.nullify_standard_values(df, "v")
+        assert (df["v"] == "std").all()
+
+    def test_a_value_with_only_missing_persons_is_not_nulled_by_default(self):
+        df = pd.DataFrame({"v": ["std"] * 3, "p": [None, None, None]})
+        frames.nullify_standard_values(df, "v", min_records=1, persons_field="p")
+        assert (df["v"] == "std").all()
+
+    def test_a_value_used_by_exactly_min_persons_is_kept(self):
+        df = pd.DataFrame({"v": ["std"] * 3, "p": [1, 1, 2]})
+        frames.nullify_standard_values(df, "v", min_records=1, persons_field="p", min_persons=2)
+        assert (df["v"] == "std").all()
+
+
+class TestNullifyVerbose:
+    def test_verbose_is_off_by_default(self, capsys):
+        df = pd.DataFrame({"v": ["std"] * 3, "p": [1, 2, 3]})
+        frames.nullify_standard_values(df, "v", min_records=1, persons_field="p")
+        assert capsys.readouterr().out == ""
+
+    def test_verbose_prints_nothing_when_no_value_qualifies(self, capsys):
+        df = pd.DataFrame({"v": ["a", "b"], "p": [1, 2]})
+        frames.nullify_standard_values(df, "v", min_records=10, persons_field="p", min_persons=0, verbose=True)
+        assert capsys.readouterr().out == ""
+
+    def test_verbose_names_the_field_before_its_values(self, capsys):
+        df = pd.DataFrame({"v": ["std"] * 3, "p": [1, 2, 3]})
+        frames.nullify_standard_values(df, "v", min_records=1, persons_field="p", min_persons=2, verbose=True)
+        assert capsys.readouterr().out.startswith("Field v")
