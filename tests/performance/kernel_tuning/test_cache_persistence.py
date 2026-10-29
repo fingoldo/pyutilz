@@ -11,6 +11,7 @@ import pytest
 
 from pyutilz.core import jsonlib
 from pyutilz.performance.kernel_tuning.cache import cache_base
+from pyutilz.performance.kernel_tuning.cache import cache_persistence as cache_persistence_module
 from pyutilz.performance.kernel_tuning.cache.cache_persistence import _CachePersistenceMixin
 
 
@@ -117,3 +118,20 @@ class TestGarbageCollection:
             _write(tmp_path / f"{i}.json", _record("matmul", f"2026-0{i}-01"))
         _Cache()._gc_kernel_dir(str(tmp_path), keep=keep)
         assert len(list(tmp_path.glob("*.json"))) == keep
+
+
+class TestGarbageCollectionDefaults:
+    def test_the_default_keep_count_is_four(self, tmp_path):
+        for i in range(1, 7):
+            _write(tmp_path / f"{i}.json", _record("matmul", f"2026-0{i}-01"))
+        _Cache()._gc_kernel_dir(str(tmp_path))
+        assert len(list(tmp_path.glob("*.json"))) == 4
+
+    def test_an_unlistable_directory_is_logged_and_skipped(self, tmp_path, monkeypatch, caplog):
+        def _fails(pattern):
+            raise OSError(13, "denied")
+
+        monkeypatch.setattr(cache_persistence_module._glob, "glob", _fails)
+        with caplog.at_level("DEBUG"):
+            _Cache()._gc_kernel_dir(str(tmp_path), keep=1)
+        assert any("GC skipped" in rec.getMessage() for rec in caplog.records)
