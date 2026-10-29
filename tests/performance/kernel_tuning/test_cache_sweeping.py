@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import os
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from pyutilz.core import jsonlib
-from pyutilz.performance.kernel_tuning.cache import cache_base
+from pyutilz.performance.kernel_tuning.cache import cache_base, cache_sweeping
 from pyutilz.performance.kernel_tuning.cache.cache_sweeping import _CacheSweepClaimMixin
 
 _DEAD_PID = 2**31 - 2
@@ -162,3 +163,37 @@ class TestIncompleteMarkerBoundaries:
         _write_marker(str(marker), {"pid": os.getpid(), "start_ts": 0.0, "host": cache_base.hw_fingerprint()})
         should_steal, _pid, _age, _dead, _budget = cache._decide_steal(str(marker))
         assert should_steal is False
+
+
+class TestDecideStealExactBoundaries:
+    def test_a_marker_without_a_start_time_is_incomplete_not_ancient(self, cache, tmp_path):
+        marker = tmp_path / "nostart.INPROGRESS"
+        _write_marker(str(marker), {"pid": os.getpid()})
+        should_steal, _pid, _age, owner_dead, _budget = cache._decide_steal(str(marker))
+        assert should_steal is False
+        assert owner_dead is False
+
+    def test_an_incomplete_marker_reports_its_owner_as_not_dead(self, cache, tmp_path):
+        marker = tmp_path / "incomplete.INPROGRESS"
+        _write_marker(str(marker), {})
+        _steal, _pid, _age, owner_dead, _budget = cache._decide_steal(str(marker))
+        assert owner_dead is False
+
+    def test_an_age_exactly_at_the_budget_is_not_yet_stealable(self, cache, tmp_path, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "60")
+        now = 1_000_000_000.0
+        monkeypatch.setattr(cache_sweeping, "time", SimpleNamespace(time=lambda: now))
+        marker = tmp_path / "edge.INPROGRESS"
+        _write_marker(str(marker), {"pid": os.getpid(), "start_ts": now - 60.0, "host": cache_base.hw_fingerprint()})
+        should_steal, _pid, age, _dead, _budget = cache._decide_steal(str(marker))
+        assert age == pytest.approx(60.0)
+        assert should_steal is False
+
+    def test_a_just_past_budget_live_owner_is_stealable(self, cache, tmp_path, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "60")
+        now = 1_000_000_000.0
+        monkeypatch.setattr(cache_sweeping, "time", SimpleNamespace(time=lambda: now))
+        marker = tmp_path / "past.INPROGRESS"
+        _write_marker(str(marker), {"pid": os.getpid(), "start_ts": now - 60.5, "host": cache_base.hw_fingerprint()})
+        should_steal, _pid, _age, _dead, _budget = cache._decide_steal(str(marker))
+        assert should_steal is True
