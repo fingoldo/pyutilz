@@ -64,7 +64,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "binning": "data/polarslib subpackage split; covered jointly by test_polarslib*.py",
     "connection": "database/db subpackage split; covered jointly by test_db_extra.py + test_database_extra2.py",
     "execution": "database/db subpackage split; covered jointly by test_db_extra.py + test_database_extra2.py",
-    "schema": "database/db subpackage split; covered jointly by test_db_extra.py + test_database_extra2.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and
