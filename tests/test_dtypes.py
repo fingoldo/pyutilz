@@ -183,3 +183,32 @@ class TestOptimizeDtypeSwitches:
         with caplog.at_level("INFO"):
             dtypes.optimize_dtypes(self._frame(), verbose=True, inplace=False)
         assert any(rec.levelname == "INFO" and rec.getMessage().startswith("Going to use the following new dtypes") for rec in caplog.records)
+
+
+class TestOptimizeDtypeDefaults:
+    @staticmethod
+    def _dtype(df, **kwargs):
+        return str(dtypes.optimize_dtypes(df.copy(), verbose=False, inplace=False, **kwargs)["x"].dtype)
+
+    def test_a_float_that_float32_would_round_stays_float64_by_default(self):
+        assert self._dtype(pd.DataFrame({"x": np.array([1.0 + 2**-40, 2.0])})) == "float64"
+
+    def test_turning_the_precision_guard_off_lets_that_float_downcast(self):
+        assert self._dtype(pd.DataFrame({"x": np.array([1.0 + 2**-40, 2.0])}), ensure_float64_precision=False) == "float32"
+
+    def test_the_exact_roundtrip_check_keeps_the_same_float_as_float64(self):
+        assert self._dtype(pd.DataFrame({"x": np.array([1.0 + 2**-40, 2.0])}), exact_float_roundtrip=True) == "float64"
+
+    def test_half_precision_is_skipped_by_default(self):
+        assert self._dtype(pd.DataFrame({"x": np.array([0.5, 1.5, 2.5])})) == "float32"
+
+    def test_half_precision_is_used_when_the_skip_is_turned_off(self):
+        assert self._dtype(pd.DataFrame({"x": np.array([0.5, 1.5, 2.5])}), skip_halffloat=False) == "float16"
+
+    def test_text_with_exactly_the_default_category_limit_becomes_category(self):
+        df = pd.DataFrame({"x": pd.Series([f"v{i}" for i in range(100)], dtype=object)})
+        assert self._dtype(df) == "category"
+
+    def test_text_one_over_the_default_category_limit_stays_object(self):
+        df = pd.DataFrame({"x": pd.Series([f"v{i}" for i in range(101)], dtype=object)})
+        assert self._dtype(df) == "object"
