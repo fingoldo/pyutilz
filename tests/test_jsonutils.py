@@ -194,3 +194,38 @@ class TestJsonListProperty:
 
     def test_elements_with_none_of_the_properties_are_dropped(self):
         assert jsonutils.get_jsonlist_properties([{"other": 1}], ["id"], return_indices=False) == []
+
+
+class TestRecursionBoundaries:
+    def test_a_container_exactly_at_the_limit_is_still_jsonized(self):
+        assert jsonutils.jsonize_atrtributes({"a": " x "}, recursion_level=1, max_recursion_level=1) == {"a": "x"}
+
+    def test_a_dict_nested_past_the_limit_is_returned_untouched(self):
+        nested = {"a": {"b": {"c": " x "}}}
+        assert jsonutils.jsonize_atrtributes(nested, max_recursion_level=1) == {"a": {"b": {"c": " x "}}}
+
+    def test_a_list_nested_past_the_limit_is_returned_untouched(self):
+        assert jsonutils.jsonize_atrtributes([[{"c": " x "}]], max_recursion_level=1) == [[{"c": " x "}]]
+
+
+class TestSkipFunctions:
+    def test_builtin_functions_are_dropped_when_skipping(self):
+        class _Holder:
+            helper = len
+
+        assert "helper" not in jsonutils.jsonize_atrtributes(_Holder(), skip_functions=True)
+
+    def test_builtin_functions_are_kept_when_not_skipping(self):
+        class _Holder:
+            helper = len
+
+        assert "helper" in jsonutils.jsonize_atrtributes(_Holder(), skip_functions=False)
+
+
+class TestFastSerializationPath:
+    def test_a_document_without_nul_skips_the_slow_normalizing_path(self, monkeypatch):
+        def _slow(*args, **kwargs):
+            raise AssertionError("the slow path must not run for a NUL-free document")
+
+        monkeypatch.setattr(jsonutils.jsonlib, "dumps", _slow)
+        assert jsonutils.json_pg_dumps({"a": "b"}).adapted == {"a": "b"}
