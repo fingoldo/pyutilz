@@ -165,3 +165,31 @@ class TestGetIdByKeyField:
         with pytest.raises(SQLValidationError):
             schema.get_id_by_key_field_and_insert_if_needed({}, "colors; drop table x", "red")
         assert db.calls == []
+
+
+class TestGetIdExactStatements:
+    def test_the_default_statement_is_pinned_word_for_word(self, db):
+        schema.get_id_by_key_field_and_insert_if_needed({}, "colors", "red")
+        assert db.calls[0][0] == "insert into colors (name) values (%s) on conflict (name) do update set name=excluded.name returning id"
+
+    def test_the_alternate_statement_with_a_timestamp_is_pinned_word_for_word(self, db):
+        schema.get_id_by_key_field_and_insert_if_needed({}, "colors", "red", alternate_fields_names="hex", alternate_fields_values=["#f00"], add_updated_at_timestamp="updated_at")
+        assert db.calls[0][0] == (
+            "insert into colors (name , hex) values (%s,%s) on conflict (name) do update set name=excluded.name,updated_at=(now() at time zone 'utc') returning id"
+        )
+
+
+class TestGetIdIdentifierValidation:
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"key_field_name": "name; drop table x"},
+            {"id_field_name": "id; drop table x"},
+            {"alternate_fields_names": "hex; drop table x", "alternate_fields_values": ["#f00"]},
+            {"unique_constraint_fields": "name; drop table x"},
+        ],
+    )
+    def test_an_invalid_identifier_is_refused_before_any_query(self, db, kwargs):
+        with pytest.raises(SQLValidationError):
+            schema.get_id_by_key_field_and_insert_if_needed({}, "colors", "red", **kwargs)
+        assert db.calls == []
