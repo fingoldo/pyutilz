@@ -197,3 +197,122 @@ class TestDecideStealExactBoundaries:
         _write_marker(str(marker), {"pid": os.getpid(), "start_ts": now - 60.5, "host": cache_base.hw_fingerprint()})
         should_steal, _pid, _age, _dead, _budget = cache._decide_steal(str(marker))
         assert should_steal is True
+
+
+class TestInMemoryWithAPath:
+    def test_an_in_memory_cache_never_reads_or_writes_the_marker_even_with_a_path(self, tmp_path):
+        cache = _Cache(str(tmp_path / "cache.json"), in_memory=True)
+        marker = cache._marker_path("matmul", "v1")
+        _write_marker(marker, {"pid": os.getpid(), "start_ts": time.time()})
+        with cache._claim_sweep("matmul", "v1", _Recorder()) as owns:
+            assert owns is True
+        assert os.path.exists(marker)
+
+
+class TestTryCreateMarkerPaths:
+    def test_the_staging_file_is_named_after_the_marker_pid_thread_and_time(self, cache, tmp_path, monkeypatch):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        staged = []
+        real_open = os.open
+
+        def recording_open(path, *args, **kwargs):
+            if ".tmp." in str(path):
+                staged.append(str(path))
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(cache_sweeping.os, "open", recording_open)
+        assert cache._try_create_marker(marker) is True
+        assert len(staged) == 1
+        assert staged[0].startswith(marker + ".tmp.")
+        parts = staged[0][len(marker) + len(".tmp.") :].split(".")
+        assert len(parts) == 3 and parts[0] == str(os.getpid())
+
+    def test_a_staging_failure_degrades_to_owning_without_a_marker(self, cache, monkeypatch, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        real_open = os.open
+
+        def failing_open(path, *args, **kwargs):
+            if ".tmp." in str(path):
+                raise OSError(28, "no space left")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(cache_sweeping.os, "open", failing_open)
+        with caplog.at_level("DEBUG"):
+            assert cache._try_create_marker(marker) is True
+        assert not os.path.exists(marker)
+        assert any("marker tmp create failed" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_marker_already_held_is_not_overwritten(self, cache, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("held")
+        with caplog.at_level("DEBUG"):
+            assert cache._try_create_marker(marker) is False
+        with open(marker, encoding="utf-8") as f:
+            assert f.read() == "held"
+        assert any("claim marker already held" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_published_marker_leaves_no_staging_file_behind(self, cache, tmp_path):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        assert cache._try_create_marker(marker) is True
+        assert os.listdir(os.path.dirname(marker)) == [os.path.basename(marker)]
+
+    def test_the_published_marker_records_the_host_fingerprint(self, cache, monkeypatch):
+        monkeypatch.setattr(cache_sweeping, "hw_fingerprint", lambda: "HOST-X")
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        assert cache._try_create_marker(marker) is True
+        with open(marker, encoding="utf-8") as f:
+            assert jsonlib.loads(f.read())["host"] == "HOST-X"
+
+    def test_hardlinks_unsupported_fall_back_to_an_exclusive_create(self, cache, monkeypatch, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+
+        def no_links(*args, **kwargs):
+            raise OSError(1, "hard links unsupported")
+
+        monkeypatch.setattr(cache_sweeping.os, "link", no_links)
+        with caplog.at_level("WARNING"):
+            assert cache._try_create_marker(marker) is True
+        with open(marker, encoding="utf-8") as f:
+            assert jsonlib.loads(f.read())["pid"] == os.getpid()
+        assert os.listdir(os.path.dirname(marker)) == [os.path.basename(marker)]
+        assert any("marker link unsupported" in rec.getMessage() for rec in caplog.records)
+
+    def test_the_fallback_gives_up_when_another_process_holds_the_marker(self, cache, monkeypatch, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("held")
+
+        def no_links(*args, **kwargs):
+            raise OSError(1, "hard links unsupported")
+
+        monkeypatch.setattr(cache_sweeping.os, "link", no_links)
+        with caplog.at_level("DEBUG"):
+            assert cache._try_create_marker(marker) is False
+        assert any("fallback claim held" in rec.getMessage() for rec in caplog.records)
+
+    def test_an_unwritable_fallback_marker_is_treated_as_owner(self, cache, monkeypatch, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        real_open = os.open
+
+        def no_links(*args, **kwargs):
+            raise OSError(1, "hard links unsupported")
+
+        def denied_marker(path, *args, **kwargs):
+            if str(path) == marker:
+                raise PermissionError(13, "denied")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(cache_sweeping.os, "link", no_links)
+        monkeypatch.setattr(cache_sweeping.os, "open", denied_marker)
+        with caplog.at_level("WARNING"):
+            assert cache._try_create_marker(marker) is True
+        assert any("fallback marker cannot be created" in rec.getMessage() for rec in caplog.records)
