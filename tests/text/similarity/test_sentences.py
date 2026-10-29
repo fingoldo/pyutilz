@@ -94,3 +94,41 @@ class TestGreedyMatch:
         assert res == 0.0
         assert matched_a == [0.0, 0.0]
         assert matched_b == [0.0, 0.0]
+
+
+class TestWordCoverageChecker:
+    def test_a_sentence_of_only_stopwords_passes_trivially(self):
+        assert sim._check_word_coverage(["the"], [0.0], 0.5, 1.0, 5, {"the"}) is True
+
+    def test_a_match_exactly_at_the_similarity_floor_counts(self):
+        assert sim._check_word_coverage(["a"], [0.5], 0.5, None, 1, set()) is True
+
+    def test_the_absolute_count_is_inclusive(self):
+        assert sim._check_word_coverage(["a", "b"], [0.9, 0.0], 0.5, None, 1, set()) is True
+        assert sim._check_word_coverage(["a", "b"], [0.9, 0.0], 0.5, None, 2, set()) is False
+
+    def test_the_fraction_is_inclusive(self):
+        assert sim._check_word_coverage(["a", "b"], [0.9, 0.0], 0.5, 0.5, None, set()) is True
+        assert sim._check_word_coverage(["a", "b"], [0.9, 0.0], 0.5, 0.6, None, set()) is False
+
+    def test_both_requirements_must_hold(self):
+        assert sim._check_word_coverage(["a", "b"], [0.9, 0.9], 0.5, 0.5, 3, set()) is False
+
+    def test_stopwords_leave_the_denominator(self):
+        assert sim._check_word_coverage(["the", "cat"], [0.0, 0.9], 0.5, 1.0, None, {"the"}) is True
+
+
+class TestCoverageGateSides:
+    def test_max_checks_the_longer_sentence_and_min_the_shorter(self):
+        a, b = ["a"], ["x", "y"]
+        matched_a, matched_b = [0.9], [0.0, 0.0]
+        assert sim._coverage_gate_passes(a, b, matched_a, matched_b, "max", 0.5, None, 1, None) is False
+        assert sim._coverage_gate_passes(a, b, matched_a, matched_b, "min", 0.5, None, 1, None) is True
+
+    def test_both_requires_each_side(self):
+        a, b = ["a"], ["x", "y"]
+        matched_a, matched_b = [0.9], [0.0, 0.0]
+        assert sim._coverage_gate_passes(a, b, matched_a, matched_b, "both", 0.5, None, 1, None) is False
+
+    def test_no_requirement_always_passes(self):
+        assert sim._coverage_gate_passes(["a"], ["b"], [0.0], [0.0], "both", 0.5, None, None, None) is True
