@@ -16,7 +16,7 @@ def _frame():
         {
             "i": np.array([1, 2, 3], dtype=np.int64),
             "f": np.array([1.5, 2.5, 3.5]),
-            "s": ["a", "b", "a"],
+            "s": pd.Series(["a", "b", "a"], dtype=object),
             "c": pd.Categorical(["x", "y", "x"]),
             "b": [True, False, True],
         }
@@ -90,7 +90,7 @@ class TestFloatToFloat32:
 
 class TestMemory:
     def test_deep_measurement_counts_object_contents_too(self):
-        df = _frame()
+        df = pd.DataFrame({"s": pd.Series(["x" * 100] * 3, dtype=object)})
         assert dtypes.get_df_memory_consumption(df) > dtypes.get_df_memory_consumption(df, deep=False)
 
 
@@ -114,7 +114,7 @@ class TestOptimizeDtypes:
         assert df["i"].dtype == np.int64
 
     def test_a_leading_zero_column_keeps_its_text(self):
-        df = pd.DataFrame({"zip": ["01234", "02345", "01234"]})
+        df = pd.DataFrame({"zip": pd.Series(["01234", "02345", "01234"], dtype=object)})
         out = dtypes.optimize_dtypes(df, verbose=False, inplace=False, max_categories=None)
         assert out["zip"].dtype == object
         assert out["zip"].tolist() == ["01234", "02345", "01234"]

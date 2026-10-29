@@ -61,6 +61,7 @@ class TestCompressionSweeps:
         assert all(entry[4]["protocol"] == -1 for entry in sweep)
 
     def test_the_csv_benchmark_adds_one_named_row_per_method(self, small_frame, tmp_path):
+        pytest.importorskip("zstandard")
         res = []
         benchmarks.benchmark_dataframe_csv_compression(res, str(tmp_path), small_frame, 1)
         assert [row[0] for row in res] == ["csv-zip", "csv-gzip", "csv-bz2", "csv-zstd", "csv-xz", "csv-tar"]
