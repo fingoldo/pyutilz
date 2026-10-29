@@ -83,7 +83,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "cache_base": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_class": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_persistence": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
-    "cache_sweeping": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_tuning": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     # text/strings was split from a single >1000-LOC module into a subpackage;
     # every submodule is exercised jointly through the ``strings`` facade by
