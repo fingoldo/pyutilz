@@ -69,5 +69,7 @@ class TestSystemPromptFile:
         assert not os.path.exists(path)
 
     def test_a_missing_file_or_no_path_is_ignored(self, tmp_path):
-        ccp._remove_system_prompt_file(str(tmp_path / "absent.txt"))
-        ccp._remove_system_prompt_file(None)
+        absent = tmp_path / "absent.txt"
+        assert ccp._remove_system_prompt_file(str(absent)) is None
+        assert not absent.exists()
+        assert ccp._remove_system_prompt_file(None) is None

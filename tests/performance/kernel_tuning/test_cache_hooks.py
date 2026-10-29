@@ -29,7 +29,7 @@ class TestLoggerHooksLevels:
             hooks = LoggerHooks()
             hooks.cache_hit("matmul", {"n": 4}, {"block": 8})
             hooks.cache_miss("matmul", {"n": 4})
-            hooks.persist("matmul", "/tmp/x.json", 2)
+            hooks.persist("matmul", "x.json", 2)
             hooks.winner_chosen("matmul", {"block": 8}, "fastest")
             hooks.env_override("matmul", "naive")
             hooks.concurrent_sweep_detected("matmul")
@@ -56,9 +56,9 @@ class TestLoggerHooksMessages:
 
     def test_a_persist_reports_count_and_path(self, caplog):
         with caplog.at_level(logging.DEBUG, logger=cache_hooks.logger.name):
-            LoggerHooks().persist("matmul", "/tmp/x.json", 2)
+            LoggerHooks().persist("matmul", "x.json", 2)
         message = caplog.records[0].getMessage()
-        assert "2 regions" in message and "/tmp/x.json" in message
+        assert "2 regions" in message and "x.json" in message
 
     def test_an_invalidation_carries_its_reason(self, caplog):
         with caplog.at_level(logging.INFO, logger=cache_hooks.logger.name):

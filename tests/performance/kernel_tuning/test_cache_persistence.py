@@ -109,7 +109,7 @@ class TestGarbageCollection:
     def test_nothing_is_removed_while_within_the_keep_count(self, tmp_path):
         paths = [_write(tmp_path / f"{i}.json", _record("matmul", f"2026-0{i}-01")) for i in range(1, 4)]
         _Cache()._gc_kernel_dir(str(tmp_path), keep=3)
-        assert all(os.path.exists(p) for p in paths)
+        assert paths and all(os.path.exists(p) for p in paths)
 
     @pytest.mark.parametrize("keep", [1, 2])
     def test_exactly_the_keep_count_survives(self, tmp_path, keep):

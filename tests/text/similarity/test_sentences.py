@@ -39,4 +39,4 @@ class TestCoverageGate:
         assert sim.sentences_similarity(["ALPHA", "BETA"], ["ALPHA"], required_matched_words=2) is None
 
     def test_the_same_partial_match_scores_without_the_gate(self):
-        assert sim.sentences_similarity(["ALPHA", "BETA"], ["ALPHA"]) is not None
+        assert sim.sentences_similarity(["ALPHA", "BETA"], ["ALPHA"]) == pytest.approx(0.5)

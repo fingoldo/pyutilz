@@ -39,7 +39,7 @@ class TestCursorType:
 class TestDbFlavor:
     @pytest.mark.parametrize("flavor", ["postgres", "mysql"])
     def test_the_supported_flavours_are_accepted(self, flavor):
-        connection._check_db_flavor(flavor)
+        assert connection._check_db_flavor(flavor) is None
 
     def test_any_other_flavour_is_refused(self):
         with pytest.raises(AssertionError, match="postgres"):

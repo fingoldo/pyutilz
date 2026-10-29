@@ -16,7 +16,7 @@ def _resp(url, history=()):
 
 
 def test_a_direct_response_is_accepted():
-    downloads._check_redirect_chain(_resp("https://example.com/a"), "https://example.com/a")
+    assert downloads._check_redirect_chain(_resp("https://example.com/a"), "https://example.com/a") is None
 
 
 def test_a_chain_longer_than_the_limit_is_refused():
@@ -31,4 +31,4 @@ def test_a_drop_from_https_to_http_is_refused():
 
 
 def test_a_response_without_a_url_is_not_a_redirect_chain():
-    downloads._check_redirect_chain(SimpleNamespace(), "https://example.com/start")
+    assert downloads._check_redirect_chain(SimpleNamespace(), "https://example.com/start") is None
