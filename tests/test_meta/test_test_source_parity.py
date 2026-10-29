@@ -85,12 +85,10 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "system/system/probing.py": "system/system subpackage split; covered by test_system_extra2.py + test_system_extra3.py + tests/system/test_hardware_detection.py",
     "system/system/sysinfo.py": "system/system subpackage split; get_system_info covered by test_system.py + test_dev_fixes_regression.py + test_distributed.py",
     "web/proxy/decodo.py": "web/proxy subpackage; covered by test_proxy.py (TestDecodoProvider / TestDecodoSubscription / TestDecodoTrafficReport)",
-    "web/proxy/ip_check.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
     "web/proxy/session.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
     "web/web/downloads.py": "web/web subpackage split; covered by test_web_extra.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
     "web/web/fetching.py": "web/web subpackage split; covered by test_web_extra.py + test_web_concurrency.py",
     "web/web/ipinfo.py": "web/web subpackage split; covered by test_web.py + test_web_extra.py",
-    "web/web/proxy_pool.py": "web/web subpackage split; covered by test_web_extra.py + test_web.py",
 }
 
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
