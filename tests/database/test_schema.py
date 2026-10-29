@@ -261,3 +261,38 @@ class TestSuggestJsonOptimization:
         with pytest.raises(SQLValidationError):
             schema.suggest_json_optimization("items", "data", fields=["color'; drop"])
         assert fake.calls == []
+
+
+class TestSuggestJsonOptimizationLogging:
+    def test_the_full_value_list_is_logged_at_the_limit(self, monkeypatch, caplog):
+        rows = [("x", 6), ("y", 4)]
+        with caplog.at_level("INFO"):
+            _suggest(monkeypatch, rows, max_vals=2)
+        assert f"color {rows}" in [rec.getMessage() for rec in caplog.records]
+
+    def test_more_values_than_the_limit_log_only_the_first_few(self, monkeypatch, caplog):
+        rows = [("a", 6), ("b", 3), ("c", 1)]
+        with caplog.at_level("INFO"):
+            _suggest(monkeypatch, rows, max_vals=2)
+        assert f"color {rows[:2]} ..." in [rec.getMessage() for rec in caplog.records]
+
+    def test_the_default_display_limit_is_five(self, monkeypatch, caplog):
+        rows = [(f"v{i}", 1) for i in range(6)]
+        with caplog.at_level("INFO"):
+            _suggest(monkeypatch, rows)
+        assert f"color {rows[:5]} ..." in [rec.getMessage() for rec in caplog.records]
+
+    def test_the_suggestion_message_states_the_saved_percentage(self, monkeypatch, caplog):
+        with caplog.at_level("INFO"):
+            _suggest(monkeypatch, [("x", 6), ("y", 4)])
+        assert "Suggestion: make x as default for color. That will save 60.00% of space." in [rec.getMessage() for rec in caplog.records]
+
+    def test_a_single_occurrence_is_enough_to_suggest(self, monkeypatch):
+        result, _fake = _suggest(monkeypatch, [("x", 1)])
+        assert result == {"color": "x"}
+
+    def test_a_field_with_no_rows_does_not_stop_the_other_fields(self, monkeypatch):
+        answers = iter([[], [("x", 6)]])
+        monkeypatch.setattr(_facade, "safe_execute", lambda sql, *args, **kwargs: next(answers))
+        result = schema.suggest_json_optimization("items", "data", fields=["gone", "color"])
+        assert result == {"color": "x"}
