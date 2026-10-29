@@ -108,3 +108,20 @@ class TestColumnBoundaries:
     def test_kurtosis_on_constant_data_is_cleaned_to_the_filler(self):
         df = pl.DataFrame({"k": [2.0, 2.0, 2.0]})
         assert df.select(columns.apply_agg_func_safe(pl.col("k").kurtosis(), "kurtosis")).to_series().to_list() == [0.0]
+
+
+class TestOverflowOnOneSideOnly:
+    def test_a_large_positive_value_beside_a_small_one_is_logged(self, caplog):
+        with caplog.at_level("WARNING"):
+            columns.cast_f64_to_f32(pl.DataFrame({"big": [1, 2**25]}))
+        assert any("beyond 2**24" in rec.getMessage() and "big" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_large_negative_value_beside_a_small_one_is_logged(self, caplog):
+        with caplog.at_level("WARNING"):
+            columns.cast_f64_to_f32(pl.DataFrame({"neg": [0, -(2**25)]}))
+        assert any("beyond 2**24" in rec.getMessage() and "neg" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_column_with_only_small_values_is_not_logged(self, caplog):
+        with caplog.at_level("WARNING"):
+            columns.cast_f64_to_f32(pl.DataFrame({"small": [-5, 0, 5]}))
+        assert not any("beyond 2**24" in rec.getMessage() for rec in caplog.records)
