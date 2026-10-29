@@ -229,3 +229,25 @@ class TestFastSerializationPath:
 
         monkeypatch.setattr(jsonutils.jsonlib, "dumps", _slow)
         assert jsonutils.json_pg_dumps({"a": "b"}).adapted == {"a": "b"}
+
+
+class TestDepthIncrementIsOne:
+    def test_a_dict_one_level_below_the_limit_is_still_jsonized(self):
+        assert jsonutils.jsonize_atrtributes({"a": {"b": " x "}}, max_recursion_level=1) == {"a": {"b": "x"}}
+
+    def test_a_list_element_one_level_below_the_limit_is_still_jsonized(self):
+        assert jsonutils.jsonize_atrtributes([{"b": " x "}], max_recursion_level=1) == [{"b": "x"}]
+
+
+class TestAttributeLoopKeepsGoing:
+    def test_a_failing_attribute_does_not_stop_the_remaining_attributes(self):
+        class _Mixed:
+            @property
+            def a_bad(self):
+                raise RuntimeError("boom")
+
+            @property
+            def b_good(self):
+                return "kept"
+
+        assert jsonutils.jsonize_atrtributes(_Mixed()) == {"b_good": "kept"}
