@@ -4,7 +4,10 @@ named fields from every group, and a default is used only for a None value. Fram
 
 from __future__ import annotations
 
+import sys
+
 import polars as pl
+import pytest
 
 from pyutilz.data.polarslib import aggregations
 
@@ -72,3 +75,36 @@ class TestApplyExclusions:
     def test_the_excluded_field_is_dropped_from_every_group(self):
         out = aggregations._apply_exclusions(["x", "y"], ["x"], ["x", "z"], ["x"], ["x"])
         assert [sorted(group) for group in out] == [["y"], [], ["z"], []]
+
+
+class TestEngineChecks:
+    def test_polars_ds_is_imported_when_the_cpu_has_avx2(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(aggregations._facade, "check_cpu_flag", lambda flag: seen.append(flag) or True)
+        monkeypatch.setitem(sys.modules, "polars_ds", None)
+        with pytest.raises(ImportError):
+            aggregations._import_polars_ds_for_avx2()
+        assert seen == ["avx2"]
+
+    def test_polars_ds_is_not_imported_without_avx2(self, monkeypatch):
+        monkeypatch.setattr(aggregations._facade, "check_cpu_flag", lambda flag: False)
+        monkeypatch.setitem(sys.modules, "polars_ds", None)
+        aggregations._import_polars_ds_for_avx2()
+
+    def test_a_gpu_engine_without_cuda_warns(self, monkeypatch, caplog):
+        monkeypatch.setattr(aggregations._facade, "is_cuda_available", lambda: False)
+        with caplog.at_level("WARNING"):
+            aggregations._warn_if_cuda_unavailable("gpu")
+        assert any("CUDA seems to be unavailable" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_gpu_engine_with_cuda_does_not_warn(self, monkeypatch, caplog):
+        monkeypatch.setattr(aggregations._facade, "is_cuda_available", lambda: True)
+        with caplog.at_level("WARNING"):
+            aggregations._warn_if_cuda_unavailable("gpu")
+        assert caplog.records == []
+
+    def test_a_cpu_engine_never_warns_about_cuda(self, monkeypatch, caplog):
+        monkeypatch.setattr(aggregations._facade, "is_cuda_available", lambda: False)
+        with caplog.at_level("WARNING"):
+            aggregations._warn_if_cuda_unavailable("cpu")
+        assert caplog.records == []
