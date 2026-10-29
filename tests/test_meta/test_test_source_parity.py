@@ -77,10 +77,6 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # ``tests/test_web.py`` waved through EVERY module under system/ and web/.
     # Each is really covered by the cited file(s), verified by word-boundary
     # references to the module's own public names.
-    "system/hardware_monitor.py": "covered by tests/system/test_hardware_detection.py (get_hardware_info) + test_system_audit_fixes.py",
-    "system/system/memory.py": "system/system subpackage split; covered by test_system.py + test_system_extra2.py + test_system_extra3.py",
-    "web/proxy/session.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
-    "web/web/fetching.py": "web/web subpackage split; covered by test_web_extra.py + test_web_concurrency.py",
 }
 
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
