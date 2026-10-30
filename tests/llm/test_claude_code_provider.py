@@ -73,3 +73,25 @@ class TestSystemPromptFile:
         assert ccp._remove_system_prompt_file(str(absent)) is None
         assert not absent.exists()
         assert ccp._remove_system_prompt_file(None) is None
+
+
+class TestSdkVersionGate:
+    def test_the_supported_sdk_versions_are_the_pinned_range(self):
+        pytest.importorskip("claude_code_sdk")
+        assert ccp._SUPPORTED_SDK_VERSIONS == frozenset({"0.0.25", "0.0.26", "0.0.27", "0.0.28", "0.0.29", "0.0.30"})
+
+    def test_the_patches_are_applied_for_a_supported_sdk(self):
+        pytest.importorskip("claude_code_sdk")
+        assert ccp._CCSDK_VERSION in ccp._SUPPORTED_SDK_VERSIONS
+        assert ccp._PATCHES_APPLIED is True
+
+
+class TestPatchedMessageParser:
+    def test_an_unparseable_sdk_message_is_dropped_with_a_warning(self, caplog):
+        import logging
+
+        mp = pytest.importorskip("claude_code_sdk._internal.message_parser")
+        with caplog.at_level(logging.WARNING, logger=ccp.logger.name):
+            result = mp.parse_message({"type": "definitely-unknown-type-xyz"})
+        assert result is None
+        assert any("SDK message parse failed, message dropped" in rec.getMessage() for rec in caplog.records)
