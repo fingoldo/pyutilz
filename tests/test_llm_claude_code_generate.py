@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -250,8 +251,8 @@ class TestSystemPromptGoesInAFile:
 
             returncode = 0
             stdin = SimpleNamespace(write=lambda _s: None, close=lambda: None)
-            stdout = SimpleNamespace(readline=lambda: "")
-            stderr = SimpleNamespace(read=lambda: "")
+            stdout = io.StringIO("")  # iterable and readline-capable, like Popen.stdout
+            stderr = io.StringIO("")  # iterable like Popen.stderr, so the drain thread finishes cleanly
 
             def kill(self):
                 pass
