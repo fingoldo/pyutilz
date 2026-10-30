@@ -680,3 +680,15 @@ class TestStaleAndConstantEdges:
         with caplog.at_level(logging.WARNING, logger=frames.logger.name):
             frames.remove_constant_columns(df, verbose=True)
         assert any(rec.getMessage() == "Removing 1_000 constant columns" for rec in caplog.records)
+
+
+class TestNullifyDefaultsAndMissing:
+    def test_by_default_a_value_used_by_one_person_is_still_standard(self):
+        df = pd.DataFrame({"v": ["std"] * 3, "p": [1, 1, 1]})
+        frames.nullify_standard_values(df, "v", min_records=1, persons_field="p")
+        assert all(pd.isna(x) for x in df["v"].tolist())
+
+    def test_a_missing_value_repeating_past_the_threshold_is_replaced_with_the_placeholder(self):
+        df = pd.DataFrame({"v": [np.nan, np.nan, np.nan, "x"]})
+        frames.nullify_standard_values(df, "v", min_records=2, placeholder="P")
+        assert df["v"].tolist() == ["P", "P", "P", "x"]
