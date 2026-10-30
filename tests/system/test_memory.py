@@ -31,5 +31,5 @@ def test_the_biggest_session_objects_are_a_frame_with_one_row_per_object():
 
 
 def test_the_trim_returns_false_without_touching_windows_apis_on_linux(monkeypatch):
-    monkeypatch.setattr(memory.sys, "platform", "linux")
+    monkeypatch.setattr(memory.platform, "system", lambda: "Linux")
     assert memory.trim_windows_process_memory() is False
