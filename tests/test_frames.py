@@ -605,3 +605,10 @@ class TestRemoveConstantColumns:
         df = pd.DataFrame({"a": [1, 1, 2, 3, 4], "b": [7, 7, 7, 7, 7]})
         frames.remove_constant_columns(df, prewarm_size=2)
         assert list(df.columns) == ["a"]
+
+
+class TestFeatureNamerInitialOrder:
+    def test_initial_values_are_registered_before_any_later_name(self):
+        fname = frames.FeatureNamer(["x", "y"])
+        assert fname("y") == 1
+        assert fname.rev(0) == "x"
