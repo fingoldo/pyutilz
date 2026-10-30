@@ -247,3 +247,25 @@ class TestRecordRareAndUninformative:
         frames._record_rare_and_uninformative("x", ["a", "b"], [50, 50], 0.1, rare, uninformative)
         assert rare == {}
         assert uninformative == {}
+
+
+class TestPrintBoundaries:
+    def test_a_single_row_polars_column_is_printed_and_not_treated_as_empty(self, capsys):
+        frames._print_polars_value_counts("col", 1, ["alpha"], [1], None)
+        assert "alpha" in capsys.readouterr().out
+
+    def test_a_non_empty_polars_series_is_named_count(self, capsys):
+        frames._print_polars_value_counts("col", 1, ["alpha"], [1], None)
+        assert "Name: count" in capsys.readouterr().out
+
+    def test_a_cap_of_one_prints_only_the_first_polars_row(self, capsys):
+        frames._print_polars_value_counts("col", 2, ["alpha", "beta"], [2, 1], 1)
+        out = capsys.readouterr().out
+        assert "alpha" in out
+        assert "beta" not in out
+
+    def test_a_cap_of_one_prints_only_the_first_pandas_row(self, capsys):
+        frames._print_value_counts(pd.Series([2, 1], index=["alpha", "beta"]), True, 1)
+        out = capsys.readouterr().out
+        assert "alpha" in out
+        assert "beta" not in out
