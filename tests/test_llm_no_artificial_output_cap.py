@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import sys
+
 import pytest
 
-pytest.importorskip("py_ci_shared.llm_output_caps", reason="py-ci-shared is not a pyutilz dependency; the gate runs where it is installed")
+if sys.version_info < (3, 9):
+    pytest.skip("py-ci-shared needs Python >= 3.9; the 3.8 legs do not install it", allow_module_level=True)
 
 from py_ci_shared.llm_output_caps import (
     KnownCap,
