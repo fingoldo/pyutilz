@@ -455,3 +455,19 @@ class TestPolarsPrintedRows:
         frames.showcase_df_columns(pl.DataFrame({"a": ["alpha", "beta"]}), use_markdown=False, max_cat_uniq_qty=1)
         out = capsys.readouterr().out
         assert "alpha" in out and "beta" in out
+
+
+class TestPolarsSingleValueColumns:
+    def test_a_single_distinct_polars_value_is_printed(self, capsys):
+        frames.showcase_df_columns(pl.DataFrame({"a": ["alpha"] * 3}), use_markdown=False)
+        assert "alpha" in capsys.readouterr().out
+
+    def test_polars_values_are_printed_under_a_positive_cap(self, capsys):
+        frames.showcase_df_columns(pl.DataFrame({"a": ["alpha", "beta"]}), use_markdown=False, max_vars=5)
+        out = capsys.readouterr().out
+        assert "alpha" in out and "beta" in out
+
+    def test_a_single_wholly_rare_polars_value_is_fully_uninformative(self):
+        rare, uninformative = frames.showcase_df_columns(pl.DataFrame({"a": ["x"] * 3}), use_print=False, use_markdown=False, max_unique_percent=1.0)
+        assert rare == {"a": ["x"]}
+        assert uninformative == {"a": pytest.approx(1.0)}
