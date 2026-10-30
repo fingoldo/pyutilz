@@ -430,3 +430,28 @@ class TestShowcaseDefaults:
         values = [v for v, n in base.items() for _ in range(n)]
         rare, _ = frames.showcase_df_columns(pd.DataFrame({"a": values}), use_print=False, use_markdown=False)
         assert rare == {"a": ["rare"]}
+
+
+class TestPolarsPrintedRows:
+    def test_polars_values_are_listed_most_frequent_first(self, capsys):
+        frames.showcase_df_columns(pl.DataFrame({"a": ["beta"] + ["alpha"] * 3}), use_markdown=False)
+        out = capsys.readouterr().out
+        assert out.index("alpha") < out.index("beta")
+
+    def test_the_polars_series_is_indexed_by_the_column_name(self, capsys):
+        frames.showcase_df_columns(pl.DataFrame({"a": ["alpha", "alpha", "beta"]}), use_markdown=False)
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[1] == "a"
+
+    def test_each_polars_value_sits_beside_its_count(self, capsys):
+        import re
+
+        frames.showcase_df_columns(pl.DataFrame({"a": ["alpha"] * 3 + ["beta"]}), use_markdown=False)
+        out = capsys.readouterr().out
+        assert re.search(r"alpha\s+3", out)
+        assert re.search(r"beta\s+1", out)
+
+    def test_polars_values_are_printed_even_when_the_rare_analysis_is_skipped(self, capsys):
+        frames.showcase_df_columns(pl.DataFrame({"a": ["alpha", "beta"]}), use_markdown=False, max_cat_uniq_qty=1)
+        out = capsys.readouterr().out
+        assert "alpha" in out and "beta" in out
