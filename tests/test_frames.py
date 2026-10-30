@@ -320,7 +320,7 @@ class TestShowcaseDispatch:
         df = pd.DataFrame({"a": ["p"] * 98 + [None] * 2})
         kept, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05, dropna=False)
         dropped, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05, dropna=True)
-        assert kept == {"a": [None]}
+        assert list(kept) == ["a"] and len(kept["a"]) == 1 and pd.isna(kept["a"][0])
         assert dropped == {}
 
     def test_polars_nulls_are_a_category_unless_dropna(self):
@@ -401,7 +401,7 @@ class TestShowcaseDefaults:
     def test_nulls_are_counted_by_default(self):
         df = pd.DataFrame({"a": ["p"] * 98 + [None] * 2})
         rare, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05)
-        assert rare == {"a": [None]}
+        assert list(rare) == ["a"] and len(rare["a"]) == 1 and pd.isna(rare["a"][0])
 
     def test_polars_nulls_are_counted_by_default(self):
         df = pl.DataFrame({"a": ["p"] * 98 + [None] * 2})

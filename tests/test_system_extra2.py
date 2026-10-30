@@ -336,6 +336,11 @@ class TestGetOwnMemoryUsage:
 # ── trim_windows_process_memory (lines 939-969) ──
 
 class TestTrimWindowsProcessMemory:
+    @pytest.fixture(autouse=True)
+    def _on_windows(self, monkeypatch):
+        # The trim is a no-op off Windows (platform.system guard); these tests exercise the Windows path on any runner.
+        monkeypatch.setattr("pyutilz.system.system.memory.platform.system", lambda: "Windows")
+
     @patch("pyutilz.system.system.memory.ctypes")
     def test_success(self, mock_ctypes):
         from pyutilz.system.system import trim_windows_process_memory
