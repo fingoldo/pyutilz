@@ -6,6 +6,7 @@ prefixes and exclusions."""
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from pyutilz.data.pandaslib import frames
 
@@ -108,3 +109,50 @@ class TestNullifyVerbose:
         df = pd.DataFrame({"v": ["std"] * 3, "p": [1, 2, 3]})
         frames.nullify_standard_values(df, "v", min_records=1, persons_field="p", min_persons=2, verbose=True)
         assert capsys.readouterr().out.startswith("Field v")
+
+
+class TestRareFromLists:
+    def test_a_value_at_exactly_the_threshold_is_rare(self):
+        rare, _ = frames._rare_and_uninformative_from_lists(["a", "b"], [5, 5], 0.5)
+        assert rare == ["a", "b"]
+
+    def test_the_fraction_uses_the_column_total_not_a_frame_height(self):
+        rare, uninformative = frames._rare_and_uninformative_from_lists(["a", "b"], [90, 1], 0.05)
+        assert rare == ["b"]
+        assert uninformative == pytest.approx(1 / 91)
+
+    def test_two_common_values_leave_no_uninformative_fraction(self):
+        rare, uninformative = frames._rare_and_uninformative_from_lists(["a", "b", "c"], [50, 49, 1], 0.02)
+        assert rare == ["c"]
+        assert uninformative is None
+
+    def test_a_single_dominant_value_reports_the_share_it_does_not_hold(self):
+        rare, uninformative = frames._rare_and_uninformative_from_lists(["a", "b"], [98, 2], 0.05)
+        assert rare == ["b"]
+        assert uninformative == pytest.approx(0.02)
+
+    def test_no_rare_value_reports_no_fraction(self):
+        assert frames._rare_and_uninformative_from_lists(["a", "b"], [50, 50], 0.1) == ([], None)
+
+
+class TestRareFromValueCounts:
+    def test_a_value_at_exactly_the_threshold_is_rare(self):
+        stats = pd.Series([5, 5], index=["a", "b"])
+        rare, _ = frames._rare_and_uninformative_from_value_counts(stats, 0.5)
+        assert rare == ["a", "b"]
+
+    def test_a_single_dominant_value_reports_the_share_it_does_not_hold(self):
+        stats = pd.Series([98, 2], index=["a", "b"])
+        rare, uninformative = frames._rare_and_uninformative_from_value_counts(stats, 0.05)
+        assert rare == ["b"]
+        assert uninformative == pytest.approx(0.02)
+
+    def test_two_common_values_leave_no_uninformative_fraction(self):
+        stats = pd.Series([50, 49, 1], index=["a", "b", "c"])
+        rare, uninformative = frames._rare_and_uninformative_from_value_counts(stats, 0.02)
+        assert rare == ["c"]
+        assert uninformative is None
+
+    def test_no_rare_value_reports_no_fraction(self):
+        stats = pd.Series([50, 50], index=["a", "b"])
+        assert frames._rare_and_uninformative_from_value_counts(stats, 0.1) == ([], None)
