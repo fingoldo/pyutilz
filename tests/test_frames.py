@@ -6,6 +6,7 @@ prefixes and exclusions."""
 from __future__ import annotations
 
 import pandas as pd
+import polars as pl
 import pytest
 
 from pyutilz.data.pandaslib import frames
@@ -269,3 +270,87 @@ class TestPrintBoundaries:
         out = capsys.readouterr().out
         assert "alpha" in out
         assert "beta" not in out
+
+
+class TestShowcaseDispatch:
+    def test_excluded_columns_are_not_analysed(self):
+        df = pd.DataFrame({"a": ["p"] * 98 + ["q"] * 2, "b": ["p"] * 98 + ["q"] * 2})
+        rare, _ = frames.showcase_df_columns(df, excluded_cols=["a"], use_print=False, use_markdown=False, max_unique_percent=0.05)
+        assert set(rare) == {"b"}
+
+    def test_every_column_excluded_returns_empty_pair(self):
+        df = pd.DataFrame({"a": [1, 2]})
+        assert frames.showcase_df_columns(df, excluded_cols=["a"], use_print=False) == ({}, {})
+
+    def test_no_cols_argument_analyses_every_column(self):
+        df = pd.DataFrame({"a": ["p"] * 98 + ["q"] * 2})
+        rare, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05)
+        assert rare == {"a": ["q"]}
+
+    def test_use_print_false_writes_nothing_to_stdout_for_pandas(self, capsys):
+        df = pd.DataFrame({"a": ["p"] * 98 + ["q"] * 2})
+        frames.showcase_df_columns(df, use_print=False, use_markdown=False)
+        assert capsys.readouterr().out == ""
+
+    def test_use_print_false_writes_nothing_to_stdout_for_polars(self, capsys):
+        df = pl.DataFrame({"a": ["p"] * 98 + ["q"] * 2})
+        frames.showcase_df_columns(df, use_print=False, use_markdown=False)
+        assert capsys.readouterr().out == ""
+
+    def test_a_pandas_header_names_the_column_in_upper_case_with_its_dtype(self, capsys):
+        df = pd.DataFrame({"a": [1, 2, 3]})
+        frames.showcase_df_columns(df, use_markdown=False)
+        assert "A int64" in capsys.readouterr().out
+
+    def test_a_polars_header_names_the_column_in_upper_case_with_its_dtype(self, capsys):
+        df = pl.DataFrame({"a": [1, 2, 3]})
+        frames.showcase_df_columns(df, use_markdown=False)
+        assert "A Int64" in capsys.readouterr().out
+
+    def test_a_negative_max_vars_is_refused_for_pandas(self):
+        with pytest.raises(AssertionError, match="max_vars must be >= 0"):
+            frames.showcase_df_columns(pd.DataFrame({"a": [1, 2]}), max_vars=-1, use_print=False, use_markdown=False)
+
+    def test_a_non_dataframe_is_refused(self):
+        with pytest.raises(AssertionError, match="expected pandas DataFrame, got dict"):
+            frames.showcase_df_columns({"a": [1, 2]}, cols=["a"], use_print=False)
+
+    def test_pandas_nulls_are_a_category_unless_dropna(self):
+        df = pd.DataFrame({"a": ["p"] * 98 + [None] * 2})
+        kept, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05, dropna=False)
+        dropped, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05, dropna=True)
+        assert kept == {"a": [None]}
+        assert dropped == {}
+
+    def test_polars_nulls_are_a_category_unless_dropna(self):
+        df = pl.DataFrame({"a": ["p"] * 98 + [None] * 2})
+        kept, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05, dropna=False)
+        dropped, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05, dropna=True)
+        assert kept == {"a": [None]}
+        assert dropped == {}
+
+    def test_a_column_at_exactly_the_distinct_cap_is_analysed_and_one_over_is_not(self):
+        at_cap = pd.DataFrame({"a": ["p"] * 98 + ["q"] * 2})
+        over_cap = pd.DataFrame({"a": ["p"] * 97 + ["q"] * 2 + ["r"]})
+        analysed, _ = frames.showcase_df_columns(at_cap, use_print=False, use_markdown=False, max_unique_percent=0.05, max_cat_uniq_qty=2)
+        skipped, _ = frames.showcase_df_columns(over_cap, use_print=False, use_markdown=False, max_unique_percent=0.05, max_cat_uniq_qty=2)
+        assert analysed == {"a": ["q"]}
+        assert skipped == {}
+
+    def test_a_polars_column_at_exactly_the_distinct_cap_is_analysed_and_one_over_is_not(self):
+        at_cap = pl.DataFrame({"a": ["p"] * 98 + ["q"] * 2})
+        over_cap = pl.DataFrame({"a": ["p"] * 97 + ["q"] * 2 + ["r"]})
+        analysed, _ = frames.showcase_df_columns(at_cap, use_print=False, use_markdown=False, max_unique_percent=0.05, max_cat_uniq_qty=2)
+        skipped, _ = frames.showcase_df_columns(over_cap, use_print=False, use_markdown=False, max_unique_percent=0.05, max_cat_uniq_qty=2)
+        assert analysed == {"a": ["q"]}
+        assert skipped == {}
+
+    def test_a_dominant_value_reports_its_uninformative_fraction_for_pandas(self):
+        df = pd.DataFrame({"a": ["p"] * 98 + ["q"] * 2})
+        _, uninformative = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05)
+        assert uninformative == {"a": pytest.approx(0.02)}
+
+    def test_a_dominant_value_reports_its_uninformative_fraction_for_polars(self):
+        df = pl.DataFrame({"a": ["p"] * 98 + ["q"] * 2})
+        _, uninformative = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05)
+        assert uninformative == {"a": pytest.approx(0.02)}
