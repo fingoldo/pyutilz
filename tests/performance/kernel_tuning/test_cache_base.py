@@ -208,4 +208,16 @@ class TestVramClassBoundaries:
     def test_a_non_numeric_size_is_logged_with_its_exception_class(self, caplog):
         with caplog.at_level(logging.WARNING, logger=cache_base.logger.name):
             assert cache_base._vram_class("nope") == "vramx"
-        assert any("total VRAM is not numeric, class reported as unknown: " in rec.getMessage() and "ValueError" in rec.getMessage() for rec in caplog.records)
+        assert any(rec.getMessage().startswith("_vram_class: total VRAM is not numeric, class reported as unknown: ValueError: ") for rec in caplog.records)
+
+
+class TestNumbaThreadsWithoutACpuCount:
+    def test_an_unknown_cpu_count_falls_back_to_one_when_the_setting_is_missing(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "numba", SimpleNamespace(config=SimpleNamespace()))
+        monkeypatch.setattr(cache_base.os, "cpu_count", lambda: None)
+        assert cache_base._numba_threads() == 1
+
+    def test_an_unknown_cpu_count_falls_back_to_one_when_numba_is_absent(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "numba", None)
+        monkeypatch.setattr(cache_base.os, "cpu_count", lambda: None)
+        assert cache_base._numba_threads() == 1
