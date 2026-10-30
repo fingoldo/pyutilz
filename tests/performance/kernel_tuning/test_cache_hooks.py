@@ -99,3 +99,20 @@ class TestLoggedMessageText:
     def test_a_self_healed_marker_names_the_kernel(self, caplog):
         message = self._one(caplog, lambda: LoggerHooks().concurrent_sweep_detected("matmul"))
         assert message == "kernel_tuning_cache: matmul reclaiming stale sweep marker (self-heal)"
+
+
+class TestExactHookMessages:
+    @staticmethod
+    def _one(caplog, call):
+        with caplog.at_level(logging.DEBUG, logger=cache_hooks.logger.name):
+            call()
+        assert len(caplog.records) == 1
+        return caplog.records[0].getMessage()
+
+    def test_a_miss_message_is_exact(self, caplog):
+        message = self._one(caplog, lambda: LoggerHooks().cache_miss("matmul", {"n": 4}))
+        assert message == "kernel_tuning_cache: matmul cache miss {'n': 4}"
+
+    def test_a_winner_message_is_exact(self, caplog):
+        message = self._one(caplog, lambda: LoggerHooks().winner_chosen("matmul", {"block": 8}, "fastest"))
+        assert message == "kernel_tuning_cache: matmul winner (fastest): {'block': 8}"
