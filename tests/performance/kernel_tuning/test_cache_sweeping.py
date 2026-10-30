@@ -6,6 +6,7 @@ keeps its claim, and a dead owner, an over-budget owner, or a stale incomplete m
 from __future__ import annotations
 
 import os
+import re
 import time
 from types import SimpleNamespace
 
@@ -434,3 +435,36 @@ class TestStealLogsAndMigrationClaim:
         assert cache._maybe_steal_migration_claim(claim) is False
         with open(claim, encoding="utf-8") as f:
             assert jsonlib.loads(f.read())["pid"] == os.getpid()
+
+
+class TestStealLogAgeAndBudgetValues:
+    def test_a_dead_owners_steal_logs_a_fresh_age_under_the_budget(self, cache, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        _write_marker(marker, {"pid": _DEAD_PID, "start_ts": time.time()})
+        with caplog.at_level("INFO"):
+            with cache._claim_sweep("matmul", "v1", _Recorder()):
+                pass
+        steal = next(rec.getMessage() for rec in caplog.records if "stealing stale sweep marker" in rec.getMessage())
+        age, budget = re.search(r"age=(\d+)s budget=(\d+)s", steal).groups()
+        assert int(age) < int(budget) == int(cache_base._sweep_budget_seconds())
+
+    def test_a_live_owner_past_the_budget_logs_its_real_age_and_the_budget(self, cache, monkeypatch, caplog):
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "60")
+        marker = cache._marker_path("matmul", "v1")
+        _write_marker(marker, {"pid": os.getpid(), "start_ts": time.time() - 3600, "host": cache_base.hw_fingerprint()})
+        with caplog.at_level("INFO"):
+            with cache._claim_sweep("matmul", "v1", _Recorder()):
+                pass
+        steal = next(rec.getMessage() for rec in caplog.records if "stealing stale sweep marker" in rec.getMessage())
+        age, budget = re.search(r"age=(\d+)s budget=(\d+)s", steal).groups()
+        assert int(age) >= 3600 and int(budget) == 60
+
+    def test_a_stale_migration_claim_logs_its_real_age_and_the_budget(self, cache, tmp_path, monkeypatch, caplog):
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "60")
+        claim = str(tmp_path / "migration.claim")
+        _write_marker(claim, {"pid": _DEAD_PID, "start_ts": time.time() - 3600})
+        with caplog.at_level("INFO"):
+            assert cache._maybe_steal_migration_claim(claim) is True
+        steal = next(rec.getMessage() for rec in caplog.records if "stealing stale migration claim" in rec.getMessage())
+        age, budget = re.search(r"age=(\d+)s budget=(\d+)s", steal).groups()
+        assert int(age) >= 3600 and int(budget) == 60
