@@ -87,9 +87,11 @@ class TestEngineChecks:
         assert seen == ["avx2"]
 
     def test_polars_ds_is_not_imported_without_avx2(self, monkeypatch):
-        monkeypatch.setattr(aggregations._facade, "check_cpu_flag", lambda flag: False)
+        seen = []
+        monkeypatch.setattr(aggregations._facade, "check_cpu_flag", lambda flag: seen.append(flag) or False)
         monkeypatch.setitem(sys.modules, "polars_ds", None)
         aggregations._import_polars_ds_for_avx2()
+        assert seen == ["avx2"]
 
     def test_a_gpu_engine_without_cuda_warns(self, monkeypatch, caplog):
         monkeypatch.setattr(aggregations._facade, "is_cuda_available", lambda: False)

@@ -6,6 +6,7 @@ alone. Polars is used directly on small in-memory frames."""
 from __future__ import annotations
 
 import polars as pl
+import pytest
 
 from pyutilz.data.polarslib import columns
 
@@ -86,9 +87,9 @@ class TestColumnBoundaries:
         df = pl.DataFrame({"x": [float("inf")]})
         assert df.select(columns.clean_numeric(pl.col("x"))).to_series().to_list() == [0.0]
 
+    @pytest.mark.skipif(not hasattr(pl, "Int128"), reason="this polars has no Int128")
     def test_the_castable_integer_dtypes_include_int128_when_polars_has_it(self):
-        if hasattr(pl, "Int128"):
-            assert pl.Int128 in columns.polars_castable_int_dtypes()
+        assert pl.Int128 in columns.polars_castable_int_dtypes()
 
     def test_an_integer_exactly_at_the_float32_limit_is_not_flagged(self, caplog):
         with caplog.at_level("WARNING"):
