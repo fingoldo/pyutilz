@@ -24,6 +24,7 @@ py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared@905de1ad959b1d912535
 
 # spacy 3.8.16 raises OverflowError in spacy/tokenizer.pyx while loading the en_core_web_sm 3.8.0 model on the CI legs;
 # 3.8.13 loads it and the suite runs green on it, with numpy held below 2.4 (2.4 reaches the same tokenizer path).
-# Marked for Python >=3.9: spacy 3.8 has no Python 3.8 build, and the 3.8 legs run without the spacy tests.
-spacy==3.8.13 ; python_version >= '3.9'
+# Marked for Python >=3.10, matching the nlp extra in pyproject.toml: spacy 3.8 pulls thinc>=8.3.12, which needs Python >=3.10,
+# so on the 3.9 legs the resolver has no solution. The 3.8 and 3.9 legs run without the spacy tests.
+spacy==3.8.13 ; python_version >= '3.10'
 numpy<2.4 ; python_version >= '3.9'
