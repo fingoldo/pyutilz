@@ -180,3 +180,70 @@ class TestRareBoundaries:
 
     def test_a_single_rare_value_with_a_total_of_one_is_fully_uninformative_in_value_counts(self):
         assert frames._rare_and_uninformative_from_value_counts(pd.Series([1], index=["a"]), 1.0) == (["a"], 1.0)
+
+
+class TestPolarsValueCountsPrinting:
+    def test_a_zero_cap_prints_only_a_blank_line(self, capsys):
+        frames._print_polars_value_counts("col", 3, ["a"], [3], 0)
+        assert capsys.readouterr().out == "\n"
+
+    def test_an_empty_column_prints_an_empty_named_series(self, capsys):
+        frames._print_polars_value_counts("col", 0, [], [], None)
+        out = capsys.readouterr().out
+        assert out.startswith("Series([]")
+        assert "Name: count" in out
+
+    def test_no_cap_prints_every_value(self, capsys):
+        frames._print_polars_value_counts("col", 6, ["alpha", "beta", "gamma"], [3, 2, 1], None)
+        out = capsys.readouterr().out
+        assert "alpha" in out and "beta" in out and "gamma" in out
+
+    def test_a_positive_cap_truncates_to_the_first_rows(self, capsys):
+        frames._print_polars_value_counts("col", 6, ["alpha", "beta", "gamma"], [3, 2, 1], 2)
+        out = capsys.readouterr().out
+        assert "alpha" in out and "beta" in out
+        assert "gamma" not in out
+
+    def test_a_non_positive_cap_other_than_zero_prints_every_value(self, capsys):
+        frames._print_polars_value_counts("col", 6, ["alpha", "beta", "gamma"], [3, 2, 1], -1)
+        assert "gamma" in capsys.readouterr().out
+
+
+class TestPandasValueCountsPrinting:
+    def test_nothing_is_printed_when_not_asked_to(self, capsys):
+        frames._print_value_counts(pd.Series([3, 1], index=["alpha", "beta"]), False, None)
+        assert capsys.readouterr().out == ""
+
+    def test_no_cap_prints_every_value(self, capsys):
+        frames._print_value_counts(pd.Series([3, 2, 1], index=["alpha", "beta", "gamma"]), True, None)
+        assert "gamma" in capsys.readouterr().out
+
+    def test_a_positive_cap_truncates_to_the_first_rows(self, capsys):
+        frames._print_value_counts(pd.Series([3, 2, 1], index=["alpha", "beta", "gamma"]), True, 2)
+        out = capsys.readouterr().out
+        assert "alpha" in out and "beta" in out
+        assert "gamma" not in out
+
+    def test_a_zero_cap_prints_only_a_blank_line(self, capsys):
+        frames._print_value_counts(pd.Series([3], index=["alpha"]), True, 0)
+        assert capsys.readouterr().out == "\n"
+
+
+class TestRecordRareAndUninformative:
+    def test_rare_values_are_recorded_without_a_fraction_when_two_values_survive(self):
+        rare, uninformative = {}, {}
+        frames._record_rare_and_uninformative("x", ["a", "b", "c"], [50, 49, 1], 0.02, rare, uninformative)
+        assert rare == {"x": ["c"]}
+        assert uninformative == {}
+
+    def test_rare_values_and_the_fraction_are_recorded_when_one_value_survives(self):
+        rare, uninformative = {}, {}
+        frames._record_rare_and_uninformative("x", ["a", "b"], [98, 2], 0.05, rare, uninformative)
+        assert rare == {"x": ["b"]}
+        assert uninformative == {"x": pytest.approx(0.02)}
+
+    def test_a_column_with_no_rare_value_records_nothing(self):
+        rare, uninformative = {}, {}
+        frames._record_rare_and_uninformative("x", ["a", "b"], [50, 50], 0.1, rare, uninformative)
+        assert rare == {}
+        assert uninformative == {}
