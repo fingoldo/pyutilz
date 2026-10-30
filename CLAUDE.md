@@ -57,3 +57,18 @@ Whether mypy reports an error at all can depend on which optional packages the c
 **Why:** this has now been reverted twice - once by a cleanup that removed codes measured as unused on a dev box, once by a merge resolution - and both times CI went red on a gate that had been green locally. A local mypy run passing with the codes REMOVED proves nothing, because the dev box is exactly the environment where they do not fire.
 
 **How to apply:** treat a `# type: ignore[a,b]` whose comment names the environment each code is for as load-bearing; do not narrow it. If a tool or audit reports one of those codes as unused, that is the tool speaking for one environment only. `warn_unused_ignores` is deliberately off for this reason (2026-09-02 audit, 06/F10).
+
+## Per-module mutation testing: how to run it (2026-10-30)
+
+The gate in `tests/test_meta/test_mutation_teeth.py` is opt-in (`PYUTILZ_RUN_MUTATION=1`) and maps a changed
+`src/pyutilz/<path>/<mod>.py` to `tests/test_<mod>.py`. Run a single module by hand the same way:
+
+- Call `py_ci_shared.mutation_teeth.find_surviving_mutants(Path("src/pkg/mod.py"), [Path("tests/test_mod.py")], str(repo_root), lines=[range(1, n + 1)], timeout=180, use_cache=False, limit=600)`.
+  The path is RELATIVE to `repo_root`; an absolute path is refused (py-ci-shared 1.23.7+). The result is a `MutationRun`:
+  read `.survivors`, `.killed`, `.mutants_run`, `.truncated`, not the object itself.
+- Use a venv with NON-editable installs of this repo and `py-ci-shared`, plus the pytest plugins from `pyproject.toml`
+  (`pytest-timeout` and the rest; without them the unmutated baseline exits 4). Run with `env -u PYTHONPATH`. An editable
+  install makes the tests import the real checkout, so every mutant reads as a survivor.
+- One sweep at a time, in the background, on a quiet machine. Do not push while a CI run is in progress.
+- A survivor is either killed by a new assertion or accepted with a reason in `mutation_survivors.json`. An equivalent
+  mutant (same observable behaviour) or one reachable only through a reload is accepted, not worked around.

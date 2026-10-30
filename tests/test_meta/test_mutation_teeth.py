@@ -6,6 +6,8 @@ mutant is a change the tests do not observe; it is either fixed by an assertion 
 with a note saying why it cannot be observed. The baseline is a ratchet: a new survivor fails, an accepted one passes.
 
 A module without a ``test_<stem>.py`` is skipped here, since the test-source parity gate already demands that file exists.
+
+How to run one module by hand, and the traps (relative path, non-editable venv, ``MutationRun`` fields): see CLAUDE.md, section on per-module mutation testing.
 """
 
 from __future__ import annotations
