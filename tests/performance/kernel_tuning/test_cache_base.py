@@ -5,7 +5,10 @@ valid. Nothing here probes hardware."""
 
 from __future__ import annotations
 
+import logging
 import os
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -141,3 +144,68 @@ class TestProvenanceFieldsEachMatter:
         changed = dict(old["gpu_summary"])
         changed[gpu_field] = 99
         assert cache_base.provenance_changed(old, {**old, "gpu_summary": changed}) is True
+
+
+class TestSlugDetails:
+    def test_the_default_length_is_forty_characters(self):
+        assert len(cache_base._slug("x" * 60)) == 40
+
+    def test_a_cpu_word_glued_to_letters_is_kept(self):
+        assert cache_base._slug("XCPU") == "xcpu"
+
+    def test_leading_and_trailing_dots_and_underscores_are_stripped(self):
+        assert cache_base._slug("__abc__") == "abc"
+
+
+class TestDistributionVersions:
+    def test_a_missing_distribution_is_none_and_logs_its_name(self, caplog):
+        with caplog.at_level(logging.WARNING, logger=cache_base.logger.name):
+            assert cache_base._one_dist_version("definitely-missing-dist-xyz") is None
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any(m.startswith("distribution definitely-missing-dist-xyz version unavailable (") for m in messages)
+
+    def test_the_first_installed_name_wins_over_a_missing_one(self):
+        assert cache_base._dist_version("definitely-missing-dist-xyz", "pytest") == cache_base._one_dist_version("pytest")
+
+    def test_no_installed_name_gives_x(self):
+        assert cache_base._dist_version("definitely-missing-dist-xyz") == "x"
+
+    def test_the_package_stamp_names_numba_then_cupy(self):
+        assert cache_base._package_stamp().startswith(f"nb{cache_base._dist_version('numba')}_cupy")
+
+
+class TestNumbaThreads:
+    def test_the_numba_thread_count_is_read_from_its_config(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "numba", SimpleNamespace(config=SimpleNamespace(NUMBA_NUM_THREADS=7)))
+        assert cache_base._numba_threads() == 7
+
+    def test_a_missing_numba_thread_setting_falls_back_to_the_cpu_count(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "numba", SimpleNamespace(config=SimpleNamespace()))
+        monkeypatch.setattr(cache_base.os, "cpu_count", lambda: 6)
+        assert cache_base._numba_threads() == 6
+
+    def test_an_absent_numba_falls_back_to_the_cpu_count_and_logs_it(self, monkeypatch, caplog):
+        monkeypatch.setitem(sys.modules, "numba", None)
+        monkeypatch.setattr(cache_base.os, "cpu_count", lambda: 6)
+        with caplog.at_level(logging.DEBUG, logger=cache_base.logger.name):
+            assert cache_base._numba_threads() == 6
+        assert any(rec.getMessage().startswith("numba thread count unavailable (") for rec in caplog.records)
+
+
+class TestVramClassBoundaries:
+    def test_a_fractional_gib_rounds_up_to_one(self):
+        assert cache_base._vram_class(0.5) == "vram1g"
+
+    def test_exactly_256_is_read_as_gib(self):
+        assert cache_base._vram_class(256) == "vram256g"
+
+    def test_257_is_read_as_mib(self):
+        assert cache_base._vram_class(257) == "vram1g"
+
+    def test_just_over_eight_gib_in_mib_rounds_up_to_sixteen(self):
+        assert cache_base._vram_class(8192.5) == "vram16g"
+
+    def test_a_non_numeric_size_is_logged_with_its_exception_class(self, caplog):
+        with caplog.at_level(logging.WARNING, logger=cache_base.logger.name):
+            assert cache_base._vram_class("nope") == "vramx"
+        assert any("total VRAM is not numeric, class reported as unknown: " in rec.getMessage() and "ValueError" in rec.getMessage() for rec in caplog.records)
