@@ -468,3 +468,26 @@ class TestStealLogAgeAndBudgetValues:
         steal = next(rec.getMessage() for rec in caplog.records if "stealing stale migration claim" in rec.getMessage())
         age, budget = re.search(r"age=(\d+)s budget=(\d+)s", steal).groups()
         assert int(age) >= 3600 and int(budget) == 60
+
+
+class TestIncompleteMarkerMtimeBoundary:
+    def test_an_incomplete_marker_exactly_at_the_budget_is_still_a_live_peer(self, cache, tmp_path, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "60")
+        now = 1_000_000_000.0
+        monkeypatch.setattr(cache_sweeping, "time", SimpleNamespace(time=lambda: now))
+        marker = tmp_path / "mtime-edge.INPROGRESS"
+        _write_marker(str(marker), {})
+        os.utime(marker, (now - 60.0, now - 60.0))
+        should_steal, _pid, age, _dead, _budget = cache._decide_steal(str(marker))
+        assert age == pytest.approx(60.0)
+        assert should_steal is False
+
+    def test_an_incomplete_marker_one_second_past_the_budget_is_stolen(self, cache, tmp_path, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "60")
+        now = 1_000_000_000.0
+        monkeypatch.setattr(cache_sweeping, "time", SimpleNamespace(time=lambda: now))
+        marker = tmp_path / "mtime-past.INPROGRESS"
+        _write_marker(str(marker), {})
+        os.utime(marker, (now - 61.0, now - 61.0))
+        should_steal, _pid, _age, _dead, _budget = cache._decide_steal(str(marker))
+        assert should_steal is True
