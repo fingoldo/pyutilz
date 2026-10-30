@@ -156,3 +156,27 @@ class TestRareFromValueCounts:
     def test_no_rare_value_reports_no_fraction(self):
         stats = pd.Series([50, 50], index=["a", "b"])
         assert frames._rare_and_uninformative_from_value_counts(stats, 0.1) == ([], None)
+
+
+class TestRareBoundaries:
+    def test_values_exactly_at_the_threshold_are_rare_and_none_is_non_rare(self):
+        rare, uninformative = frames._rare_and_uninformative_from_lists(["a", "b"], [5, 5], 0.5)
+        assert rare == ["a", "b"]
+        assert uninformative == pytest.approx(1.0)
+
+    def test_a_zero_total_column_reports_no_uninformative_fraction(self):
+        assert frames._rare_and_uninformative_from_lists(["a"], [0], 0.1) == (["a"], 0.0)
+
+    def test_a_single_rare_value_with_a_total_of_one_is_fully_uninformative(self):
+        assert frames._rare_and_uninformative_from_lists(["a"], [1], 1.0) == (["a"], 1.0)
+
+    def test_value_counts_exactly_at_the_threshold_are_rare_and_none_is_non_rare(self):
+        rare, uninformative = frames._rare_and_uninformative_from_value_counts(pd.Series([5, 5], index=["a", "b"]), 0.5)
+        assert rare == ["a", "b"]
+        assert uninformative == pytest.approx(1.0)
+
+    def test_a_zero_total_value_counts_reports_no_uninformative_fraction(self):
+        assert frames._rare_and_uninformative_from_value_counts(pd.Series([0], index=["a"]), 0.1) == (["a"], 0.0)
+
+    def test_a_single_rare_value_with_a_total_of_one_is_fully_uninformative_in_value_counts(self):
+        assert frames._rare_and_uninformative_from_value_counts(pd.Series([1], index=["a"]), 1.0) == (["a"], 1.0)
