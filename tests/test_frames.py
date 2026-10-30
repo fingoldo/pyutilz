@@ -354,3 +354,79 @@ class TestShowcaseDispatch:
         df = pl.DataFrame({"a": ["p"] * 98 + ["q"] * 2})
         _, uninformative = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05)
         assert uninformative == {"a": pytest.approx(0.02)}
+
+
+@pytest.fixture
+def ipython_recorder(monkeypatch):
+    shown = []
+    monkeypatch.setattr(frames._facade, "HAS_IPYTHON", True, raising=False)
+    monkeypatch.setattr(frames._facade, "Markdown", lambda text: text, raising=False)
+    monkeypatch.setattr(frames._facade, "display", lambda text: shown.append(text), raising=False)
+    return shown
+
+
+class TestShowcaseMarkdownAndValues:
+    def test_a_pandas_header_is_rendered_as_bold_markdown_when_ipython_is_present(self, ipython_recorder):
+        frames.showcase_df_columns(pd.DataFrame({"a": [1, 2]}), use_print=False, use_markdown=True)
+        assert ipython_recorder == ["**a** int64"]
+
+    def test_a_polars_header_is_rendered_as_bold_markdown_when_ipython_is_present(self, ipython_recorder):
+        frames.showcase_df_columns(pl.DataFrame({"a": [1, 2]}), use_print=False, use_markdown=True)
+        assert ipython_recorder == ["**a** Int64"]
+
+    def test_pandas_value_counts_are_printed_with_their_values(self, capsys):
+        frames.showcase_df_columns(pd.DataFrame({"a": ["alpha", "beta"]}), use_markdown=False)
+        out = capsys.readouterr().out
+        assert "alpha" in out and "beta" in out
+
+    def test_polars_value_counts_are_printed_with_their_values(self, capsys):
+        frames.showcase_df_columns(pl.DataFrame({"a": ["alpha", "beta"]}), use_markdown=False)
+        out = capsys.readouterr().out
+        assert "alpha" in out and "beta" in out
+
+    def test_a_zero_cap_on_pandas_hides_the_values_and_is_not_refused(self, capsys):
+        frames.showcase_df_columns(pd.DataFrame({"a": ["alpha"]}), max_vars=0, use_markdown=False)
+        assert "alpha" not in capsys.readouterr().out
+
+
+class TestPandasSingleValueBoundary:
+    def test_a_single_value_column_that_is_wholly_rare_is_fully_uninformative(self):
+        rare, uninformative = frames.showcase_df_columns(pd.DataFrame({"a": ["a", "a", "a"]}), use_print=False, use_markdown=False, max_unique_percent=1.0)
+        assert rare == {"a": ["a"]}
+        assert uninformative == {"a": pytest.approx(1.0)}
+
+
+class TestShowcaseDefaults:
+    def test_nulls_are_counted_by_default(self):
+        df = pd.DataFrame({"a": ["p"] * 98 + [None] * 2})
+        rare, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05)
+        assert rare == {"a": [None]}
+
+    def test_polars_nulls_are_counted_by_default(self):
+        df = pl.DataFrame({"a": ["p"] * 98 + [None] * 2})
+        rare, _ = frames.showcase_df_columns(df, use_print=False, use_markdown=False, max_unique_percent=0.05)
+        assert rare == {"a": [None]}
+
+    def test_markdown_is_on_by_default(self, ipython_recorder):
+        frames.showcase_df_columns(pd.DataFrame({"a": [1, 2]}), use_print=False)
+        assert ipython_recorder == ["**a** int64"]
+
+    def test_printing_is_on_by_default(self, capsys):
+        frames.showcase_df_columns(pd.DataFrame({"a": [1, 2]}), use_markdown=False)
+        assert capsys.readouterr().out != ""
+
+    def test_fifty_distinct_values_are_analysed_by_default_and_fifty_one_are_not(self):
+        base = {f"v{i}": 20 for i in range(50)}
+        base["rare"] = 1
+        values = [v for v, n in base.items() for _ in range(n)]
+        analysed = frames.showcase_df_columns(pd.DataFrame({"a": values}), use_print=False, use_markdown=False, max_cat_uniq_qty=51)[0]
+        skipped = frames.showcase_df_columns(pd.DataFrame({"a": values}), use_print=False, use_markdown=False)[0]
+        assert analysed == {"a": ["rare"]}
+        assert skipped == {}
+
+    def test_the_default_unique_percent_is_a_tenth_of_a_percent(self):
+        base = {f"v{i}": 21 for i in range(49)}
+        base["rare"] = 1
+        values = [v for v, n in base.items() for _ in range(n)]
+        rare, _ = frames.showcase_df_columns(pd.DataFrame({"a": values}), use_print=False, use_markdown=False)
+        assert rare == {"a": ["rare"]}
