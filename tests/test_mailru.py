@@ -115,3 +115,121 @@ def test_the_module_is_reachable_from_the_package(monkeypatch: pytest.MonkeyPatc
 
     assert cloud.mailru is mailru
     assert jsonlib  # the import above is used by the stubs' own payload shape
+
+
+class TestRequestsPinnedExactly:
+    """Each survivor of the mutation sweep was a constant or an argument whose exact value the tests never read:
+    the endpoints, the agent, the page size, the timeouts and the paging stop condition."""
+
+    def test_the_dispatcher_and_folder_endpoints_are_the_documented_urls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        asked = _stub_json(monkeypatch, {"dispatcher": {"body": {"weblink_get": [{"url": "https://host/x"}]}}, "folder": {"body": {"list": []}}})
+        mailru.download_host()
+        mailru.list_public_folder(FOLDER)
+        assert asked[0] == "https://cloud.mail.ru/api/v2/dispatcher"
+        assert asked[1] == "https://cloud.mail.ru/api/v2/folder?weblink=oxLS/4ZnDN8UJw&limit=500&offset=0"
+
+    def test_the_user_agent_is_the_exact_value_the_cdn_accepts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sent: List[Any] = []
+
+        class _Body:
+            def __enter__(self) -> "_Body":
+                return self
+
+            def __exit__(self, *_exc: Any) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b"{}"
+
+        def _fake_urlopen(request: Any, timeout: int = 0) -> _Body:  # unused-ok: fake keeps the real API signature
+            sent.append(request)
+            return _Body()
+
+        monkeypatch.setattr(mailru, "urlopen_checked", _fake_urlopen)
+        mailru._get_json("https://example.test/")
+        assert sent[0].get_header("User-agent") == "Mozilla/5.0"
+
+    def test_the_folder_request_carries_the_documented_page_size(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        asked = _stub_json(monkeypatch, {"folder": {"body": {"list": [{"name": "a"}], "count": {"files": 1}}}})
+        mailru.list_public_folder(FOLDER)
+        assert "limit=500&" in asked[0] and mailru._PAGE_LIMIT == 500
+
+    def test_the_default_timeouts_are_one_minute_for_json_and_ten_for_file_bodies(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        timeouts: List[int] = []
+
+        def _fake_get(url: str, timeout: int = 0) -> Dict[str, Any]:  # unused-ok: fake keeps the real API signature
+            timeouts.append(timeout)
+            return {"body": {"list": []}}
+
+        monkeypatch.setattr(mailru, "_get_json", _fake_get)
+        mailru.list_public_folder(FOLDER)
+        assert timeouts == [60]
+
+        seen: List[int] = []
+        monkeypatch.setattr(mailru, "urlopen_checked", lambda request, timeout=0: seen.append(timeout))
+        _stub_json(monkeypatch, {"dispatcher": {"body": {"weblink_get": [{"url": "https://host/x"}]}}})
+        mailru.open_public_file(FOLDER, "a.tar.gz")
+        assert seen == [600]
+
+    def test_the_resolution_is_logged_at_debug_with_the_host(self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+        _stub_json(monkeypatch, {"dispatcher": {"body": {"weblink_get": [{"url": "https://cloclo54.cloud.mail.ru/x/"}]}}})
+        with caplog.at_level("DEBUG", logger="pyutilz.cloud.mailru"):
+            mailru.download_host()
+        assert [rec.getMessage() for rec in caplog.records if rec.levelname == "DEBUG"] == [
+            "mail.ru public-download host resolved to https://cloclo54.cloud.mail.ru/x"
+        ]
+
+    def test_a_public_link_with_the_prefix_twice_keeps_everything_after_the_first_occurrence(self) -> None:
+        """Split on the first prefix only: the weblink is the text after it, even when the path repeats the prefix."""
+        assert mailru.weblink_of("https://cloud.mail.ru/public/a/b/cloud.mail.ru/public/c") == "a/b/cloud.mail.ru/public/c"
+
+    def test_a_trailing_slash_on_the_folder_url_does_not_end_up_in_the_weblink(self) -> None:
+        assert mailru.weblink_of("https://cloud.mail.ru/public/oxLS/4ZnDN8UJw/") == "oxLS/4ZnDN8UJw"
+
+
+class TestPagingStopCondition:
+    def test_a_folder_whose_count_is_exactly_one_page_is_listed_with_a_single_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Files and folders are summed for the stop condition; when the page is exactly the total, no second request."""
+        asked = _stub_json(monkeypatch, {"folder": {"body": {"list": [{"name": f"f{i}"} for i in range(3)], "count": {"files": 3}}}})
+        assert len(mailru.list_public_folder(FOLDER)) == 3
+        assert len(asked) == 1
+
+    def test_the_folder_total_is_files_plus_folders_not_their_difference(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Five files and two folders are seven entries: the listing must keep paging after five, not stop."""
+        calls: List[int] = []
+
+        def _fake(url: str, timeout: int = 60) -> Dict[str, Any]:  # unused-ok: fake keeps the real API signature
+            calls.append(1)
+            page = [{"name": f"f{i}"} for i in range(5)] if len(calls) == 1 else [{"name": "g0"}, {"name": "g1"}]
+            return {"body": {"list": page, "count": {"files": 5, "folders": 2}}}
+
+        monkeypatch.setattr(mailru, "_get_json", _fake)
+        assert len(mailru.list_public_folder(FOLDER)) == 7
+        assert len(calls) == 2
+
+    def test_a_json_call_without_a_timeout_argument_uses_one_minute(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: List[int] = []
+
+        class _Body:
+            def __enter__(self) -> "_Body":
+                return self
+
+            def __exit__(self, *_exc: Any) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b"{}"
+
+        monkeypatch.setattr(mailru, "urlopen_checked", lambda request, timeout=0: seen.append(timeout) or _Body())
+        mailru._get_json("https://example.test/")
+        assert seen == [60]
+
+    def test_the_host_cache_holds_one_entry_for_the_process(self) -> None:
+        """One host per process: the cache is bounded at a single entry, so a rotated host replaces the old one."""
+        assert mailru.download_host.cache_info().maxsize == 1
+
+    def test_a_count_with_only_folders_still_stops_at_the_folder_total(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A missing files count is zero, so three folders and three entries stop after one request."""
+        asked = _stub_json(monkeypatch, {"folder": {"body": {"list": [{"name": f"d{i}"} for i in range(3)], "count": {"folders": 3}}}})
+        assert len(mailru.list_public_folder(FOLDER)) == 3
+        assert len(asked) == 1
