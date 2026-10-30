@@ -5,6 +5,7 @@ prefixes and exclusions."""
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
@@ -478,3 +479,129 @@ class TestPolarsDisplayWithoutRareAnalysis:
         frames.showcase_df_columns(pl.DataFrame({"a": ["alpha", "beta"]}), use_markdown=False, max_vars=5, max_cat_uniq_qty=1)
         out = capsys.readouterr().out
         assert "alpha" in out and "beta" in out
+
+
+class TestFeatureNamer:
+    def test_names_get_consecutive_ids_and_repeats_keep_theirs(self):
+        fname = frames.FeatureNamer()
+        assert (fname("abc"), fname("abcd"), fname("abc")) == (0, 1, 0)
+        assert fname.rev(0) == "abc"
+
+    def test_an_unknown_id_has_no_name(self):
+        assert frames.FeatureNamer(["x"]).rev(99) is None
+
+    def test_initial_values_are_numbered_in_order(self):
+        fname = frames.FeatureNamer(["x", "y"])
+        assert (fname("x"), fname("y")) == (0, 1)
+        assert fname.fnames_index == 2
+
+
+class TestShareDataframe:
+    def test_values_and_dtypes_survive_the_round_trip(self):
+        df = pd.DataFrame({"f": [1.5, 2.5], "i": [1, 2], "b": [True, False]})
+        shared = frames.share_dataframe(df)
+        assert shared.equals(df)
+        assert list(shared.dtypes) == list(df.dtypes)
+
+    def test_a_large_int64_is_not_corrupted_by_a_float_route(self):
+        big = 2**60 + 1
+        shared = frames.share_dataframe(pd.DataFrame({"i": [big, 3]}))
+        assert int(shared["i"].iloc[0]) == big
+
+    def test_a_large_uint64_is_not_corrupted_by_a_float_route(self):
+        big = 2**63 + 1
+        shared = frames.share_dataframe(pd.DataFrame({"u": pd.Series([big, 3], dtype="uint64")}))
+        assert int(shared["u"].iloc[0]) == big
+
+    def test_the_original_index_is_restored(self):
+        df = pd.DataFrame({"f": [1.5, 2.5]}, index=["x", "y"])
+        shared = frames.share_dataframe(df)
+        assert list(shared.index) == ["x", "y"]
+        assert shared.loc["y", "f"] == 2.5
+
+    def test_the_original_column_order_is_restored(self):
+        df = pd.DataFrame({"b": [1, 2], "a": [1.5, 2.5], "c": [True, False]})
+        assert list(frames.share_dataframe(df).columns) == ["b", "a", "c"]
+
+    def test_mixed_integer_widths_keep_their_own_dtypes(self):
+        df = pd.DataFrame({"i32": pd.Series([1, 2], dtype="int32"), "i64": pd.Series([3, 4], dtype="int64")})
+        shared = frames.share_dataframe(df)
+        assert shared["i32"].dtype == "int32"
+        assert shared["i64"].dtype == "int64"
+        assert shared.equals(df)
+
+
+class TestNonStaleColumns:
+    def test_a_frame_of_zero_or_one_rows_keeps_every_column(self):
+        assert frames.get_non_stale_columns(pd.DataFrame({"a": [], "b": []})) == ["a", "b"]
+        assert frames.get_non_stale_columns(pd.DataFrame({"a": [1], "b": [2]})) == ["a", "b"]
+
+    def test_constant_and_all_nan_columns_are_stale_and_the_rest_are_kept_in_order(self, caplog):
+        import logging
+
+        df = pd.DataFrame({"a": [1, 2, 3], "c": [5, 5, 5], "b": [np.nan, np.nan, np.nan], "d": [4, 5, 6]})
+        with caplog.at_level(logging.WARNING, logger=frames.logger.name):
+            kept = frames.get_non_stale_columns(df)
+        assert kept == ["a", "d"]
+        assert any("Found 2 stale columns: c,b" in rec.getMessage() for rec in caplog.records)
+
+    def test_the_caller_frame_is_not_mutated(self):
+        df = pd.DataFrame({"a": [1, 2], "c": [5, 5]})
+        frames.get_non_stale_columns(df)
+        assert list(df.columns) == ["a", "c"]
+
+    def test_the_deprecated_alias_warns_and_returns_the_same_list(self):
+        df = pd.DataFrame({"a": [1, 2], "c": [5, 5]})
+        with pytest.warns(DeprecationWarning, match="remove_stale_columns is deprecated"):
+            kept = frames.remove_stale_columns(df)
+        assert kept == frames.get_non_stale_columns(df) == ["a"]
+
+
+class TestSuspiciouslyConstantColumns:
+    def test_a_column_with_one_value_and_a_null_is_not_constant(self):
+        df = pd.DataFrame({"a": [1.0, np.nan], "c": [5, 5]})
+        assert frames.get_suspiciously_constant_columns(df) == ["c"]
+
+    def test_all_nan_is_constant(self):
+        df = pd.DataFrame({"n": [np.nan, np.nan], "v": [1, 2]})
+        assert frames.get_suspiciously_constant_columns(df) == ["n"]
+
+    def test_unhashable_values_are_skipped_with_a_warning_naming_the_column(self, caplog):
+        import logging
+
+        df = pd.DataFrame({"lst": [[1], [2]], "c": [5, 5]})
+        with caplog.at_level(logging.WARNING, logger=frames.logger.name):
+            constant = frames.get_suspiciously_constant_columns(df)
+        assert constant == ["c"]
+        assert any("could not check 1 column(s) (unhashable values)" in rec.getMessage() and "['lst']" in rec.getMessage() for rec in caplog.records)
+
+
+class TestRemoveConstantColumns:
+    def test_constant_columns_are_dropped_in_place(self):
+        df = pd.DataFrame({"a": [1, 2], "c": [5, 5]})
+        frames.remove_constant_columns(df)
+        assert list(df.columns) == ["a"]
+
+    def test_verbose_names_the_few_constant_columns_it_removes(self, caplog):
+        import logging
+
+        df = pd.DataFrame({"a": [1, 2], "c": [5, 5]})
+        with caplog.at_level(logging.WARNING, logger=frames.logger.name):
+            frames.remove_constant_columns(df, verbose=True)
+        assert any(rec.getMessage() == "Removing constant columns ['c']" for rec in caplog.records)
+
+    def test_verbose_counts_when_there_are_many_constant_columns(self, caplog):
+        import logging
+
+        data = {f"c{i}": [1, 1] for i in range(21)}
+        data["a"] = [1, 2]
+        df = pd.DataFrame(data)
+        with caplog.at_level(logging.WARNING, logger=frames.logger.name):
+            frames.remove_constant_columns(df, verbose=True)
+        assert any(rec.getMessage() == "Removing 21 constant columns" for rec in caplog.records)
+        assert list(df.columns) == ["a"]
+
+    def test_a_column_constant_only_in_the_head_sample_is_kept(self):
+        df = pd.DataFrame({"a": [1, 1, 2, 3, 4], "b": [7, 7, 7, 7, 7]})
+        frames.remove_constant_columns(df, prewarm_size=2)
+        assert list(df.columns) == ["a"]
