@@ -31,7 +31,9 @@ def _changed_production_modules() -> list[Path]:
     """Repo-relative ``src/pyutilz`` modules that have a changed line and a ``test_<stem>.py`` next to the suite."""
     try:
         changed = changed_lines(REPO_ROOT, rev=BASE_REV, include_untracked=False)
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, RuntimeError):
+        # A shallow or history-less checkout has no BASE_REV: changed_lines raises RuntimeError, and with no
+        # diff there is nothing to sweep, so the meta-test skips instead of erroring at collection.
         return []
     modules = []
     for path in sorted(changed):
