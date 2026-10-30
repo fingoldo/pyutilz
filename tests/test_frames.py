@@ -612,3 +612,71 @@ class TestFeatureNamerInitialOrder:
         fname = frames.FeatureNamer(["x", "y"])
         assert fname("y") == 1
         assert fname.rev(0) == "x"
+
+
+class TestStaleAndConstantEdges:
+    def test_a_null_does_not_make_a_stale_column_look_constant(self):
+        df = pd.DataFrame({"a": [5.0, np.nan, 5.0], "b": [1, 2, 3]})
+        assert "a" in frames.get_non_stale_columns(df)
+
+    def test_no_warning_is_logged_when_nothing_is_stale(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger=frames.logger.name):
+            frames.get_non_stale_columns(pd.DataFrame({"a": [1, 2], "b": [3, 4]}))
+        assert not any("stale columns" in rec.getMessage() for rec in caplog.records)
+
+    def test_the_deprecation_warning_points_at_the_caller(self):
+        import warnings
+
+        df = pd.DataFrame({"a": [1, 2]})
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            frames.remove_stale_columns(df)
+        assert any(w.filename == __file__ for w in caught if issubclass(w.category, DeprecationWarning))
+
+    def test_a_null_column_in_the_fallback_loop_is_not_constant(self):
+        df = pd.DataFrame({"lst": [[1], [2]], "a": [1.0, np.nan]})
+        assert frames.get_suspiciously_constant_columns(df) == []
+
+    def test_two_distinct_values_in_the_fallback_loop_are_not_constant(self):
+        df = pd.DataFrame({"lst": [[1], [2], [3]], "a": [1, 1, 2]})
+        assert frames.get_suspiciously_constant_columns(df) == []
+
+    def test_default_remove_constant_columns_is_quiet(self, caplog):
+        import logging
+
+        df = pd.DataFrame({"a": [1, 2], "c": [5, 5]})
+        with caplog.at_level(logging.WARNING, logger=frames.logger.name):
+            frames.remove_constant_columns(df)
+        assert not any("Removing" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_column_that_varies_beyond_the_head_sample_with_a_null_is_kept(self):
+        df = pd.DataFrame({"a": [1, 1, 1, 1, np.nan], "b": [7, 7, 7, 7, 7]})
+        frames.remove_constant_columns(df, prewarm_size=2)
+        assert list(df.columns) == ["a"]
+
+    def test_two_values_beyond_the_head_sample_keep_the_column(self):
+        df = pd.DataFrame({"a": [1, 1, 2, 2, 2], "b": [7, 7, 7, 7, 7]})
+        frames.remove_constant_columns(df, prewarm_size=2)
+        assert list(df.columns) == ["a"]
+
+    def test_twenty_constant_columns_are_listed_by_name_in_verbose_mode(self, caplog):
+        import logging
+
+        data = {f"c{i}": [1, 1] for i in range(20)}
+        data["a"] = [1, 2]
+        df = pd.DataFrame(data)
+        with caplog.at_level(logging.WARNING, logger=frames.logger.name):
+            frames.remove_constant_columns(df, verbose=True)
+        assert any(rec.getMessage().startswith("Removing constant columns [") for rec in caplog.records)
+
+    def test_a_thousand_constant_columns_are_counted_with_underscores(self, caplog):
+        import logging
+
+        data = {f"c{i}": [1, 1] for i in range(1000)}
+        data["a"] = [1, 2]
+        df = pd.DataFrame(data)
+        with caplog.at_level(logging.WARNING, logger=frames.logger.name):
+            frames.remove_constant_columns(df, verbose=True)
+        assert any(rec.getMessage() == "Removing 1_000 constant columns" for rec in caplog.records)
