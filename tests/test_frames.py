@@ -471,3 +471,10 @@ class TestPolarsSingleValueColumns:
         rare, uninformative = frames.showcase_df_columns(pl.DataFrame({"a": ["x"] * 3}), use_print=False, use_markdown=False, max_unique_percent=1.0)
         assert rare == {"a": ["x"]}
         assert uninformative == {"a": pytest.approx(1.0)}
+
+
+class TestPolarsDisplayWithoutRareAnalysis:
+    def test_polars_values_are_printed_under_a_positive_cap_when_the_rare_analysis_is_skipped(self, capsys):
+        frames.showcase_df_columns(pl.DataFrame({"a": ["alpha", "beta"]}), use_markdown=False, max_vars=5, max_cat_uniq_qty=1)
+        out = capsys.readouterr().out
+        assert "alpha" in out and "beta" in out
