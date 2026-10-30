@@ -95,3 +95,29 @@ class TestPatchedMessageParser:
             result = mp.parse_message({"type": "definitely-unknown-type-xyz"})
         assert result is None
         assert any("SDK message parse failed, message dropped" in rec.getMessage() for rec in caplog.records)
+        assert any("message dropped: MessageParseError: " in rec.getMessage() for rec in caplog.records)
+
+
+class TestPatchedCommandBuilder:
+    def _transport(self, is_streaming):
+        sc = pytest.importorskip("claude_code_sdk._internal.transport.subprocess_cli")
+        from claude_code_sdk import ClaudeCodeOptions
+
+        transport = sc.SubprocessCLITransport.__new__(sc.SubprocessCLITransport)
+        transport._cli_path = "claude"
+        transport._options = ClaudeCodeOptions()
+        transport._prompt = "a long prompt body"
+        transport._is_streaming = is_streaming
+        return transport
+
+    def test_a_non_streaming_prompt_moves_to_stdin_via_print_dash(self):
+        transport = self._transport(is_streaming=False)
+        cmd = ccp._sc.SubprocessCLITransport._build_command(transport)
+        idx = cmd.index("--print")
+        assert cmd[idx + 1] == "-"
+        assert "a long prompt body" not in cmd
+
+    def test_a_streaming_command_is_left_as_the_sdk_built_it(self):
+        transport = self._transport(is_streaming=True)
+        cmd = ccp._sc.SubprocessCLITransport._build_command(transport)
+        assert cmd == ["claude", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json"]
