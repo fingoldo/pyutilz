@@ -392,3 +392,45 @@ class TestMarkerLogTextAndDescriptors:
         monkeypatch.setattr(cache_sweeping.os, "close", recording_close)
         assert cache._try_create_marker(marker) is True
         assert still_open == set()
+
+
+class TestStealLogsAndMigrationClaim:
+    def test_a_dead_owners_marker_steal_logs_its_pid_liveness_and_budget(self, cache, caplog):
+        marker = cache._marker_path("matmul", "v1")
+        _write_marker(marker, {"pid": _DEAD_PID, "start_ts": time.time()})
+        with caplog.at_level("INFO"):
+            with cache._claim_sweep("matmul", "v1", _Recorder()) as owns:
+                assert owns is True
+        steals = [rec.getMessage() for rec in caplog.records if "stealing stale sweep marker" in rec.getMessage()]
+        assert len(steals) == 1
+        assert steals[0].startswith(f"kernel_tuning_cache: stealing stale sweep marker for matmul (pid={_DEAD_PID} alive=False age=")
+        assert " budget=" in steals[0]
+
+    def test_a_live_owner_past_the_budget_is_logged_as_alive(self, cache, monkeypatch, caplog):
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "60")
+        marker = cache._marker_path("matmul", "v1")
+        _write_marker(marker, {"pid": os.getpid(), "start_ts": time.time() - 3600, "host": cache_base.hw_fingerprint()})
+        with caplog.at_level("INFO"):
+            with cache._claim_sweep("matmul", "v1", _Recorder()):
+                pass
+        steals = [rec.getMessage() for rec in caplog.records if "stealing stale sweep marker" in rec.getMessage()]
+        assert len(steals) == 1
+        assert f"for matmul (pid={os.getpid()} alive=True age=" in steals[0]
+
+    def test_a_stale_migration_claim_is_removed_and_reclaimed(self, cache, tmp_path, caplog):
+        claim = str(tmp_path / "migration.claim")
+        _write_marker(claim, {"pid": _DEAD_PID, "start_ts": time.time()})
+        with caplog.at_level("INFO"):
+            assert cache._maybe_steal_migration_claim(claim) is True
+        with open(claim, encoding="utf-8") as f:
+            assert jsonlib.loads(f.read())["pid"] == os.getpid()
+        steals = [rec.getMessage() for rec in caplog.records if "stealing stale migration claim" in rec.getMessage()]
+        assert len(steals) == 1
+        assert steals[0].startswith(f"kernel_tuning_cache: stealing stale migration claim (pid={_DEAD_PID} alive=False age=")
+
+    def test_a_live_migration_claim_inside_the_budget_is_kept(self, cache, tmp_path):
+        claim = str(tmp_path / "migration.claim")
+        _write_marker(claim, {"pid": os.getpid(), "start_ts": time.time(), "host": cache_base.hw_fingerprint()})
+        assert cache._maybe_steal_migration_claim(claim) is False
+        with open(claim, encoding="utf-8") as f:
+            assert jsonlib.loads(f.read())["pid"] == os.getpid()
