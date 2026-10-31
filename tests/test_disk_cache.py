@@ -482,3 +482,25 @@ class TestEvictionAndScan:
         assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
             "disk_cache: cache entry scan failed, reporting it as unavailable: OSError: no such directory"
         ]
+
+
+class TestGoldenDigestsForRemainingTags:
+    """The frozenset tag, the repr fallback, object arrays, empty arrays and the nested-array tag each feed their own bytes."""
+
+    def test_a_frozenset_has_its_own_tag_and_is_pinned(self):
+        assert dc.hash_object(frozenset({1, 2})) == "79874b0c2b2b9bc19a958cbbf17dbf99"  # pragma: allowlist secret
+
+    def test_an_unhandled_type_falls_back_to_its_repr_and_is_pinned(self):
+        assert dc.hash_object(1 + 2j) == "f58aa4cd4a151a8ac5bf2c2b11c0d9ab"  # pragma: allowlist secret
+
+    def test_an_object_array_hashes_its_values_not_its_addresses(self):
+        assert dc.hash_array_summary(np.array(["a", 1, None], dtype=object)) == "c7a18c1783cc79d16e2194da7a60702b"  # pragma: allowlist secret
+
+    def test_an_empty_array_hashes_only_its_header(self):
+        assert dc.hash_array_summary(np.zeros((0, 3))) == "55c2cbf88b75389a3548866dac4c2dd9"  # pragma: allowlist secret
+
+    def test_an_array_nested_in_a_container_contributes_its_fixed_width_digest(self):
+        assert dc.hash_object([np.arange(4)]) == "6c13206f396020b203d3e407d0aee20c"  # pragma: allowlist secret
+
+    def test_empty_bytes_are_length_prefixed_and_pinned(self):
+        assert dc.hash_object(b"") == "8e93b0f4c91ab797943fd990c8b04b44"  # pragma: allowlist secret
