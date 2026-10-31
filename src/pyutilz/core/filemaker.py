@@ -85,7 +85,7 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
             logger.warning("No response while getting filemaker session token")
         elif res.status_code != HTTPStatus.OK:
             # X-14: the body is truncated; an error page can echo request details, so keep the log line short.
-            logger.warning("Error %s while getting filemaker session token: %s", res.status_code, str(res.text)[:200])
+            logger.warning("Error %s while getting filemaker session token: %s", int(res.status_code), str(res.text)[:200])
         else:
             res = res.json()
             response_field = get_attr(res, "response", {})
@@ -152,7 +152,7 @@ def post_filemaker_record(filemaker_url: str, layout: str, data: dict, num_attem
                     if not get_session_token(username=filemaker_username, password=filemaker_password):
                         raise ValueError("Could not refresh the token")
                 else:
-                    logger.error("Exception %s when inserting object details %s", str(res.status_code) + ": " + res.text, data)
+                    logger.error("Exception %s when inserting object details %s", str(int(res.status_code)) + ": " + res.text, data)
                     raise ValueError(f"Filemaker insert failed with status {res.status_code}: {res.text}")
     # All attempts exhausted via transient errors: surface the failure instead of returning None silently.
     raise ValueError(f"Filemaker insert failed after {num_attempts} attempts: {last_error}")
