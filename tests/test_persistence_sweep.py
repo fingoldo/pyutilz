@@ -16,14 +16,19 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
+from pyutilz.dev import persistence_sweep as ps
 from pyutilz.dev.persistence_sweep import (
     _like_contains,
     _quote,
     field_sentinels,
+    file_sentinel_locations,
+    jsonl_records,
+    records_holding,
     rows_holding,
     sentinel_locations,
     text_columns,
     unaccounted_fields,
+    written_files,
 )
 
 
@@ -124,3 +129,99 @@ def test_rows_holding_with_nothing_to_look_for_sends_nothing() -> None:
 
     assert asyncio.run(rows_holding(session, 1, columns=[], key_value="s", keys=[("llm", None, "sense_id")])) == []
     session.execute.assert_not_awaited()
+
+
+class TestFileStoreSweep:
+    def test_written_files_keeps_only_the_text_suffixes_in_any_case(self, tmp_path):
+        (tmp_path / "a.JSON").write_text("{}")
+        (tmp_path / "b.csv").write_text("x")
+        (tmp_path / "c.py").write_text("x")
+        assert [p.name for p in written_files([tmp_path])] == ["a.JSON", "b.csv"]
+
+    def test_written_files_recurses_into_directories_and_accepts_a_single_file(self, tmp_path):
+        sub = tmp_path / "deep"
+        sub.mkdir()
+        (sub / "x.jsonl").write_text("{}")
+        single = tmp_path / "y.md"
+        single.write_text("#")
+        found = written_files([tmp_path / "deep", single])
+        assert [p.name for p in found] == ["x.jsonl", "y.md"]
+
+    def test_written_files_skips_a_path_that_does_not_exist(self, tmp_path):
+        assert written_files([tmp_path / "missing"]) == []
+
+    def test_a_sentinel_in_the_raw_text_is_located(self, tmp_path):
+        f = tmp_path / "a.txt"
+        f.write_text("row ZZSENT0001ZZ here")
+        assert file_sentinel_locations({"name": "ZZSENT0001ZZ"}, [f]) == {"name": [str(f)]}
+
+    def test_a_non_ascii_value_is_found_in_its_decoded_json_form(self, tmp_path):
+        f = tmp_path / "a.json"
+        f.write_text('{"city": "\u00e9t\u00e9"}')
+        assert file_sentinel_locations({"city": "été"}, [f]) == {"city": [str(f)]}
+
+    def test_a_jsonl_line_is_searched_in_its_decoded_form(self, tmp_path):
+        f = tmp_path / "a.jsonl"
+        f.write_text('{"city": "\u00e9"}\n{"city": "x"}\n')
+        assert file_sentinel_locations({"city": "é"}, [f]) == {"city": [str(f)]}
+
+    def test_a_sentinel_nowhere_is_reported_with_an_empty_list(self, tmp_path):
+        f = tmp_path / "a.txt"
+        f.write_text("nothing here")
+        assert file_sentinel_locations({"ghost": "ZZGHOST"}, [f]) == {"ghost": []}
+
+    def test_an_unreadable_file_is_logged_by_name_and_the_scan_continues(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        good = tmp_path / "good.txt"
+        good.write_text("ZZHIT")
+        bad = tmp_path / "bad.txt"
+        bad.write_text("x")
+        real_open = open
+
+        def _open(path, *args, **kwargs):
+            if str(path) == str(bad):
+                raise OSError("denied")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", _open)
+        with caplog.at_level(logging.WARNING, logger=ps.logger.name):
+            found = file_sentinel_locations({"h": "ZZHIT"}, [bad, good])
+        assert found == {"h": [str(good)]}
+        assert [r.getMessage() for r in caplog.records] == [f"1 file(s) could not be read and were not scanned: {bad}: denied"]
+
+    def test_invalid_json_text_is_not_decoded_and_logged_at_debug(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger=ps.logger.name):
+            assert ps._decoded_json("{not json") is None
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(messages) == 1
+        assert messages[0].startswith("_decoded_json: text is not valid JSON: ")
+
+    def test_jsonl_records_skips_blank_lines_and_a_missing_file_is_no_records(self, tmp_path):
+        f = tmp_path / "r.jsonl"
+        f.write_text('{"a": 1}\n\n   \n{"a": 2}\n')
+        assert jsonl_records(f) == [{"a": 1}, {"a": 2}]
+        assert jsonl_records(tmp_path / "missing.jsonl") == []
+
+
+class TestRecordsHolding:
+    def test_a_value_is_found_at_any_depth_under_the_field(self):
+        records = [{"outer": {"inner": [{"stored": "v"}]}}]
+        assert records_holding(records, "v", fields=["stored"]) == ["#0.stored"]
+
+    def test_the_key_filter_keeps_only_the_matching_records(self):
+        records = [{"k": "a", "f": 1}, {"k": "b", "f": 1}]
+        assert records_holding(records, 1, fields=["f"], key_field="k", key_value="b") == ["#1.f"]
+
+    def test_a_boolean_never_matches_an_integer(self):
+        assert records_holding([{"f": 1}], True, fields=["f"]) == []
+        assert records_holding([{"f": True}], 1, fields=["f"]) == []
+
+    def test_a_float_matches_within_the_tolerance_and_not_beyond_it(self):
+        assert records_holding([{"f": 0.5}], 0.5 + 1e-10, fields=["f"]) == ["#0.f"]
+        assert records_holding([{"f": 0.5}], 0.5 + 1e-3, fields=["f"]) == []
+
+    def test_a_value_absent_from_every_record_gives_no_hits(self):
+        assert records_holding([{"f": "x"}], "y", fields=["f"]) == []
