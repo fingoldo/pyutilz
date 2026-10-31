@@ -3,8 +3,10 @@ round trip through an object, and the caller's arguments read from the call stac
 
 from __future__ import annotations
 
+from pyutilz.core.pythonlib import stackutils
 from pyutilz.core.pythonlib.stackutils import (
     get_or_warn,
+    lookup_in_stack,
     get_parent_func_args,
     load_object_params_into_func,
     store_params_in_object,
@@ -57,3 +59,31 @@ class TestParentFuncArgs:
                 return callee(self, 5)
 
         assert Caller().method() == {"a": 5, "b": 2}
+
+
+class TestGetOrWarnMessage:
+    def test_the_warning_names_the_field_then_the_target_then_the_object(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger=stackutils.logger.name):
+            get_or_warn({"x": 1}, "b", "target")
+        assert [r.getMessage() for r in caplog.records] == ["No b field in target {'x': 1}"]
+
+
+_PROBE_SOURCE = "def probe(name):\n    return lookup_in_stack(name)\n"
+
+
+class TestLookupInStack:
+    def test_a_truthy_global_of_the_immediate_caller_is_found(self):
+        # The probe lives in its own namespace, so no outer frame defines the name.
+        ns = {"lookup_in_stack": lookup_in_stack, "_PROBE": 7}
+        exec(_PROBE_SOURCE, ns)
+        assert ns["probe"]("_PROBE") == 7
+
+    def test_a_falsy_global_is_skipped_and_gives_none(self):
+        ns = {"lookup_in_stack": lookup_in_stack, "_FALSY": 0}
+        exec(_PROBE_SOURCE, ns)
+        assert ns["probe"]("_FALSY") is None
+
+    def test_a_missing_name_gives_none(self):
+        assert lookup_in_stack("_NO_SUCH_NAME_ANYWHERE_123") is None
