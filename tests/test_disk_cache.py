@@ -562,3 +562,33 @@ class TestKeyLocks:
         clone = pickle.loads(pickle.dumps(cache))
         assert clone._key_locks == {}
         assert clone.get("k1") is not None
+
+
+class TestCountersAccumulate:
+    def test_hits_and_misses_add_up_across_repeated_calls(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        cache.put("a", 1)
+        cache.get("a")
+        cache.get("a")
+        cache.get("missing")
+        cache.get("missing")
+        cache.get("missing")
+        assert cache.hits == 2
+        assert cache.misses == 3
+
+    def test_put_failures_add_up_across_repeated_failures(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        assert cache.put("a", lambda: None) is False
+        assert cache.put("b", lambda: None) is False
+        assert cache.put("c", lambda: None) is False
+        assert cache.put_failures == 3
+
+    def test_evictions_add_up_across_a_forced_eviction_pass(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        for i in range(4):
+            cache.put(f"k{i}", np.zeros(4000, dtype=np.float64))
+            payload = tmp_path / f"k{i}.pkl"
+            os.utime(payload, (1_000_000.0 + i, 1_000_000.0 + i))
+        cache.max_size_bytes = cache.total_size() // 4
+        cache._evict_if_needed()
+        assert cache.evictions == 3
