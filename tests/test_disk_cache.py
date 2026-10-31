@@ -592,3 +592,58 @@ class TestCountersAccumulate:
         cache.max_size_bytes = cache.total_size() // 4
         cache._evict_if_needed()
         assert cache.evictions == 3
+
+
+# -------------------- multi-leaf full-content digest, checked against the written recipe --------------------
+
+_LEAF_BYTES_SPEC = 8 << 20
+
+
+def _recipe_digest(arr: np.ndarray) -> str:
+    """The documented digest, spelled out from its description: header, dtype, then the buffer as one piece when it is
+    at most one leaf, else the blake2b digests of consecutive leaves framed by a tag."""
+    import hashlib
+    import struct
+
+    arr = np.ascontiguousarray(arr)
+    h = hashlib.blake2b(digest_size=16)
+    h.update(struct.pack("<I", 4))
+    h.update(struct.pack("<I", arr.ndim))
+    for dim in arr.shape:
+        h.update(struct.pack("<q", int(dim)))
+    dtype_bytes = arr.dtype.str.encode("ascii")
+    h.update(struct.pack("<I", len(dtype_bytes)))
+    h.update(dtype_bytes)
+    item = arr.dtype.itemsize
+    h.update(struct.pack("<Q", arr.size * item))
+    raw = arr.view(np.uint8).reshape(-1).tobytes()
+    leaf_bytes = max(1, _LEAF_BYTES_SPEC // item) * item
+    if arr.size <= max(1, _LEAF_BYTES_SPEC // item):
+        h.update(raw)
+    else:
+        digests = [hashlib.blake2b(raw[i : i + leaf_bytes], digest_size=16).digest() for i in range(0, len(raw), leaf_bytes)]
+        h.update(b"T")
+        for d in digests:
+            h.update(d)
+    return h.hexdigest()
+
+
+def test_an_array_of_exactly_one_leaf_is_hashed_as_one_piece():
+    arr = np.arange(_LEAF_BYTES_SPEC // 8, dtype=np.float64)
+    assert hash_array_summary(arr) == _recipe_digest(arr)
+
+
+def test_one_element_past_a_leaf_switches_to_the_leaf_tree():
+    arr = np.arange(_LEAF_BYTES_SPEC // 8 + 1, dtype=np.float64)
+    assert hash_array_summary(arr) == _recipe_digest(arr)
+
+
+def test_several_leaves_are_framed_by_the_tag_and_their_digests():
+    arr = np.arange(3_000_000, dtype=np.float64)
+    assert hash_array_summary(arr) == _recipe_digest(arr)
+
+
+def test_a_byte_array_one_past_the_leaf_is_split_at_eight_mebibytes():
+    arr = np.zeros(_LEAF_BYTES_SPEC + 1, dtype=np.uint8)
+    assert hash_array_summary(arr) == _recipe_digest(arr)
+    assert hash_array_summary(arr) != hash_array_summary(np.zeros(_LEAF_BYTES_SPEC, dtype=np.uint8))
