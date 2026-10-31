@@ -20,5 +20,9 @@
   "src/pyutilz/text/similarity/basics.py::ec7eb3b07ecf::constant: emptied a string": "Collapsing repeated spaces is redundant: the empty-token filter drops the empty tokens that doubled spaces would leave behind.",
   "src/pyutilz/data/polarslib/columns.py::7a11ef06054a::logic: False becomes True": "A float column that holds a null is already matched by the null check, so treating its NaN test as True adds no column to the union.",
   "src/pyutilz/data/polarslib/columns.py::197a58e3519f::constant: emptied a string": "The TypeVar's name is only used in its repr and in annotations; it does not change which frames the functions accept.",
-  "src/pyutilz/data/polarslib/columns.py::34e9f2f7f101::arguments transposed: pl.DataFrame <-> pl.LazyFrame": "The order of a TypeVar's constraints does not change which frame types are accepted, so the functions behave the same."
+  "src/pyutilz/data/polarslib/columns.py::34e9f2f7f101::arguments transposed: pl.DataFrame <-> pl.LazyFrame": "The order of a TypeVar's constraints does not change which frame types are accepted, so the functions behave the same.",
+  "src/pyutilz/core/pythonlib/objects.py::ec31eaec4bc7::logic: guard inverted": "obj is declared Optional[dict]; for a dict or None, comparing with == gives the same answer as comparing with is, so inverting the choice of comparison cannot change the result.",
+  "src/pyutilz/core/pythonlib/objects.py::a330b94b1391::logic: is becomes is not": "obj is declared Optional[dict]; for a dict or None, comparing with == gives the same answer as comparing with is, so inverting the choice of comparison cannot change the result.",
+  "src/pyutilz/core/pythonlib/objects.py::684ef270364d::logic: break becomes continue": "Breaking out of the loop only stops once a match is already recorded; continuing sets the same flag again, so the returned value is identical.",
+  "src/pyutilz/core/pythonlib/objects.py::aadb6de37f3f::arguments transposed: ndx + n <-> length": "min() of the two bounds is symmetric, so swapping its arguments gives the same slice end."
 }
