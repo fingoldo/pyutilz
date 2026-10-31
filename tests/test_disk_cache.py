@@ -504,3 +504,61 @@ class TestGoldenDigestsForRemainingTags:
 
     def test_empty_bytes_are_length_prefixed_and_pinned(self):
         assert dc.hash_object(b"") == "8e93b0f4c91ab797943fd990c8b04b44"  # pragma: allowlist secret
+
+
+class TestKeyLocks:
+    def test_a_held_key_counts_one_reference_and_is_dropped_on_exit(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        with cache._get_key_lock("k"):
+            assert cache._key_locks["k"].refcount == 1
+        assert "k" not in cache._key_locks
+
+    def test_a_second_thread_on_the_same_key_waits_for_the_first(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        first_in = threading.Event()
+        release = threading.Event()
+        second_entered = threading.Event()
+
+        def _first():
+            with cache._get_key_lock("k"):
+                first_in.set()
+                release.wait(5)
+
+        def _second():
+            first_in.wait(5)
+            with cache._get_key_lock("k"):
+                second_entered.set()
+
+        t1 = threading.Thread(target=_first)
+        t2 = threading.Thread(target=_second)
+        t1.start()
+        t2.start()
+        first_in.wait(5)
+        # The second caller is registered (refcount 2) but blocked behind the first.
+        for _ in range(100):
+            if cache._key_locks.get("k") is not None and cache._key_locks["k"].refcount == 2:
+                break
+            threading.Event().wait(0.01)
+        assert not second_entered.is_set()
+        assert cache._key_locks["k"].refcount == 2
+        release.set()
+        t1.join(5)
+        t2.join(5)
+        assert second_entered.is_set()
+        assert cache._key_locks == {}
+
+    def test_distinct_keys_use_distinct_locks(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        with cache._get_key_lock("a"):
+            with cache._get_key_lock("b"):
+                assert cache._key_locks["a"].lock is not cache._key_locks["b"].lock
+        assert cache._key_locks == {}
+
+    def test_pickling_drops_the_locks_and_the_cache_rebuilds_them_empty(self, tmp_path):
+        import pickle
+
+        cache = DiskCache(tmp_path)
+        cache.put("k1", np.arange(3))
+        clone = pickle.loads(pickle.dumps(cache))
+        assert clone._key_locks == {}
+        assert clone.get("k1") is not None
