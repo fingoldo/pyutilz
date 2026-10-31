@@ -269,3 +269,15 @@ def test_rows_holding_narrows_to_a_named_table_when_one_is_given() -> None:
     session.execute = AsyncMock(return_value=_Result([]))
     asyncio.run(rows_holding(session, "v", columns=["c"], key_value=1, keys=[("oewn", "senses", "id")]))
     assert "((c.table_schema = :s0 AND k.column_name = :k0 AND c.table_name = :t0))" in _sql_of(session.execute.call_args)
+
+
+def test_duplicate_field_names_are_refused_with_the_exact_list() -> None:
+    with pytest.raises(ValueError) as info:
+        field_sentinels(["a", "b", "a", "b", "c"])
+    assert str(info.value) == "duplicate field names: ['a', 'b']"
+
+
+def test_sentinels_are_zero_padded_to_at_least_four_digits() -> None:
+    sentinels = field_sentinels(["a", "b"])
+    assert sentinels["a"].endswith("ZZ") and sentinels["a"][-6:-2] == "0000"
+    assert sentinels["b"][-6:-2] == "0001"
