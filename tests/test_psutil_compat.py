@@ -9,7 +9,7 @@ the duration of one test (``monkeypatch.delattr``), never by mutating ``sys.modu
 """
 
 from types import SimpleNamespace
-from pyutilz.dev.logginglib import reset_log_throttles
+from pyutilz.dev.logginglib import ONCE, log_throttle, reset_log_throttles
 
 import pytest
 
@@ -171,3 +171,27 @@ def test_current_mhz_coerces_an_integer_reading_to_float():
     got = pc.get_cpu_freq_current_mhz(psutil_module=_fake_psutil(cpu_freq=lambda percpu=False: freq))
     assert isinstance(got, float)
     assert got == 2400.0
+
+
+def test_the_first_absence_is_logged_at_once_not_on_the_second_call(caplog):
+    with caplog.at_level("INFO", logger=pc.logger.name):
+        pc.get_cpu_freq(psutil_module=_fake_psutil())
+    assert len([r for r in caplog.records if "cpu_freq" in r.getMessage()]) == 1
+
+
+def test_an_unrelated_throttle_key_does_not_suppress_the_absence_log(caplog):
+    log_throttle("cpu_freq", ONCE)
+    with caplog.at_level("INFO", logger=pc.logger.name):
+        pc.get_cpu_freq(psutil_module=_fake_psutil())
+    assert len([r for r in caplog.records if "cpu_freq" in r.getMessage()]) == 1
+
+
+def test_get_cpu_freq_asks_psutil_for_total_not_per_cpu_by_default():
+    seen = {}
+
+    def cpu_freq(percpu=None):
+        seen["percpu"] = percpu
+        return "sentinel"
+
+    assert pc.get_cpu_freq(psutil_module=_fake_psutil(cpu_freq=cpu_freq)) == "sentinel"
+    assert seen == {"percpu": False}
