@@ -157,12 +157,14 @@ class TestFileStoreSweep:
 
     def test_a_non_ascii_value_is_found_in_its_decoded_json_form(self, tmp_path):
         f = tmp_path / "a.json"
-        f.write_text('{"city": "\u00e9t\u00e9"}')
+        f.write_text('{"city": "\\u00e9t\\u00e9"}', encoding="utf-8")
+        assert "\u00e9t\u00e9" not in f.read_text(encoding="utf-8")
         assert file_sentinel_locations({"city": "été"}, [f]) == {"city": [str(f)]}
 
     def test_a_jsonl_line_is_searched_in_its_decoded_form(self, tmp_path):
         f = tmp_path / "a.jsonl"
-        f.write_text('{"city": "\u00e9"}\n{"city": "x"}\n')
+        f.write_text('{"city": "\\u00e9"}\n{"city": "x"}\n', encoding="utf-8")
+        assert "\u00e9" not in f.read_text(encoding="utf-8")
         assert file_sentinel_locations({"city": "é"}, [f]) == {"city": [str(f)]}
 
     def test_a_sentinel_nowhere_is_reported_with_an_empty_list(self, tmp_path):
@@ -281,3 +283,98 @@ def test_sentinels_are_zero_padded_to_at_least_four_digits() -> None:
     sentinels = field_sentinels(["a", "b"])
     assert sentinels["a"].endswith("ZZ") and sentinels["a"][-6:-2] == "0000"
     assert sentinels["b"][-6:-2] == "0001"
+
+
+def test_sentinel_width_grows_with_the_number_of_fields() -> None:
+    sentinels = field_sentinels([f"f{i}" for i in range(10001)])
+    assert sentinels["f0"] == "ZZSENT00000ZZ"
+    assert sentinels["f10000"] == "ZZSENT10000ZZ"
+
+
+def test_written_files_also_takes_txt_and_ndjson(tmp_path) -> None:
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / "b.ndjson").write_text("x")
+    assert [p.name for p in written_files([tmp_path])] == ["a.txt", "b.ndjson"]
+
+
+def test_invalid_json_debug_message_names_the_exception_class(caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger=ps.logger.name):
+        ps._decoded_json("{not json")
+    assert len(caplog.records) == 1
+    assert caplog.records[0].getMessage().startswith("_decoded_json: text is not valid JSON: JSONDecodeError: ")
+
+
+def test_a_float_value_never_matches_a_boolean_held_value() -> None:
+    assert records_holding([{"f": True}], 1.0, fields=["f"]) == []
+
+
+def test_a_float_matches_an_integer_held_value_of_the_same_kind() -> None:
+    assert records_holding([{"f": 1}], 1.0, fields=["f"]) == ["#0.f"]
+
+
+def test_the_tolerance_bound_is_inclusive() -> None:
+    assert records_holding([{"f": 0.5}], 0.75, fields=["f"], tolerance=0.25) == ["#0.f"]
+    assert records_holding([{"f": 0.5}], 0.7500001, fields=["f"], tolerance=0.25) == []
+
+
+def test_a_record_holding_the_value_twice_under_one_field_is_hit_once() -> None:
+    assert records_holding([{"f": 1, "inner": {"f": 1}}], 1, fields=["f"]) == ["#0.f"]
+
+
+def test_a_record_holding_the_value_under_two_fields_is_hit_under_each() -> None:
+    assert records_holding([{"a": 1, "b": 1}], 1, fields=["a", "b"]) == ["#0.a", "#0.b"]
+
+
+def test_rows_holding_joins_the_key_clauses_with_or() -> None:
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_Result([]))
+    asyncio.run(rows_holding(session, "v", columns=["c"], key_value=1, keys=[("llm", None, "sense_id"), ("oewn", "senses", "id")]))
+    sql = _sql_of(session.execute.call_args)
+    assert "(c.table_schema = :s0 AND k.column_name = :k0) OR (c.table_schema = :s1 AND k.column_name = :k1 AND c.table_name = :t1)" in sql
+
+
+def test_the_held_probe_is_exactly_this_single_row_lookup() -> None:
+    session = _session([("llm", "meta", "gender", "sense_id")], [])
+    asyncio.run(rows_holding(session, "f", columns=["gender"], key_value="s1", keys=[("llm", None, "sense_id")]))
+    assert _sent(session)[1][0] == 'SELECT 1 FROM "llm"."meta" WHERE "sense_id" = :key AND "gender" = :value LIMIT 1'
+
+
+def test_undecodable_bytes_are_replaced_not_fatal(tmp_path) -> None:
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"\xff ZZHIT")
+    assert file_sentinel_locations({"h": "ZZHIT"}, [f]) == {"h": [str(f)]}
+
+
+def test_two_unreadable_files_are_listed_separated_by_semicolons(tmp_path, monkeypatch, caplog) -> None:
+    import logging
+
+    bad_a = tmp_path / "a.txt"
+    bad_b = tmp_path / "b.txt"
+    bad_a.write_text("x")
+    bad_b.write_text("x")
+    real_open = open
+
+    def _open(path, *args, **kwargs):
+        if str(path) in (str(bad_a), str(bad_b)):
+            raise OSError("denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", _open)
+    with caplog.at_level(logging.WARNING, logger=ps.logger.name):
+        file_sentinel_locations({"h": "ZZHIT"}, [bad_a, bad_b])
+    assert [r.getMessage() for r in caplog.records] == [f"2 file(s) could not be read and were not scanned: {bad_a}: denied; {bad_b}: denied"]
+
+
+def test_records_holding_takes_value_by_keyword_and_its_tail_by_keyword_only() -> None:
+    assert records_holding([{"f": 1}], value=1, fields=["f"]) == ["#0.f"]
+    with pytest.raises(TypeError):
+        records_holding([{"f": 1}], 1, ["f"])
+
+
+def test_rows_holding_takes_its_tail_by_keyword_only() -> None:
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_Result([]))
+    with pytest.raises(TypeError):
+        asyncio.run(rows_holding(session, "v", ["c"], key_value=1, keys=[]))

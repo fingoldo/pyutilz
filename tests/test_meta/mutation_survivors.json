@@ -5,5 +5,8 @@
   "src/pyutilz/core/array_summary.py::9ba3e5ac4f8f::operator: > becomes >=": "A tie between two equal values gives the same maximum, so > and >= return the same value; only the sign of a zero could differ, which the contract does not pin.",
   "src/pyutilz/core/array_summary.py::4389328e6615::logic: False becomes True": "copy=False only avoids a copy of an already-float64 result; the returned values are identical.",
   "src/pyutilz/core/array_summary.py::548b872313e8::logic: False becomes True": "copy=False only avoids a copy of an already-float64 result; the returned values are identical.",
-  "src/pyutilz/core/array_summary.py::2257fc230b6d::constant: 1 becomes 2": "numpy reshape treats any negative size as an inferred dimension, so reshape(-2, n) and reshape(-1, n) return the same shape."
+  "src/pyutilz/core/array_summary.py::2257fc230b6d::constant: 1 becomes 2": "numpy reshape treats any negative size as an inferred dimension, so reshape(-2, n) and reshape(-1, n) return the same shape.",
+  "src/pyutilz/dev/persistence_sweep.py::92d706c4c19a::arguments transposed: 4 <-> len(str(len(ordered)))": "max(4, n) is symmetric in its arguments, so swapping 4 and len(str(len(ordered))) returns the same width.",
+  "src/pyutilz/dev/persistence_sweep.py::e79cc2ebd168::constant: emptied an f-string segment": "An integer formatted with the width spec and no type letter prints the same digits as with 'd'; the sentinel is unchanged.",
+  "src/pyutilz/dev/persistence_sweep.py::05e9bf7cfd58::constant: emptied a string": "Each decoded JSONL line is a complete JSON value, so the join separator never lies between two parts of one sentinel; joining with '' or '\\n' finds the same sentinels."
 }
