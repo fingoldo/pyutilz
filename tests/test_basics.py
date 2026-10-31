@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyutilz.text.similarity.basics import contigous_strings_similarity, levenshtein_strings_similarity
+from pyutilz.text.similarity.basics import contigous_strings_similarity, levenshtein_strings_similarity, normalize_sentence
 from pyutilz.text.strings.basics import (
     camel_case_split,
     find_between,
@@ -106,3 +106,80 @@ class TestSimilarity:
         sim, root = contigous_strings_similarity("MeosureOIS21qwe", "MeasureOIS18qwe")
         assert sim == pytest.approx(1 / 3)
         assert root == "Meqwe"
+
+    def test_a_common_left_block_alone_is_the_root(self):
+        # "abc" is shared on the left, "X" and "Y" differ on the right: 3 of 4 characters.
+        assert contigous_strings_similarity("abcX", "abcY") == (0.75, "abc")
+
+    def test_a_common_right_block_alone_is_the_root(self):
+        assert contigous_strings_similarity("Xabc", "Yabc") == (0.75, "abc")
+
+    def test_a_prefix_of_the_longer_string_is_the_whole_shorter_string(self):
+        # "ab" is a prefix of "abc": the shorter string covers the whole match, 2 of 3 characters.
+        sim, root = contigous_strings_similarity("ab", "abc")
+        assert sim == pytest.approx(2 / 3)
+        assert root == "ab"
+
+    def test_left_and_right_blocks_are_joined_into_the_root(self):
+        # shared "A" on the left and "B" on the right, 2 of 5 characters, root "AB".
+        assert contigous_strings_similarity("AXYZB", "AQQB") == (pytest.approx(0.4), "AB")
+
+    def test_the_longer_string_sets_the_denominator(self):
+        assert contigous_strings_similarity("a", "abcd")[0] == pytest.approx(0.25)
+
+
+class TestLevenshteinBounds:
+    def test_a_string_against_empty_has_zero_similarity(self):
+        assert levenshtein_strings_similarity("abc", "") == 0.0
+        assert levenshtein_strings_similarity("", "a") == 0.0
+
+
+class TestNormalizeSentence:
+    def test_default_symbols_are_replaced_by_the_placeholder(self):
+        assert normalize_sentence("A.B,C") == ["A", "B", "C"]
+
+    def test_the_text_is_uppercased(self):
+        assert normalize_sentence("abc") == ["ABC"]
+
+    def test_a_custom_placeholder_splits_the_tokens(self):
+        assert normalize_sentence("A-B", placeholder="_") == ["A", "B"]
+
+    def test_repeated_tokens_are_kept_once_in_first_seen_order(self):
+        assert normalize_sentence("x x y") == ["X", "Y"]
+
+    def test_an_empty_sentence_has_no_tokens(self):
+        assert normalize_sentence("") == []
+
+    def test_bsports_is_accepted_and_ignored(self):
+        assert normalize_sentence("A", True) == ["A"]
+
+    def test_an_abbreviation_in_the_middle_is_removed(self):
+        assert normalize_sentence("ALPHA FC BETA", abbreviations=["FC"]) == ["ALPHA", "BETA"]
+
+    def test_a_leading_abbreviation_is_removed_with_its_separator(self):
+        assert normalize_sentence("FC SPORTS", abbreviations=["FC"]) == ["SPORTS"]
+
+    def test_a_trailing_abbreviation_is_removed_with_its_separator(self):
+        assert normalize_sentence("ALPHA FC", abbreviations=["FC"]) == ["ALPHA"]
+
+    def test_an_abbreviation_inside_a_word_is_not_removed(self):
+        assert normalize_sentence("AFC BETA", abbreviations=["FC"]) == ["AFC", "BETA"]
+
+    def test_a_word_starting_with_an_abbreviation_is_not_cut(self):
+        assert normalize_sentence("FCBAYERN", abbreviations=["FC"]) == ["FCBAYERN"]
+
+    def test_a_word_ending_with_an_abbreviation_is_not_cut(self):
+        assert normalize_sentence("BAYERNFC", abbreviations=["FC"]) == ["BAYERNFC"]
+
+    def test_a_space_then_an_abbreviation_glued_to_a_word_is_not_cut(self):
+        assert normalize_sentence("ALPHA FCX", abbreviations=["FC"]) == ["ALPHA", "FCX"]
+
+
+class TestSimilarityBoundaries:
+    def test_an_empty_string_against_a_nonempty_one_shares_nothing(self):
+        assert contigous_strings_similarity("", "abc") == (0.0, "")
+        assert contigous_strings_similarity("abc", "") == (0.0, "abc")
+
+    def test_a_shorter_common_prefix_keeps_the_longer_string_as_root_when_fully_matched(self):
+        # "ab" is a prefix of "abcd": 2 of 4 characters match and the root is the whole first string.
+        assert contigous_strings_similarity("abcd", "ab") == (0.5, "abcd")

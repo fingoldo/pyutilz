@@ -8,5 +8,14 @@
   "src/pyutilz/core/array_summary.py::2257fc230b6d::constant: 1 becomes 2": "numpy reshape treats any negative size as an inferred dimension, so reshape(-2, n) and reshape(-1, n) return the same shape.",
   "src/pyutilz/dev/persistence_sweep.py::92d706c4c19a::arguments transposed: 4 <-> len(str(len(ordered)))": "max(4, n) is symmetric in its arguments, so swapping 4 and len(str(len(ordered))) returns the same width.",
   "src/pyutilz/dev/persistence_sweep.py::e79cc2ebd168::constant: emptied an f-string segment": "An integer formatted with the width spec and no type letter prints the same digits as with 'd'; the sentinel is unchanged.",
-  "src/pyutilz/dev/persistence_sweep.py::05e9bf7cfd58::constant: emptied a string": "Each decoded JSONL line is a complete JSON value, so the join separator never lies between two parts of one sentinel; joining with '' or '\\n' finds the same sentinels."
+  "src/pyutilz/dev/persistence_sweep.py::05e9bf7cfd58::constant: emptied a string": "Each decoded JSONL line is a complete JSON value, so the join separator never lies between two parts of one sentinel; joining with '' or '\\n' finds the same sentinels.",
+  "src/pyutilz/text/similarity/basics.py::f1c89dc41666::arguments transposed: a <-> b": "Levenshtein distance is symmetric, so swapping its two arguments returns the same distance.",
+  "src/pyutilz/text/similarity/basics.py::ad8953cf814e::arguments transposed: len(a) <-> len(b)": "max() of the two lengths is symmetric, so swapping them returns the same similarity.",
+  "src/pyutilz/text/similarity/basics.py::08d3c384b68e::constant: 0 becomes 1": "best_m is assigned 0 here and overwritten by best_l + best_r before any read, so its initial value is never observed.",
+  "src/pyutilz/text/similarity/basics.py::01f28a6e91d7::arguments transposed: len(a) <-> len(b)": "min() of the two lengths is symmetric, so swapping them gives the same range.",
+  "src/pyutilz/text/similarity/basics.py::377a5b3c8713::arguments transposed: best_l <-> best_r": "max() over best_l, best_r and best_m is symmetric in its arguments, so reordering them returns the same value.",
+  "src/pyutilz/text/similarity/basics.py::1d0d0aaa3c56::arguments transposed: best_r <-> best_m": "max() over best_l, best_r and best_m is symmetric in its arguments, so reordering them returns the same value.",
+  "src/pyutilz/text/similarity/basics.py::5594a2182b63::arguments transposed: len(a) <-> len(b)": "max() of the two lengths is symmetric, so swapping them returns the same similarity.",
+  "src/pyutilz/text/similarity/basics.py::f90e74c28d1c::logic: False becomes True": "bSports is accepted and ignored by normalize_sentence, so its default value cannot change any result.",
+  "src/pyutilz/text/similarity/basics.py::ec7eb3b07ecf::constant: emptied a string": "Collapsing repeated spaces is redundant: the empty-token filter drops the empty tokens that doubled spaces would leave behind."
 }
