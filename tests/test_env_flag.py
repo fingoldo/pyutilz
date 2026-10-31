@@ -52,3 +52,9 @@ def test_write_prompt_closes_stdin_when_write_fails_unexpectedly():
     with pytest.raises(OSError, match="disk gone"):
         claude_code_cli._write_prompt(_Proc(), "hello")
     assert _Proc.stdin.closed
+
+
+def test_the_default_is_off_when_the_caller_omits_it(monkeypatch):
+    """Callers that leave ``default`` out get False: a switch nobody set must stay off."""
+    monkeypatch.delenv("PYUTILZ_TEST_FLAG", raising=False)
+    assert env_flag("PYUTILZ_TEST_FLAG") is False
