@@ -1,0 +1,9 @@
+{
+  "src/pyutilz/core/array_summary.py::31932be44f9d::logic: False becomes True": "The except ImportError branch that sets _HAVE_NUMBA = False runs only when numba cannot be imported; the package requires numba, so no test can reach it without reloading the module.",
+  "src/pyutilz/core/array_summary.py::55e7408b6eb0::logic: True becomes False": "The njit keyword arguments cache=True, parallel=True and nogil=True only change compilation caching, thread scheduling and GIL release; they never change the returned values, so no test can observe them.",
+  "src/pyutilz/core/array_summary.py::4a357ff7b1be::operator: < becomes <=": "A tie between two equal values gives the same minimum, so < and <= return the same value; only the sign of a zero could differ, which the contract does not pin.",
+  "src/pyutilz/core/array_summary.py::9ba3e5ac4f8f::operator: > becomes >=": "A tie between two equal values gives the same maximum, so > and >= return the same value; only the sign of a zero could differ, which the contract does not pin.",
+  "src/pyutilz/core/array_summary.py::4389328e6615::logic: False becomes True": "copy=False only avoids a copy of an already-float64 result; the returned values are identical.",
+  "src/pyutilz/core/array_summary.py::548b872313e8::logic: False becomes True": "copy=False only avoids a copy of an already-float64 result; the returned values are identical.",
+  "src/pyutilz/core/array_summary.py::2257fc230b6d::constant: 1 becomes 2": "numpy reshape treats any negative size as an inferred dimension, so reshape(-2, n) and reshape(-1, n) return the same shape."
+}
