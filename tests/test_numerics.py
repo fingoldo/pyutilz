@@ -58,3 +58,29 @@ class TestDigitMeasures:
 
     def test_a_single_trailing_zero_after_the_fractional_digits(self):
         assert count_trailing_zeros(1.30e-6, precision=8) == 1
+
+
+class TestEdgesAndDefaults:
+    def test_a_thousands_form_with_trailing_space_is_not_a_float(self):
+        assert is_float("1,234 ") is False
+
+    def test_a_failed_parse_is_logged_at_debug_with_the_exception(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.DEBUG):
+            assert is_float("abc") is False
+        messages = [r.getMessage() for r in caplog.records if "is not a float literal" in r.getMessage()]
+        assert len(messages) == 1
+        assert messages[0].startswith("is_float: value is not a float literal: ValueError: ")
+
+    def test_the_default_precision_is_five_decimals(self):
+        assert float_distinct_digits_percent(25.05063) == pytest.approx(0.7142857142857143)
+
+    def test_zero_precision_counts_the_integer_digits_only(self):
+        assert float_distinct_digits_percent(11.1, precision=0) == pytest.approx(0.5)
+
+    def test_the_default_precision_for_trailing_zeros_is_five(self):
+        assert count_trailing_zeros(100.0) == 5
+
+    def test_precision_one_still_counts_fractional_zeros(self):
+        assert count_trailing_zeros(100.0, precision=1) == 1
