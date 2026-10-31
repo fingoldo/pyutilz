@@ -367,3 +367,50 @@ class TestCorruptionAndSidecarPaths:
         os.utime(sidecar, (backdated, backdated))
         cache.get("k1")
         assert sidecar.stat().st_mtime > backdated
+
+
+class TestExactMessagesAndPutFailures:
+    def test_compose_key_names_the_empty_input(self):
+        with pytest.raises(ValueError) as info:
+            dc.compose_key()
+        assert str(info.value) == "compose_key requires at least one part"
+
+    def test_a_key_with_a_path_separator_is_rejected_with_its_text(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        with pytest.raises(ValueError) as info:
+            cache.put("a/b", 1)
+        assert str(info.value) == "DiskCache: key 'a/b' must not be empty or contain a path separator."
+
+    def test_an_unpicklable_value_fails_the_put_without_leaving_a_temporary_file(self, tmp_path, caplog):
+        import logging
+
+        cache = DiskCache(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="pyutilz.core.disk_cache"):
+            assert cache.put("k1", lambda: None) is False
+        assert cache.put_failures == 1
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(messages) == 1 and messages[0].startswith("DiskCache: put failed for key=k1: ")
+        assert list(tmp_path.glob("tmp_*")) == []
+        assert not (tmp_path / "k1.pkl").exists()
+
+    def test_a_sidecar_write_failure_is_logged_and_reported_as_not_stored(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        cache = DiskCache(tmp_path)
+
+        def _no_sidecar(path):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(dc, "write_sidecar", _no_sidecar)
+        with caplog.at_level(logging.WARNING, logger="pyutilz.core.disk_cache"):
+            assert cache.put("k1", np.arange(3)) is False
+        assert cache.put_failures == 1
+        assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
+            f"DiskCache: sidecar write failed for {tmp_path / 'k1.pkl'}: disk full"
+        ]
+        assert list(tmp_path.glob("tmp_*")) == []
+
+    def test_a_successful_put_returns_true_and_counts_no_failure(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        assert cache.put("k1", np.arange(3)) is True
+        assert cache.put_failures == 0
