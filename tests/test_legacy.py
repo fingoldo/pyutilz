@@ -72,3 +72,53 @@ class TestGetIdByKeyFieldAndInsertIfNeeded:
         assert kwargs["raw_sql"] is True
         assert kwargs["key_field_value"] == "widget"
         assert kwargs["add_updated_at_timestamp"] == "updated_at"
+
+
+class TestDefaultsAndWarningSite:
+    def test_ensure_defaults_to_name_and_id_with_no_autocreate_type(self, recorder):
+        with pytest.warns(DeprecationWarning):
+            legacy.EnsurePgTableExists("items")
+        assert recorder[0][1] == {"table": "items", "key_field_name": "name", "id_field_name": "id", "autocreate_id_type_name": None}
+
+    def test_read_defaults_to_name_id_and_an_empty_condition(self, recorder):
+        with pytest.warns(DeprecationWarning):
+            legacy.ReadTableIntoDic({}, "items")
+        kwargs = recorder[0][1]
+        assert (kwargs["key_field_name"], kwargs["condition"], kwargs["id_field_name"], kwargs["autocreate_id_type_name"]) == ("name", "", "id", None)
+
+    def test_reversed_read_defaults_to_name_id_and_an_empty_condition(self, recorder):
+        with pytest.warns(DeprecationWarning):
+            legacy.ReadTableIntoDicReversed({}, "items")
+        kwargs = recorder[0][1]
+        assert (kwargs["key_field_name"], kwargs["condition"], kwargs["id_field_name"], kwargs["autocreate_id_type_name"]) == ("name", "", "id", None)
+
+    def test_get_id_defaults_to_name_id_and_false_flags(self, recorder):
+        with pytest.warns(DeprecationWarning):
+            legacy.GetIdByKeyFieldAndInsertIfNeeded({}, "items", "widget")
+        kwargs = recorder[0][1]
+        assert kwargs["key_field_name"] == "name"
+        assert kwargs["id_field_name"] == "id"
+        assert kwargs["key_is_not_string"] is False
+        assert kwargs["use_alternate_fields_only"] is False
+        assert kwargs["alternate_fields_names"] == ""
+        assert kwargs["alternate_fields_values"] == ""
+        assert kwargs["unique_constraint_fields"] == ""
+
+    @pytest.mark.parametrize(
+        "name, args",
+        [
+            ("EnsurePgTableExists", ("items",)),
+            ("ReadTableIntoDic", ({}, "items")),
+            ("ReadTableIntoDicReversed", ({}, "items")),
+            ("GetIdByKeyFieldAndInsertIfNeeded", ({}, "items", "widget")),
+        ],
+    )
+    def test_the_warning_points_at_the_line_that_called_the_shim(self, recorder, name, args):
+        import inspect
+        import warnings
+
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+            getattr(legacy, name)(*args); call_line = inspect.currentframe().f_lineno
+        deprecations = [w for w in seen if issubclass(w.category, DeprecationWarning)]
+        assert deprecations and all(w.filename == __file__ and w.lineno == call_line for w in deprecations)
