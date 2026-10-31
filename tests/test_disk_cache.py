@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from pyutilz.core import disk_cache as dc
 from pyutilz.core.disk_cache import (
     DiskCache,
     compose_key,
@@ -271,3 +272,45 @@ def test_disk_cache_key_path_traversal_rejected(tmp_path: Path):
     # are the same contract ("a key is a content digest, not a path"), so either message is correct.
     with pytest.raises(ValueError, match=r"resolves outside cache_dir|path separator"):
         cache._key_path("../evil")
+
+
+class TestGoldenDigests:
+    """Cache keys are hashes of byte streams. These digests pin the exact bytes: every tag, length prefix and struct
+    format feeds into them, so a change to any of those changes the key. A deliberate format change must bump
+    _HASH_VERSION and update these values; an accidental one fails here instead of silently orphaning every entry."""
+
+    @pytest.mark.parametrize(
+        "obj, digest",
+        [
+            (0, "ba756e9d5d01ae47e452fd71f3bd79e6"),  # pragma: allowlist secret
+            (1, "3e03cd21918489481bda793c0a4114f7"),  # pragma: allowlist secret
+            (-5, "5e243fff9fa35ebad4ad7a2960b97406"),  # pragma: allowlist secret
+            (2**70, "b595a929222acb75b629f21955ea2dba"),  # pragma: allowlist secret
+            (1.5, "f85c08fafb85eca89c579cc42222399e"),  # pragma: allowlist secret
+            (True, "baf924df059083c2f50b9c2b114d8a57"),  # pragma: allowlist secret
+            (False, "79568dc83fd182163d35c142c4fa40ad"),  # pragma: allowlist secret
+            ("abc", "5b5e4ea3878f73497a5db5f2257b3c34"),  # pragma: allowlist secret
+            (b"xyz", "dbbec2c4d231f199d95de5d220aa6639"),  # pragma: allowlist secret
+            ([1, 2], "7d9019fbe4f09b35168c019c3e94f03c"),  # pragma: allowlist secret
+            ((1, 2), "c4916b127d88d834795aaaec067f2549"),  # pragma: allowlist secret
+            ({1, 2}, "c2b43f2d060519a0475f355f1851d63f"),  # pragma: allowlist secret
+            ({"a": 1}, "c265e0b104df2d51f2c87cabc62370ea"),  # pragma: allowlist secret
+            (None, "d659c35a486deebe44ad33a50858a8d9"),  # pragma: allowlist secret
+        ],
+    )
+    def test_hash_object_digest_is_pinned(self, obj, digest):
+        assert dc.hash_object(obj) == digest
+
+    def test_float64_array_digest_is_pinned(self):
+        assert dc.hash_object(np.arange(12, dtype=np.float64).reshape(3, 4)) == "efcaabd03a495487d5e9d8a759f39497"  # pragma: allowlist secret
+
+    def test_int32_array_digest_is_pinned(self):
+        assert dc.hash_object(np.arange(6, dtype=np.int32).reshape(2, 3)) == "b90e9eddf0d06930bd8d0a131e73a59b"  # pragma: allowlist secret
+
+    def test_array_summary_digest_is_pinned(self):
+        arr = np.arange(40, dtype=np.float64).reshape(10, 4)
+        assert dc.hash_array_summary(arr, n_summary_rows=2) == "a3e1236eb40a147841c3dd812400c288"  # pragma: allowlist secret
+
+    @pytest.mark.parametrize("parts, digest", [(("a", "b"), "6a93c5780b9861cdd8d2761a748d9591"), (("x",), "1ff47a876f42e33dda291cecd644c99d")])  # pragma: allowlist secret
+    def test_compose_key_digest_is_pinned(self, parts, digest):
+        assert dc.compose_key(*parts) == digest
