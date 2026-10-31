@@ -314,3 +314,56 @@ class TestGoldenDigests:
     @pytest.mark.parametrize("parts, digest", [(("a", "b"), "6a93c5780b9861cdd8d2761a748d9591"), (("x",), "1ff47a876f42e33dda291cecd644c99d")])  # pragma: allowlist secret
     def test_compose_key_digest_is_pinned(self, parts, digest):
         assert dc.compose_key(*parts) == digest
+
+
+class TestCorruptionAndSidecarPaths:
+    def test_garbage_bytes_are_caught_by_the_sidecar_check_and_both_files_are_removed(self, tmp_path, caplog):
+        import logging
+
+        cache = DiskCache(tmp_path)
+        cache.put("k1", np.arange(10))
+        payload = tmp_path / "k1.pkl"
+        sidecar = tmp_path / "k1.pkl.sha256"
+        payload.write_bytes(b"this is not pickle")
+        with caplog.at_level(logging.WARNING, logger="pyutilz.core.disk_cache"):
+            assert cache.get("k1") is None
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(m.startswith(f"DiskCache: sidecar verification failed for {payload}: ") and m.endswith("; removing") for m in messages)
+        assert not payload.exists()
+        assert not sidecar.exists()
+        assert cache.misses == 1
+
+    def test_a_tampered_payload_fails_the_sidecar_check_and_is_dropped(self, tmp_path, caplog):
+        import logging
+
+        cache = DiskCache(tmp_path)
+        cache.put("k1", np.arange(10))
+        payload = tmp_path / "k1.pkl"
+        sidecar = tmp_path / "k1.pkl.sha256"
+        assert sidecar.exists(), "put must write the sidecar the verification reads"
+        original = payload.read_bytes()
+        payload.write_bytes(original[:-1] + bytes([original[-1] ^ 0xFF]))
+        with caplog.at_level(logging.WARNING, logger="pyutilz.core.disk_cache"):
+            assert cache.get("k1") is None
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(m.startswith(f"DiskCache: sidecar verification failed for {payload}: ") and m.endswith("; removing") for m in messages)
+        assert not payload.exists()
+        assert not sidecar.exists()
+
+    def test_a_hit_logs_its_key_at_debug(self, tmp_path, caplog):
+        import logging
+
+        cache = DiskCache(tmp_path)
+        cache.put("k1", np.arange(3))
+        with caplog.at_level(logging.DEBUG, logger="pyutilz.core.disk_cache"):
+            cache.get("k1")
+        assert [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG] == ["DiskCache: hit key=k1"]
+
+    def test_a_hit_refreshes_the_sidecar_mtime_so_it_is_not_evicted_before_its_payload(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        cache.put("k1", np.array([1, 2, 3]))
+        sidecar = tmp_path / "k1.pkl.sha256"
+        backdated = sidecar.stat().st_mtime - 600.0
+        os.utime(sidecar, (backdated, backdated))
+        cache.get("k1")
+        assert sidecar.stat().st_mtime > backdated
