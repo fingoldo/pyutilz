@@ -414,3 +414,71 @@ class TestExactMessagesAndPutFailures:
         cache = DiskCache(tmp_path)
         assert cache.put("k1", np.arange(3)) is True
         assert cache.put_failures == 0
+
+
+class TestEvictionAndScan:
+    def _three_entries(self, tmp_path):
+        """Three entries, the oldest backdated first, so eviction order is known."""
+        cache = DiskCache(tmp_path)
+        for i, key in enumerate(["old", "mid", "new"]):
+            cache.put(key, np.zeros(5000, dtype=np.float64))
+            payload = tmp_path / f"{key}.pkl"
+            stamp = 1_000_000.0 + i * 100.0
+            os.utime(payload, (stamp, stamp))
+        return cache
+
+    def test_eviction_removes_the_oldest_payloads_first_until_under_the_cap(self, tmp_path):
+        cache = self._three_entries(tmp_path)
+        cache.max_size_bytes = cache.total_size() // 2
+        cache._evict_if_needed()
+        remaining = sorted(p.name for p in tmp_path.glob("*.pkl"))
+        assert remaining == ["new.pkl"]
+        assert cache.evictions == 2
+
+    def test_an_evicted_entry_takes_its_sidecar_with_it(self, tmp_path):
+        cache = self._three_entries(tmp_path)
+        cache.max_size_bytes = cache.total_size() // 2
+        cache._evict_if_needed()
+        assert not (tmp_path / "old.pkl.sha256").exists()
+        assert not (tmp_path / "mid.pkl.sha256").exists()
+        assert (tmp_path / "new.pkl.sha256").exists()
+
+    def test_the_protected_entry_survives_even_when_it_is_the_oldest(self, tmp_path):
+        cache = self._three_entries(tmp_path)
+        cache.max_size_bytes = cache.total_size() // 2
+        cache._evict_if_needed(protect=tmp_path / "old.pkl")
+        assert (tmp_path / "old.pkl").exists()
+        assert not (tmp_path / "mid.pkl").exists()
+
+    def test_an_orphan_sidecar_is_swept_during_the_size_check(self, tmp_path):
+        cache = DiskCache(tmp_path)
+        orphan = tmp_path / "ghost.pkl.sha256"
+        orphan.write_bytes(b"x" * 40)
+        cache._evict_if_needed()
+        assert not orphan.exists()
+
+    def test_the_scan_ignores_in_flight_temporary_writes(self, tmp_path):
+        (tmp_path / "tmp_inflight.pkl").write_bytes(b"x" * 99)
+        (tmp_path / "real.pkl").write_bytes(b"x" * 7)
+        payloads, sidecars, mtimes = dc._scan_cache_entries(tmp_path)
+        assert list(payloads) == [tmp_path / "real.pkl"]
+        assert payloads[tmp_path / "real.pkl"] == 7
+
+    def test_a_sidecar_is_keyed_by_the_payload_it_belongs_to(self, tmp_path):
+        (tmp_path / "k.pkl").write_bytes(b"x" * 3)
+        (tmp_path / "k.pkl.sha256").write_bytes(b"y" * 64)
+        payloads, sidecars, mtimes = dc._scan_cache_entries(tmp_path)
+        assert sidecars == {tmp_path / "k.pkl": 64}
+
+    def test_an_unlistable_cache_directory_is_reported_as_unavailable_with_a_warning(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        def _fail(path):
+            raise OSError("no such directory")
+
+        monkeypatch.setattr(dc.os, "scandir", _fail)
+        with caplog.at_level(logging.WARNING, logger="pyutilz.core.disk_cache"):
+            assert dc._scan_cache_entries(tmp_path / "gone") is None
+        assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
+            "disk_cache: cache entry scan failed, reporting it as unavailable: OSError: no such directory"
+        ]
