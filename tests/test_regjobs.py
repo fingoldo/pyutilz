@@ -77,3 +77,35 @@ class TestFinalize:
     def test_a_custom_table_is_threaded_through(self, executed):
         regjobs.regjobs_finalize("nightly", {}, table_name="other_jobs")
         assert "other_jobs" in repr(executed[0][0])
+
+
+class TestDefaultsAndColumns:
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda: regjobs.regjobs_poll("nightly", "node-7"),
+            lambda: regjobs.regjobs_progress("nightly", {}),
+            lambda: regjobs.regjobs_finalize("nightly", {}),
+        ],
+    )
+    def test_each_helper_defaults_to_the_regular_jobs_table(self, executed, call):
+        call()
+        assert "Identifier('regular_jobs')" in repr(executed[0][0])
+
+    def test_finalize_writes_the_result_column_by_its_name(self, executed):
+        regjobs.regjobs_finalize("nightly", {})
+        assert "Identifier('result')" in repr(executed[0][0])
+
+    def test_the_poll_interval_is_measured_in_minutes_from_the_last_finish(self, executed):
+        regjobs.regjobs_poll("nightly", "node-7")
+        assert repr(executed[0][0]).count("-interval_minutes * interval") == 3
+
+
+class TestUpdateShapeContract:
+    def test_the_column_arguments_are_keyword_only(self, executed):
+        with pytest.raises(TypeError):
+            regjobs._regjobs_update("nightly", {}, "regular_jobs", "finished_at", "result")
+
+    def test_the_column_arguments_are_taken_by_keyword(self, executed):
+        regjobs._regjobs_update("nightly", {}, "regular_jobs", ts_column="finished_at", result_column="result")
+        assert "Identifier('finished_at')" in repr(executed[0][0])
