@@ -225,3 +225,47 @@ class TestRecordsHolding:
 
     def test_a_value_absent_from_every_record_gives_no_hits(self):
         assert records_holding([{"f": "x"}], "y", fields=["f"]) == []
+
+
+def _sql_of(call_args) -> str:
+    return str(call_args.args[0])
+
+
+def test_text_columns_sends_exactly_this_information_schema_query() -> None:
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_Result([]))
+    asyncio.run(text_columns(session, ["public"]))
+    assert _sql_of(session.execute.call_args) == (
+        "SELECT table_schema, table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = ANY(:schemas) AND data_type = ANY(:types) "
+        "ORDER BY table_schema, table_name, column_name"
+    )
+
+
+def test_sentinel_locations_probes_each_column_with_its_quoted_identifiers() -> None:
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_Result([]))
+    asyncio.run(sentinel_locations(session, {"a": "ZZ0000ZZ"}, [("public", "t", "c")]))
+    assert _sql_of(session.execute.call_args) == (
+        "SELECT p.i FROM unnest(CAST(:patterns AS text[])) WITH ORDINALITY AS p(pattern, i) "
+        'WHERE EXISTS (SELECT 1 FROM "public"."t" t WHERE t."c"::text LIKE p.pattern)'
+    )
+
+
+def test_rows_holding_finds_the_key_columns_of_every_table_in_the_schema() -> None:
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_Result([]))
+    asyncio.run(rows_holding(session, "v", columns=["c"], key_value=1, keys=[("llm", None, "sense_id")]))
+    assert _sql_of(session.execute.call_args) == (
+        "SELECT c.table_schema, c.table_name, c.column_name, k.column_name FROM information_schema.columns c "
+        "JOIN information_schema.columns k ON k.table_schema = c.table_schema AND k.table_name = c.table_name "
+        "WHERE c.column_name = ANY(:cols) AND ((c.table_schema = :s0 AND k.column_name = :k0)) "
+        "ORDER BY 1, 2, 3"
+    )
+
+
+def test_rows_holding_narrows_to_a_named_table_when_one_is_given() -> None:
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=_Result([]))
+    asyncio.run(rows_holding(session, "v", columns=["c"], key_value=1, keys=[("oewn", "senses", "id")]))
+    assert "((c.table_schema = :s0 AND k.column_name = :k0 AND c.table_name = :t0))" in _sql_of(session.execute.call_args)
