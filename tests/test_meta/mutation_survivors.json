@@ -31,5 +31,6 @@
   "src/pyutilz/core/pythonlib/numerics.py::0d3212c8085f::operator: > becomes >=": "A non-negative precision always formats at least one digit, so the length is never zero and the fallback value is unreachable.",
   "src/pyutilz/core/pythonlib/numerics.py::4bac14a303a6::constant: 0 becomes 1": "The length is always at least one, and for a length of one both branches give 1.0, so the comparison constant cannot change the result.",
   "src/pyutilz/core/pythonlib/numerics.py::97fa07053f6c::constant: 1.0 becomes 1.1": "The fallback value is returned only for an empty digit string, which the formatting above never produces, so it is unreachable.",
-  "src/pyutilz/core/pythonlib/numerics.py::0200b00c7880::constant: emptied a string": "Every character that is not a zero ends the scan, and the separator characters are not zeros, so the set of separators makes no difference."
+  "src/pyutilz/core/pythonlib/numerics.py::0200b00c7880::constant: emptied a string": "Every character that is not a zero ends the scan, and the separator characters are not zeros, so the set of separators makes no difference.",
+  "src/pyutilz/data/polarslib/frames.py::d954f07189b1::logic: or becomes and": "A column's min and max are both missing or both present: the two None checks always agree, so or and and give the same result."
 }
