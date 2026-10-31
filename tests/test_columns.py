@@ -126,3 +126,13 @@ class TestOverflowOnOneSideOnly:
         with caplog.at_level("WARNING"):
             columns.cast_f64_to_f32(pl.DataFrame({"small": [-5, 0, 5]}))
         assert not any("beyond 2**24" in rec.getMessage() for rec in caplog.records)
+
+
+class TestSingleMatchingColumn:
+    def test_a_frame_whose_only_column_matches_keeps_that_column(self):
+        df = pl.DataFrame({"a": [1.0, float("inf")]})
+        assert columns.find_infinite_cols(df).columns == ["a"]
+
+    def test_a_single_column_frame_with_no_match_keeps_nothing(self):
+        df = pl.DataFrame({"a": [1.0, 2.0]})
+        assert columns.find_infinite_cols(df).columns == []

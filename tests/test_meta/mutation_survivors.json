@@ -17,5 +17,8 @@
   "src/pyutilz/text/similarity/basics.py::1d0d0aaa3c56::arguments transposed: best_r <-> best_m": "max() over best_l, best_r and best_m is symmetric in its arguments, so reordering them returns the same value.",
   "src/pyutilz/text/similarity/basics.py::5594a2182b63::arguments transposed: len(a) <-> len(b)": "max() of the two lengths is symmetric, so swapping them returns the same similarity.",
   "src/pyutilz/text/similarity/basics.py::f90e74c28d1c::logic: False becomes True": "bSports is accepted and ignored by normalize_sentence, so its default value cannot change any result.",
-  "src/pyutilz/text/similarity/basics.py::ec7eb3b07ecf::constant: emptied a string": "Collapsing repeated spaces is redundant: the empty-token filter drops the empty tokens that doubled spaces would leave behind."
+  "src/pyutilz/text/similarity/basics.py::ec7eb3b07ecf::constant: emptied a string": "Collapsing repeated spaces is redundant: the empty-token filter drops the empty tokens that doubled spaces would leave behind.",
+  "src/pyutilz/data/polarslib/columns.py::7a11ef06054a::logic: False becomes True": "A float column that holds a null is already matched by the null check, so treating its NaN test as True adds no column to the union.",
+  "src/pyutilz/data/polarslib/columns.py::197a58e3519f::constant: emptied a string": "The TypeVar's name is only used in its repr and in annotations; it does not change which frames the functions accept.",
+  "src/pyutilz/data/polarslib/columns.py::34e9f2f7f101::arguments transposed: pl.DataFrame <-> pl.LazyFrame": "The order of a TypeVar's constraints does not change which frame types are accepted, so the functions behave the same."
 }
