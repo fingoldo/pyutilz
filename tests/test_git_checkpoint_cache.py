@@ -118,3 +118,70 @@ def test_read_bytes_returns_false_when_neither_exists(tmp_path):
 def _write_gz(path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(gzip.compress(payload))
+
+
+def test_a_checkpoint_directory_may_already_exist(tmp_path):
+    checkpoint_path = tmp_path / "sub" / "checkpoint.json.gz"
+    write_json_checkpoint({"a": 1}, checkpoint_path)
+    write_json_checkpoint({"a": 2}, checkpoint_path)
+    assert jsonlib.loads(gzip.decompress(checkpoint_path.read_bytes()).decode("utf-8")) == {"a": 2}
+
+
+def test_a_json_checkpoint_stores_indented_text_with_sorted_keys(tmp_path):
+    checkpoint_path = tmp_path / "checkpoint.json.gz"
+    write_json_checkpoint({"b": 1, "a": 2}, checkpoint_path)
+    text = gzip.decompress(checkpoint_path.read_bytes()).decode("utf-8")
+    assert "\n" in text
+    assert text.index('"a"') < text.index('"b"')
+
+
+def test_a_restored_json_cache_is_indented_with_sorted_keys(tmp_path):
+    cache_path = tmp_path / "cache.json"
+    checkpoint_path = tmp_path / "checkpoint.json.gz"
+    write_json_checkpoint({"b": 1, "a": 2}, checkpoint_path)
+    read_json_with_checkpoint_fallback(cache_path, checkpoint_path)
+    text = cache_path.read_text(encoding="utf-8")
+    assert "\n" in text
+    assert text.index('"a"') < text.index('"b"')
+
+
+def test_a_checkpoint_has_a_zero_gzip_timestamp(tmp_path):
+    checkpoint_path = tmp_path / "checkpoint.json.gz"
+    write_json_checkpoint({"a": 1}, checkpoint_path)
+    assert checkpoint_path.read_bytes()[4:8] == b"\x00\x00\x00\x00"
+
+
+def test_a_bytes_checkpoint_has_a_zero_gzip_timestamp(tmp_path):
+    cache_path = tmp_path / "ledger.jsonl"
+    cache_path.write_bytes(b"row\n")
+    checkpoint_path = tmp_path / "ledger.gz"
+    write_bytes_checkpoint(cache_path, checkpoint_path)
+    assert checkpoint_path.read_bytes()[4:8] == b"\x00\x00\x00\x00"
+
+
+def test_a_one_byte_live_json_cache_is_kept(tmp_path):
+    cache_path = tmp_path / "cache.json"
+    cache_path.write_text("7", encoding="utf-8")
+    checkpoint_path = tmp_path / "checkpoint.json.gz"
+    write_json_checkpoint({"a": 1}, checkpoint_path)
+    assert read_json_with_checkpoint_fallback(cache_path, checkpoint_path) == 7
+
+
+def test_an_empty_live_bytes_cache_is_restored_from_the_checkpoint(tmp_path):
+    cache_path = tmp_path / "ledger.jsonl"
+    cache_path.write_bytes(b"row\n")
+    checkpoint_path = tmp_path / "ledger.gz"
+    write_bytes_checkpoint(cache_path, checkpoint_path)
+    cache_path.write_bytes(b"")
+    assert read_bytes_with_checkpoint_fallback(cache_path, checkpoint_path) is True
+    assert cache_path.read_bytes() == b"row\n"
+
+
+def test_a_one_byte_live_bytes_cache_is_kept(tmp_path):
+    cache_path = tmp_path / "ledger.jsonl"
+    cache_path.write_bytes(b"row\n")
+    checkpoint_path = tmp_path / "ledger.gz"
+    write_bytes_checkpoint(cache_path, checkpoint_path)
+    cache_path.write_bytes(b"x")
+    assert read_bytes_with_checkpoint_fallback(cache_path, checkpoint_path) is False
+    assert cache_path.read_bytes() == b"x"
