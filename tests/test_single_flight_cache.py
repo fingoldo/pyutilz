@@ -3,11 +3,129 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import pickle
 
 import pytest
 
 from pyutilz.system.single_flight_cache import SingleFlightCache
+
+
+def test_a_second_event_loop_is_refused_with_both_loops_named():
+    sfc: SingleFlightCache[str, int] = SingleFlightCache()
+
+    async def fetcher():
+        return 1
+
+    async def use():
+        await sfc.get_or_fetch({}, "k", fetcher)
+
+    asyncio.run(use())
+    with pytest.raises(RuntimeError) as info:
+        asyncio.run(use())
+    message = str(info.value)
+    assert message.startswith("SingleFlightCache.get_or_fetch called from event loop ")
+    assert ", but this instance is bound to " in message
+    assert message.endswith(" -- this class is single-event-loop only.")
+
+
+def test_a_pickle_drops_the_in_flight_bookkeeping():
+    sfc: SingleFlightCache[str, int] = SingleFlightCache()
+    sfc._inflight = {"k": None}
+    restored = pickle.loads(pickle.dumps(sfc))
+    assert restored._inflight == {}
+
+
+def test_a_pickle_made_after_use_still_round_trips():
+    sfc: SingleFlightCache[str, int] = SingleFlightCache()
+
+    async def fetcher():
+        return 1
+
+    asyncio.run(sfc.get_or_fetch({}, "k", fetcher))
+    restored = pickle.loads(pickle.dumps(sfc))
+    assert restored._loop is None
+
+
+def test_the_hit_rate_is_rounded_to_one_decimal_place():
+    sfc: SingleFlightCache[str, int] = SingleFlightCache()
+    sfc.hits = 1
+    sfc.misses = 2
+    assert sfc.get_cache_metrics()["hit_rate"] == 33.3
+
+
+@pytest.mark.asyncio
+async def test_hits_accumulate_across_lookups():
+    sfc: SingleFlightCache[str, int] = SingleFlightCache()
+    cache = {"k": 1}
+
+    async def fetcher():
+        return 0
+
+    await sfc.get_or_fetch(cache, "k", fetcher)
+    await sfc.get_or_fetch(cache, "k", fetcher)
+    assert sfc.hits == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fetch_is_logged_at_debug_with_its_key_and_traceback(caplog):
+    sfc: SingleFlightCache[str, int] = SingleFlightCache()
+
+    async def fetcher():
+        raise ValueError("boom")
+
+    with caplog.at_level(logging.DEBUG):
+        result = await sfc.get_or_fetch({}, "k", fetcher, default="d")
+    assert result == "d"
+    records = [r for r in caplog.records if "raised; returning default" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].getMessage() == "SingleFlightCache.get_or_fetch: fetcher for 'k' raised; returning default (not cached)"
+    assert records[0].exc_info[0] is ValueError
+
+
+@pytest.mark.asyncio
+async def test_clear_wakes_a_waiter_on_an_in_flight_fetch():
+    sfc: SingleFlightCache[str, int] = SingleFlightCache()
+    cache: dict = {}
+    release = asyncio.Event()
+
+    async def slow():
+        await release.wait()
+        return 1
+
+    fetch = asyncio.create_task(sfc.get_or_fetch(cache, "k", slow))
+    await asyncio.sleep(0)
+    waiter = asyncio.create_task(sfc.get_or_fetch(cache, "k", slow, default="d"))
+    await asyncio.sleep(0)
+    sfc.clear()
+    assert await asyncio.wait_for(waiter, timeout=1) == "d"
+    release.set()
+    await fetch
+
+
+@pytest.mark.asyncio
+async def test_clear_forgets_in_flight_fetches_so_a_new_call_fetches_again():
+    sfc: SingleFlightCache[str, int] = SingleFlightCache()
+    cache: dict = {}
+    release = asyncio.Event()
+    calls = []
+
+    async def slow():
+        calls.append(1)
+        await release.wait()
+        return 1
+
+    async def quick():
+        calls.append(2)
+        return 2
+
+    fetch = asyncio.create_task(sfc.get_or_fetch(cache, "k", slow))
+    await asyncio.sleep(0)
+    sfc.clear()
+    assert await sfc.get_or_fetch(cache, "k", quick) == 2
+    assert calls == [1, 2]
+    release.set()
+    await fetch
 
 
 @pytest.mark.asyncio
