@@ -647,3 +647,233 @@ def test_a_byte_array_one_past_the_leaf_is_split_at_eight_mebibytes():
     arr = np.zeros(_LEAF_BYTES_SPEC + 1, dtype=np.uint8)
     assert hash_array_summary(arr) == _recipe_digest(arr)
     assert hash_array_summary(arr) != hash_array_summary(np.zeros(_LEAF_BYTES_SPEC, dtype=np.uint8))
+
+
+# -------------------- survivors: directory creation, cap default, key refusal, strided hashing, eviction edges --------------------
+
+
+def test_a_missing_nested_cache_dir_is_created(tmp_path):
+    target = tmp_path / "a" / "b"
+    DiskCache(target)
+    assert target.is_dir()
+
+
+def test_the_default_cap_is_one_gigabyte(tmp_path):
+    assert DiskCache(tmp_path).max_size_bytes == 1_000_000_000
+
+
+@pytest.mark.parametrize("key", ["", "a/b"])
+def test_an_empty_key_or_one_with_a_separator_is_refused_with_its_message(tmp_path, key):
+    with pytest.raises(ValueError) as info:
+        DiskCache(tmp_path).put(key, 1)
+    assert str(info.value) == f"DiskCache: key {key!r} must not be empty or contain a path separator."
+
+
+def test_a_strided_array_larger_than_a_leaf_hashes_like_its_contiguous_copy():
+    strided = np.arange(2 * 1_100_000, dtype=np.float64)[::2]
+    assert not strided.flags["C_CONTIGUOUS"]
+    assert hash_array_summary(strided) == hash_array_summary(np.ascontiguousarray(strided))
+
+
+def test_eviction_does_nothing_when_the_total_equals_the_cap(tmp_path):
+    cache = DiskCache(tmp_path, max_size_bytes=300)
+    for name in ("a", "b", "c"):
+        (tmp_path / f"{name}.pkl").write_bytes(b"x" * 100)
+    cache._evict_if_needed()
+    assert {p.name for p in tmp_path.iterdir()} == {"a.pkl", "b.pkl", "c.pkl"}
+    assert cache.evictions == 0
+
+
+def _three_entries(tmp_path):
+    for i, name in enumerate(("a", "b", "c")):
+        path = tmp_path / f"{name}.pkl"
+        path.write_bytes(b"x" * 100)
+        os.utime(path, (1000 + i, 1000 + i))
+
+
+def test_eviction_removes_the_oldest_until_at_or_under_the_cap(tmp_path):
+    cache = DiskCache(tmp_path, max_size_bytes=199)
+    _three_entries(tmp_path)
+    cache._evict_if_needed()
+    assert {p.name for p in tmp_path.iterdir()} == {"c.pkl"}
+    assert cache.evictions == 2
+
+
+def test_an_entry_that_cannot_be_removed_is_skipped_and_the_next_one_goes(tmp_path, monkeypatch):
+    cache = DiskCache(tmp_path, max_size_bytes=199)
+    _three_entries(tmp_path)
+    real_unlink = Path.unlink
+
+    def unlink(self, *args, **kwargs):
+        if self.name == "a.pkl":
+            raise OSError("locked")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    cache._evict_if_needed()
+    assert {p.name for p in tmp_path.iterdir()} == {"a.pkl"}
+
+
+def test_a_put_leaves_the_final_pickle_and_no_temporary_file(tmp_path):
+    cache = DiskCache(tmp_path)
+    cache.put("k1", {"v": 1})
+    names = {p.name for p in tmp_path.iterdir()}
+    assert "k1.pkl" in names
+    assert not [n for n in names if n.startswith("tmp_")]
+
+
+# -------------------- survivors: total_size, sidecar accounting, corrupt-entry bookkeeping --------------------
+
+
+def test_total_size_of_an_empty_cache_is_zero(tmp_path):
+    assert DiskCache(tmp_path).total_size() == 0
+
+
+def test_total_size_counts_files_but_not_directories_or_in_flight_temporaries(tmp_path):
+    (tmp_path / "a.pkl").write_bytes(b"x" * 10)
+    (tmp_path / "tmp_inflight.pkl").write_bytes(b"x" * 1000)
+    (tmp_path / "sub").mkdir()
+    assert DiskCache(tmp_path).total_size() == 10
+
+
+def test_eviction_counts_every_sidecar_not_only_the_last_one(tmp_path):
+    cache = DiskCache(tmp_path, max_size_bytes=299)
+    for i, name in enumerate(("a", "b")):
+        (tmp_path / f"{name}.pkl").write_bytes(b"x" * 100)
+        (tmp_path / f"{name}.pkl.sha256").write_bytes(b"s" * 50)
+        os.utime(tmp_path / f"{name}.pkl", (1000 + i, 1000 + i))
+    cache._evict_if_needed()
+    assert {p.name for p in tmp_path.iterdir() if p.name.endswith(".pkl")} == {"b.pkl"}
+
+
+def test_a_corrupt_entry_is_counted_logged_and_removed(tmp_path, caplog):
+    import logging
+
+    from pyutilz.core.safe_pickle import write_sidecar
+
+    cache = DiskCache(tmp_path)
+    for _ in range(2):
+        path = tmp_path / "k.pkl"
+        path.write_bytes(b"not a pickle at all")
+        write_sidecar(str(path))
+        with caplog.at_level(logging.WARNING, logger=dc.logger.name):
+            assert cache.get("k", "MISS") == "MISS"
+        assert not path.exists()
+    assert cache.misses == 2
+    messages = [r.getMessage() for r in caplog.records if "corrupt entry" in r.getMessage()]
+    assert len(messages) == 2
+    assert messages[0].startswith(f"DiskCache: corrupt entry {tmp_path / 'k.pkl'} (")
+
+
+# -------------------- survivors: scan order and stat failures, orphan sidecars, key separators, counters --------------------
+
+
+class _ScanEntry:
+    def __init__(self, real, stat_fails: bool):
+        self._real = real
+        self.name = real.name
+        self.path = real.path
+        self._stat_fails = stat_fails
+
+    def is_file(self):
+        return self._real.is_file()
+
+    def stat(self):
+        if self._stat_fails:
+            raise OSError("vanished")
+        return self._real.stat()
+
+
+def _scan_with(monkeypatch, order_key, stat_fails=()):
+    """Make os.scandir yield entries in a chosen order, so the scan's break/continue choices are observable."""
+    real_scandir = os.scandir
+
+    class _Ctx:
+        def __init__(self, entries):
+            self._entries = entries
+
+        def __enter__(self):
+            return iter(self._entries)
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake(path):
+        with real_scandir(path) as it:
+            entries = sorted(it, key=order_key)
+        return _Ctx([_ScanEntry(e, e.name in stat_fails) for e in entries])
+
+    monkeypatch.setattr(os, "scandir", fake)
+
+
+def test_a_scan_keeps_going_past_an_in_flight_temporary(tmp_path, monkeypatch):
+    (tmp_path / "tmp_busy.pkl").write_bytes(b"x")
+    (tmp_path / "z.pkl").write_bytes(b"x" * 100)
+    _scan_with(monkeypatch, lambda e: (not e.name.startswith("tmp_"), e.name))
+    payload_sizes, _, _ = dc._scan_cache_entries(tmp_path)
+    assert set(payload_sizes) == {tmp_path / "z.pkl"}
+
+
+def test_a_scan_keeps_going_past_an_entry_that_cannot_be_stat_ed(tmp_path, monkeypatch):
+    (tmp_path / "a.pkl").write_bytes(b"x" * 10)
+    (tmp_path / "b.pkl").write_bytes(b"x" * 20)
+    _scan_with(monkeypatch, lambda e: e.name, stat_fails=("a.pkl",))
+    payload_sizes, _, _ = dc._scan_cache_entries(tmp_path)
+    assert set(payload_sizes) == {tmp_path / "b.pkl"}
+
+
+def test_orphan_sidecars_add_to_the_total_even_when_they_cannot_be_removed(tmp_path, monkeypatch):
+    real_unlink = Path.unlink
+
+    def unlink(self, *args, **kwargs):
+        if self.name == "orphan.pkl.sha256":
+            raise OSError("locked")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    total = dc._live_cache_bytes({tmp_path / "p.pkl": 100}, {tmp_path / "orphan.pkl": 50})
+    assert total == 150
+
+
+@pytest.mark.parametrize("key", ["/leading", "trailing/", "a/b"])
+def test_keys_with_a_separator_at_any_position_are_refused(tmp_path, key):
+    with pytest.raises(ValueError):
+        DiskCache(tmp_path)._key_path(key)
+
+
+def test_an_ordinary_key_is_accepted(tmp_path):
+    assert DiskCache(tmp_path)._key_path("ok_key") == (tmp_path / "ok_key.pkl").resolve()
+
+
+def test_every_miss_is_counted(tmp_path):
+    cache = DiskCache(tmp_path)
+    assert cache.get("missing", "MISS") == "MISS"
+    cache.get("missing", "MISS")
+    assert cache.misses == 2
+
+
+def test_every_failed_sidecar_write_is_counted_and_reported_as_not_stored(tmp_path, monkeypatch):
+    def boom(path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dc, "write_sidecar", boom)
+    cache = DiskCache(tmp_path)
+    assert cache.put("k1", 1) is False
+    assert cache.put("k2", 2) is False
+    assert cache.put_failures == 2
+
+
+@pytest.mark.skipif(os.sep != "\\", reason="a backslash is a path separator only on Windows")
+def test_a_backslash_key_is_refused_where_it_is_a_separator(tmp_path):
+    with pytest.raises(ValueError):
+        DiskCache(tmp_path)._key_path("a\\b")
+
+
+def test_every_sidecar_mismatch_is_counted_as_a_miss(tmp_path):
+    cache = DiskCache(tmp_path)
+    for _ in range(2):
+        assert cache.put("k", {"v": 1}) is True
+        path = tmp_path / "k.pkl"
+        path.write_bytes(path.read_bytes() + b"tampered")
+        assert cache.get("k", "MISS") == "MISS"
+    assert cache.misses == 2
