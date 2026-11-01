@@ -39,3 +39,24 @@ class TestNumTokensFromString:
         n = num_tokens_from_string("hello", "p50k_base")
         assert isinstance(n, int)
         assert n > 0
+
+
+class TestLazyAlias:
+    def test_importing_the_alias_does_not_load_the_llm_package(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        import pyutilz
+
+        src = str(Path(pyutilz.__file__).resolve().parents[1])
+        code = "import sys, pyutilz.core.openai; print('pyutilz.llm.openai_tokens' in sys.modules)"
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={**__import__("os").environ, "PYTHONPATH": src}, check=True)
+        assert result.stdout.strip() == "False"
+
+    def test_an_unknown_name_is_refused_with_the_module_and_name(self):
+        import pyutilz.core.openai as alias
+
+        with pytest.raises(AttributeError) as info:
+            alias.not_a_real_name
+        assert str(info.value) == "module 'pyutilz.core.openai' has no attribute 'not_a_real_name'"
