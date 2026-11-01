@@ -46,3 +46,74 @@ class TestRedactSecrets:
 
     def test_limit_truncates_result(self):
         assert redact_secrets("plain text with no secrets", limit=5) == "plain"
+
+
+class TestSecondRoundPatterns:
+    def test_an_empty_password_in_a_dsn_is_left_alone(self):
+        assert redact_secrets("postgresql://user:@host/db") == "postgresql://user:@host/db"  # pragma: allowlist secret
+
+    def test_an_empty_password_query_parameter_is_left_alone(self):
+        assert sanitize_dsn("postgresql://host/db?password=&sslmode=require") == "postgresql://host/db?password=&sslmode=require"  # pragma: allowlist secret
+
+    def test_a_dsn_scheme_must_start_at_a_word_boundary(self):
+        assert redact_secrets("xpostgres://user:pw@host/db") == "xpostgres://user:***@host/db"  # pragma: allowlist secret
+
+    def test_a_token_query_parameter_is_masked(self):
+        assert redact_secrets("https://x.example/?token=abc123&x=1") == "https://x.example/?***&x=1"
+
+    def test_an_api_key_query_parameter_is_masked(self):
+        assert redact_secrets("https://x.example/?api_key=abc123&x=1") == "https://x.example/?***&x=1"
+
+    def test_an_api_dash_key_query_parameter_is_masked(self):
+        assert redact_secrets("https://x.example/?api-key=abc123&x=1") == "https://x.example/?***&x=1"
+
+    def test_an_authorization_header_keeps_its_scheme_label(self):
+        assert redact_secrets("Authorization: Bearer abc123") == "Authorization: Bearer ***"
+
+    def test_an_authorization_header_is_normalised_to_one_space_after_its_colon(self):
+        assert redact_secrets("Authorization:   Bearer abc123") == "Authorization: Bearer ***"
+
+    def test_a_query_password_is_masked_in_place_by_the_redactor(self):
+        result = redact_secrets("https://h.example/?password=s3cret&x=1")
+        assert result.startswith("https://h.example/?password=")
+        assert "s3cret" not in result
+        assert "***" in result
+
+    def test_a_query_password_is_masked_in_place_by_the_dsn_sanitiser(self):
+        assert sanitize_dsn("postgresql://host/db?password=s3cret&sslmode=require") == "postgresql://host/db?password=***&sslmode=require"  # pragma: allowlist secret
+
+    def test_an_authorization_basic_header_keeps_its_scheme_label(self):
+        assert redact_secrets("Authorization: Basic dXNlcjpwYXNz") == "Authorization: Basic ***"
+
+    def test_a_bare_bearer_token_keeps_its_label(self):
+        assert redact_secrets("send Bearer abc123 now") == "send Bearer *** now"
+
+    def test_a_bare_basic_token_keeps_its_label(self):
+        assert redact_secrets("send Basic dXNlcjpwYXNz now") == "send Basic *** now"
+
+    def test_an_aws_access_key_id_is_masked(self):
+        assert redact_secrets("key AKIAIOSFODNN7EXAMPLE end") == "key *** end"  # pragma: allowlist secret
+
+    def test_an_openai_style_secret_key_is_masked(self):
+        assert redact_secrets("key sk-proj-abcdefghijklmnopqrstuvwx end") == "key *** end"
+
+    def test_a_pem_private_key_block_is_replaced_whole(self):
+        block = "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj\n-----END RSA PRIVATE KEY-----"  # pragma: allowlist secret
+        assert redact_secrets("before " + block + " after") == "before <private-key-redacted> after"
+
+    def test_a_pem_block_without_its_footer_is_not_matched(self):
+        text = "-----BEGIN PRIVATE KEY-----\nMIIB"  # pragma: allowlist secret
+        assert redact_secrets(text) == text
+
+    def test_a_key_value_secret_keeps_its_key_and_masks_the_value(self):
+        assert redact_secrets("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI") == "AWS_SECRET_ACCESS_KEY=***"
+
+    def test_a_credential_name_matches_as_a_whole_word_only(self):
+        from pyutilz.text.secrets_scrub import CREDENTIAL_NAME_RE
+
+        assert CREDENTIAL_NAME_RE.search("db_password")
+        assert CREDENTIAL_NAME_RE.search("password")
+        assert CREDENTIAL_NAME_RE.search("api_key")
+        assert not CREDENTIAL_NAME_RE.search("mypassword")
+        assert not CREDENTIAL_NAME_RE.search("passwords")
+        assert not CREDENTIAL_NAME_RE.search("username")
