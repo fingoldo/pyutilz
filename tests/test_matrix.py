@@ -351,3 +351,99 @@ class TestEdgeCases:
         # Sparse should be much smaller than dense (1000*1000*4 bytes)
         dense_memory = 1000 * 1000 * 4
         assert memory < dense_memory / 100  # At least 100x smaller
+
+
+class TestBuilderDefaultsAndRows:
+    def test_building_clears_the_csr_builder_by_default(self):
+        import numpy as np
+
+        from pyutilz.core.matrix import CsrIndPtrConstructor
+
+        builder = CsrIndPtrConstructor()
+        builder.add_element(1.0, 0)
+        builder.add_row()
+        builder.build_matrix(np.float64)
+        assert builder.indices == []
+        assert builder.data == []
+        assert builder.indptr == [0]
+
+    def test_a_csr_builder_can_keep_its_buffers_when_asked(self):
+        import numpy as np
+
+        from pyutilz.core.matrix import CsrIndPtrConstructor
+
+        builder = CsrIndPtrConstructor()
+        builder.add_element(1.0, 0)
+        builder.add_row()
+        builder.build_matrix(np.float64, clear_source=False)
+        assert builder.indices == [0]
+        assert builder.data == [1.0]
+
+    def test_an_unclosed_row_is_closed_when_building(self):
+        import numpy as np
+
+        from pyutilz.core.matrix import CsrIndPtrConstructor
+
+        builder = CsrIndPtrConstructor()
+        builder.add_element(5.0, 2)
+        matrix = builder.build_matrix(np.float64)
+        assert matrix.shape[0] == 1
+        assert matrix.toarray()[0, 2] == 5.0
+
+    def test_a_reset_builder_starts_its_row_numbering_from_zero(self):
+        import numpy as np
+
+        from pyutilz.core.matrix import CsrIndPtrConstructor
+
+        builder = CsrIndPtrConstructor()
+        builder.add_element(1.0, 0)
+        builder.add_row()
+        builder.build_matrix(np.float64)
+        builder.add_element(2.0, 1)
+        builder.add_row()
+        matrix = builder.build_matrix(np.float64)
+        assert matrix.shape == (1, 2)
+        assert matrix.toarray()[0, 1] == 2.0
+
+    def test_building_clears_the_coordinate_builder_by_default(self):
+        import numpy as np
+
+        from pyutilz.core.matrix import CsrRowColConstructor
+
+        builder = CsrRowColConstructor()
+        builder.add_element(1.0, 0, 0)
+        builder.build_matrix(np.float64)
+        assert builder.rows == []
+        assert builder.cols == []
+        assert builder.data == []
+
+    def test_a_coordinate_builder_can_keep_its_buffers_when_asked(self):
+        import numpy as np
+
+        from pyutilz.core.matrix import CsrRowColConstructor
+
+        builder = CsrRowColConstructor()
+        builder.add_element(1.0, 0, 0)
+        builder.build_matrix(np.float64, clear_source=False)
+        assert builder.rows == [0]
+
+    def test_an_unsupported_type_names_its_class_in_the_error(self):
+        import pytest
+
+        from pyutilz.core.matrix import get_sparse_memory_usage
+
+        with pytest.raises(TypeError, match=r"^Unsupported sparse matrix type: <class 'int'>$"):
+            get_sparse_memory_usage(3)
+
+    def test_an_object_without_its_arrays_is_reported_as_unsupported(self):
+        from unittest.mock import MagicMock
+
+        import pytest
+        from scipy.sparse import csr_matrix
+
+        from pyutilz.core.matrix import get_sparse_memory_usage
+
+        hollow = MagicMock(spec=csr_matrix)
+        del hollow.data
+        with pytest.raises(TypeError, match="Unsupported sparse matrix type: "):
+            get_sparse_memory_usage(hollow)

@@ -108,5 +108,6 @@
   "src/pyutilz/system/resilience.py::2a09612a2067::logic: True becomes False": "Unreachable: _should_attempt_reset runs only while the circuit is open, and opening always sets last_failure_time first, so the not-set branch never returns.",
   "src/pyutilz/database/psycopg2_pool.py::6c5656922431::constant: emptied a string": "Unreachable by design: the AssertionError after the retry loop is only raised if the loop finishes without returning or raising, which the loop cannot do, so its message is never observed.",
   "src/pyutilz/text/secrets_scrub.py::9b5e48d94891::regex widened: one-or-more became zero-or-more": "The optional label group [A-Z ]* before PRIVATE KEY admits only a single space beyond what the optional group already matches, so the matched set is the same as [A-Z ]+ on every input.",
-  "src/pyutilz/core/image.py::35991ae5a88f::deleted a statement-level call": "Reading the tag value and discarding it has no effect: the lookup returns the value without changing the mapping or any output."
+  "src/pyutilz/core/image.py::35991ae5a88f::deleted a statement-level call": "Reading the tag value and discarding it has no effect: the lookup returns the value without changing the mapping or any output.",
+  "src/pyutilz/core/matrix.py::689178c9c949::logic: guard inverted": "The scipy import sits under TYPE_CHECKING and is used only in annotations; every function imports scipy lazily, so inverting the guard only changes an import that already runs on demand in the test environment and cannot change any return value."
 }
