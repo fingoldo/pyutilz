@@ -185,3 +185,18 @@ def test_a_one_byte_live_bytes_cache_is_kept(tmp_path):
     cache_path.write_bytes(b"x")
     assert read_bytes_with_checkpoint_fallback(cache_path, checkpoint_path) is False
     assert cache_path.read_bytes() == b"x"
+
+
+def test_a_checkpoint_in_a_missing_nested_directory_is_written(tmp_path):
+    checkpoint_path = tmp_path / "a" / "b" / "checkpoint.json.gz"
+    write_json_checkpoint({"a": 1}, checkpoint_path)
+    assert jsonlib.loads(gzip.decompress(checkpoint_path.read_bytes()).decode("utf-8")) == {"a": 1}
+
+
+def test_a_restored_cache_has_sorted_keys_even_when_the_checkpoint_does_not(tmp_path):
+    cache_path = tmp_path / "cache.json"
+    checkpoint_path = tmp_path / "checkpoint.json.gz"
+    _write_gz(checkpoint_path, b'{"b": 1, "a": 2}')
+    read_json_with_checkpoint_fallback(cache_path, checkpoint_path)
+    text = cache_path.read_text(encoding="utf-8")
+    assert text.index('"a"') < text.index('"b"')
