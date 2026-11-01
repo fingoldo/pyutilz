@@ -4,6 +4,7 @@ Tests cover numpy utility functions for array operations.
 """
 
 import numpy as np
+import pytest
 
 from pyutilz.data.numpylib import get_topk_indices, smart_ratios
 
@@ -362,3 +363,63 @@ class TestDiv0:
 
         out = div0(np.array([-1.0, 0.0, 1.0]), 0)
         assert np.isnan(out).all()
+
+
+class TestTopKBehaviourSurvivors:
+    def test_k_defaults_to_one(self):
+        out = get_topk_indices(np.array([3.0, 9.0, 1.0]))
+        assert out.shape == (1,)
+        assert out.tolist() == [1]
+
+    def test_require_finite_defaults_to_off_so_nan_slots_keep_a_real_index(self):
+        out = get_topk_indices(np.array([np.nan, np.nan, 1.0]), k=2, highest=True)
+        assert -1 not in out.tolist()
+        assert out[0] == 2
+        assert out[1] in (0, 1)
+
+    def test_k_larger_than_the_axis_reports_the_exact_message(self):
+        with pytest.raises(ValueError) as info:
+            get_topk_indices(np.array([1.0, 2.0, 3.0]), k=5, axis=0)
+        assert str(info.value) == "k=5 exceeds array length 3 along axis 0"
+
+    def test_integer_arrays_are_ranked_without_a_nan_scan(self):
+        assert get_topk_indices(np.array([5, 1, 9, 3]), k=2, highest=True).tolist() == [2, 0]
+        assert get_topk_indices(np.array([5, 1, 9, 3]), k=2, highest=False).tolist() == [1, 3]
+
+    def test_lowest_with_a_nan_never_picks_the_nan(self):
+        out = get_topk_indices(np.array([np.nan, 2.0, 1.0, 5.0]), k=2, highest=False)
+        assert out.tolist() == [2, 1]
+
+    def test_lowest_with_a_nan_and_k_three_orders_the_real_values_first(self):
+        out = get_topk_indices(np.array([np.nan, 2.0, 1.0, 5.0]), k=3, highest=False)
+        assert out.tolist()[:2] == [2, 1]
+        assert out.tolist()[2] in (0, 3)
+
+    def test_require_finite_marks_a_nan_pick_as_minus_one(self):
+        out = get_topk_indices(np.array([np.nan, 1.0, 2.0]), k=3, highest=True, require_finite=True)
+        assert out.tolist() == [2, 1, -1]
+
+    def test_require_finite_keeps_real_picks_untouched(self):
+        out = get_topk_indices(np.array([4.0, np.nan, 2.0]), k=2, highest=True, require_finite=True)
+        assert out.tolist() == [0, 2]
+
+
+class TestTopKLowestWholeAxis:
+    def test_lowest_with_k_equal_to_the_axis_length_returns_every_index_sorted(self):
+        out = get_topk_indices(np.array([3.0, 1.0, 2.0]), k=3, highest=False)
+        assert out.tolist() == [1, 2, 0]
+
+
+class TestTopKLowestWithNanAllK:
+    @pytest.mark.parametrize("k", [1, 2, 3, 4, 6])
+    def test_lowest_k_with_nans_returns_the_k_smallest_real_values_in_ascending_order(self, k):
+        arr = np.array([9.0, np.nan, 4.0, 7.0, np.nan, 1.0, 6.0, 3.0])
+        real = sorted((i for i in range(len(arr)) if not np.isnan(arr[i])), key=lambda i: arr[i])
+        out = get_topk_indices(arr, k=k, highest=False)
+        assert out.tolist() == real[:k]
+
+
+class TestTopKLowestOneWithNan:
+    def test_lowest_one_on_a_long_descending_array_with_a_nan_finds_the_true_minimum(self):
+        arr = np.concatenate([np.arange(257, 0, -1, dtype=float), [np.nan]])
+        assert get_topk_indices(arr, k=1, highest=False).tolist() == [256]
