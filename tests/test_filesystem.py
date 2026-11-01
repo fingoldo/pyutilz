@@ -386,6 +386,7 @@ class TestSuppressStdoutStderr:
 
     def test_non_ascii_text_can_be_written_inside_the_block(self):
         with filesystem.suppress_stdout_stderr():
+            assert sys.stdout.encoding == "utf-8"
             print("Привет")
 
     def test_a_nested_block_restores_the_outer_block_stream(self):
