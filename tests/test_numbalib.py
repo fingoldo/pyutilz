@@ -282,3 +282,62 @@ def test_random_seed_parametrized(seed_value):
         assert len(random_nums) == 3
     except Exception as e:
         pytest.fail(f"Failed with seed={seed_value}: {e}")
+
+
+class TestGenerateCombinationsRecursiveNjit:
+    @pytest.mark.parametrize("n, r", [(1, 1), (3, 1), (3, 2), (4, 2), (5, 3), (5, 5), (6, 4)])
+    def test_rows_are_the_combinations_in_reversed_order(self, n, r):
+        import itertools
+
+        from pyutilz.data.numbalib import generate_combinations_recursive_njit
+
+        seq = np.arange(n, dtype=np.int64)
+        out = generate_combinations_recursive_njit(seq, r)
+        assert out.shape == (len(list(itertools.combinations(seq, r))), r)
+        assert [tuple(row) for row in out[::-1]] == list(itertools.combinations(seq.tolist(), r))
+
+    def test_every_row_has_r_columns_and_comes_from_the_sequence(self):
+        from pyutilz.data.numbalib import generate_combinations_recursive_njit
+
+        seq = np.array([10, 20, 30, 40], dtype=np.int64)
+        out = generate_combinations_recursive_njit(seq, 2)
+        assert out.shape == (6, 2)
+        assert set(out.ravel().tolist()) <= {10, 20, 30, 40}
+        assert len({tuple(row) for row in out.tolist()}) == 6
+
+    def test_r_zero_gives_a_single_empty_row(self):
+        from pyutilz.data.numbalib import generate_combinations_recursive_njit
+
+        out = generate_combinations_recursive_njit(np.arange(3, dtype=np.int64), 0)
+        assert out.shape == (1, 0)
+
+    def test_r_greater_than_the_sequence_gives_no_rows(self):
+        from pyutilz.data.numbalib import generate_combinations_recursive_njit
+
+        out = generate_combinations_recursive_njit(np.arange(2, dtype=np.int64), 3)
+        assert out.shape == (0, 3)
+
+    def test_empty_sequence_with_positive_r_gives_no_rows(self):
+        from pyutilz.data.numbalib import generate_combinations_recursive_njit
+
+        out = generate_combinations_recursive_njit(np.array([], dtype=np.int64), 2)
+        assert out.shape == (0, 2)
+
+    def test_negative_r_is_refused_with_the_message(self):
+        from pyutilz.data.numbalib import generate_combinations_recursive_njit
+
+        with pytest.raises(ValueError, match="generate_combinations_recursive_njit: r must be >= 0"):
+            generate_combinations_recursive_njit(np.arange(3, dtype=np.int64), -1)
+
+    def test_output_keeps_the_input_dtype(self):
+        from pyutilz.data.numbalib import generate_combinations_recursive_njit
+
+        out = generate_combinations_recursive_njit(np.arange(4, dtype=np.int32), 2)
+        assert out.dtype == np.int32
+
+    def test_core_with_r_zero_is_one_empty_row_and_r_one_is_each_element(self):
+        from pyutilz.data.numbalib import _generate_combinations_recursive_njit_core
+
+        seq = np.array([7, 8, 9], dtype=np.int64)
+        assert _generate_combinations_recursive_njit_core(seq, 0).shape == (1, 0)
+        assert sorted(_generate_combinations_recursive_njit_core(seq, 1).ravel().tolist()) == [7, 8, 9]
