@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from unittest.mock import patch
 
 from pyutilz.system.cli_logging import DEFAULT_FORMAT, setup_cli_logging
@@ -46,6 +47,23 @@ def test_actually_emits_a_log_line_via_basicConfig(monkeypatch):
     setup_cli_logging(fmt="%(message)s", stream=stream)
     logging.getLogger("pyutilz.test_cli_logging").info("hello")
     assert "hello" in stream.getvalue()
+
+    for h in list(root.handlers):
+        root.removeHandler(h)
+
+
+def test_the_default_format_stamps_each_line_with_a_time_then_the_message(monkeypatch):
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    root.setLevel(logging.WARNING)
+
+    stream = io.StringIO()
+    setup_cli_logging(stream=stream)
+    logging.getLogger("pyutilz.test_cli_logging").info("hello")
+    line = stream.getvalue().strip()
+    assert DEFAULT_FORMAT == "%(asctime)s %(message)s"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} hello", line)
 
     for h in list(root.handlers):
         root.removeHandler(h)
