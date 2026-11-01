@@ -61,5 +61,6 @@
   "src/pyutilz/core/disk_cache.py::e8ea0190d534::constant: 384 becomes 385": "On Windows chmod only sets the read-only bit, so the mode value is not observable on this platform; POSIX permissions are the only place the value matters.",
   "src/pyutilz/core/disk_cache.py::ab59a6414f5e::operator: <= becomes <": "The same test is repeated inside the loop, which breaks immediately when the total is within the cap, so the boundary of this check changes nothing.",
   "src/pyutilz/core/disk_cache.py::684ef270364d::logic: break becomes continue": "Continuing instead of breaking re-checks the same condition with an unchanged total and stops without evicting anything more.",
-  "src/pyutilz/core/disk_cache.py::93e75efc68c7::constant: emptied a string": "repr() of an object is always valid text, which UTF-8 encodes without an error handler, so the handler name is never used."
+  "src/pyutilz/core/disk_cache.py::93e75efc68c7::constant: emptied a string": "repr() of an object is always valid text, which UTF-8 encodes without an error handler, so the handler name is never used.",
+  "src/pyutilz/core/pythonlib/datetimes.py::7283170d545e::operator: > becomes >=": "Guard `big_delay_prob > 0` with `>=`: random() is in [0, 1), so random() < 0 is never true; the probability-zero branch is never taken either way, so the two forms are identical."
 }
