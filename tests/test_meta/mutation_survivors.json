@@ -105,5 +105,6 @@
   "src/pyutilz/system/resilience.py::1ee2f4c684aa::arguments transposed: initial_backoff * (backoff_multiplier**attempt) <-> max_backoff": "min is commutative in its two arguments, so swapping min(initial * multiplier**attempt, max_backoff) to min(max_backoff, initial * multiplier**attempt) gives the same backoff.",
   "src/pyutilz/system/resilience.py::31c124931778::arguments transposed: backoff + random.uniform(0, jitter * backoff) <-> max_backoff": "min is commutative in its two arguments, so swapping min(backoff + jitter draw, max_backoff) gives the same value.",
   "src/pyutilz/system/resilience.py::c2d85a105c68::constant: 0 becomes 1": "The half-open success counter is reset to 0 again every time the circuit re-enters the half-open state, so the value left behind by a failed probe is never read.",
-  "src/pyutilz/system/resilience.py::2a09612a2067::logic: True becomes False": "Unreachable: _should_attempt_reset runs only while the circuit is open, and opening always sets last_failure_time first, so the not-set branch never returns."
+  "src/pyutilz/system/resilience.py::2a09612a2067::logic: True becomes False": "Unreachable: _should_attempt_reset runs only while the circuit is open, and opening always sets last_failure_time first, so the not-set branch never returns.",
+  "src/pyutilz/database/psycopg2_pool.py::6c5656922431::constant: emptied a string": "Unreachable by design: the AssertionError after the retry loop is only raised if the loop finishes without returning or raising, which the loop cannot do, so its message is never observed."
 }
