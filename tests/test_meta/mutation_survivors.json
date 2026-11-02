@@ -151,5 +151,6 @@
   "src/pyutilz/llm/openrouter_batch.py::e7f9e93cddfa::arguments transposed: 0.0 <-> deadline_s - elapsed": "max() is commutative, so swapping the zero floor with the remaining deadline returns the same sleep.",
   "src/pyutilz/llm/openrouter_decisions.py::6a6e5921ce9c::logic: guard inverted": "The TYPE_CHECKING guard only feeds annotations, which are strings under `from __future__ import annotations`; running the guarded import at runtime just loads tenacity.wait, so no public name or behaviour changes while tenacity is installed.",
   "src/pyutilz/llm/openrouter_decisions.py::8ae84604baf4::deleted a statement-level call": "BaseException.__new__ already stores the positional message, so str(error) and args are unchanged when the explicit super().__init__(message) call is removed.",
-  "src/pyutilz/llm/openrouter_decisions.py::10080ba5e152::arguments transposed: delay <-> float(hint)": "max() is commutative, so swapping the backed-off delay with the server's Retry-After hint returns the same wait."
+  "src/pyutilz/llm/openrouter_decisions.py::10080ba5e152::arguments transposed: delay <-> float(hint)": "max() is commutative, so swapping the backed-off delay with the server's Retry-After hint returns the same wait.",
+  "src/pyutilz/llm/openrouter_speech.py::f30c8eb24d4f::constant: '_' became '_lock'": "snapshot() drops keys starting with the prefix; the class has one underscore-prefixed attribute (_lock), so filtering on _lock or on _ selects the same keys"
 }
