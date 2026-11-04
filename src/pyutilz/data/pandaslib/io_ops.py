@@ -118,7 +118,10 @@ def _optimize_and_maybe_resave(
 
 
 def _add_sentinel_column(tmp_df: pd.DataFrame, filename: str, sentinel_field: str, sentinel_fcn: Optional[Callable]) -> None:
-    """Add a column named ``sentinel_field`` (suffixed until unique) holding the source filename or ``sentinel_fcn(filename)``."""
+    """Add a column named ``sentinel_field`` (suffixed until unique) holding the source filename or ``sentinel_fcn(filename)``.
+
+    Modifies ``tmp_df`` in place: the frame is the per-file one its caller just read, not a user-supplied input.
+    """
     # Use local copy to avoid mutation persisting across files
     current_sentinel = sentinel_field
     while current_sentinel in tmp_df:

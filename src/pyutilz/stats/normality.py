@@ -13,7 +13,7 @@ Normal distribution:
 * ``normality_verdict`` -- run both, classify (reject_normal=True/False),
   emit human-readable verdict + raw stats.
 
-Both kernels are ``@njit(cache=True, fastmath=True)`` so n=1M runs in
+The four kernels are compiled with ``fastmath`` (the two public tests with a NaN-safe flag set) so n=1M runs in
 single-digit milliseconds on a recent CPU.
 
 Why this exists: heuristic moment-cutoff diagnostics ("|skew|<0.3 and
@@ -92,7 +92,7 @@ def log_phi_cdf(z: float) -> float:
 # D'Agostino's K^2 test (joint skew + kurt -> chi^2(2))
 # =============================================================================
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True, fastmath={"nsz", "arcp", "contract", "afn", "reassoc"})
 def dagostino_k2(x: np.ndarray) -> tuple:
     """D'Agostino & Pearson K^2 omnibus test for normality.
 
@@ -105,8 +105,8 @@ def dagostino_k2(x: np.ndarray) -> tuple:
     n >= 20 required for the finite-sample transforms; returns NaN
     stat/p on smaller samples.
 
-    Precondition: every element of ``x`` must be finite. The kernel is compiled with ``fastmath=True``, which assumes
-    no NaN/inf, so non-finite input gives undefined results rather than an error. ``normality_verdict`` filters first.
+    The kernel is compiled with a NaN-safe fastmath flag set, so non-finite input propagates to a NaN statistic instead of
+    being folded away; ``normality_verdict`` still filters non-finite values first.
     """
     n = x.size
     if n < 20:
@@ -183,7 +183,7 @@ def dagostino_k2(x: np.ndarray) -> tuple:
 # Anderson-Darling test for Normal
 # =============================================================================
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True, fastmath={"nsz", "arcp", "contract", "afn", "reassoc"})
 def anderson_darling_normal(x: np.ndarray) -> tuple:
     """Anderson-Darling A^2 statistic for Normal, with the standard
     finite-sample correction A*^2 = A^2 * (1 + 0.75/n + 2.25/n^2)
@@ -200,7 +200,7 @@ def anderson_darling_normal(x: np.ndarray) -> tuple:
     up to A* ~ 5; beyond that we saturate p=0 since rejection is
     certain at any sensible alpha.
 
-    Precondition: every element of ``x`` must be finite (``fastmath=True``; NaN/inf give undefined results).
+    Compiled with a NaN-safe fastmath flag set, so NaN/inf input propagates to a NaN result; ``normality_verdict`` filters first.
     """
     n = x.size
     if n < 8:

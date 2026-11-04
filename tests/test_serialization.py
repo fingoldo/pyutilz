@@ -261,6 +261,20 @@ class TestUnserializeSidecarVerification:
         write_sidecar(str(p))
         assert unserialize(str(p), verify_sidecar=True) == {"a": 1}
 
+    def test_verify_sidecar_hashes_the_bytes_it_read_not_a_second_open_of_the_path(self, tmp_path, monkeypatch):
+        """The digest is computed over the payload already in memory; re-reading the path would let a swapped file through."""
+        from pyutilz.core import safe_pickle
+
+        p = tmp_path / "once.pkl"
+        serialize({"a": 1}, fname=str(p))
+        safe_pickle.write_sidecar(str(p))
+
+        def _no_second_read(*_a, **_k):
+            raise AssertionError("verification re-read the file instead of hashing the loaded bytes")
+
+        monkeypatch.setattr(safe_pickle, "_sha256_of_file", _no_second_read)
+        assert unserialize(str(p), verify_sidecar=True) == {"a": 1}
+
     def test_verify_sidecar_true_with_stale_sidecar_raises(self, tmp_path):
         p = tmp_path / "stale_sidecar.pkl"
         serialize({"a": 1}, fname=str(p))

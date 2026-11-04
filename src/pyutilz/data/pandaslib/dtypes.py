@@ -152,7 +152,10 @@ def _promote_column_to_category(
     inplace: bool,
     verbose: bool,
 ) -> None:
-    """Mark an object column as category when it has few enough distinct values; failures are logged and skipped."""
+    """Mark an object column as category when it has few enough distinct values; failures are logged and skipped.
+
+    With ``inplace`` true the column of ``df`` is converted in place (the caller's frame changes); otherwise only ``new_dtypes`` is filled.
+    """
     try:
         n = df[col].nunique()
         if n <= max_categories:

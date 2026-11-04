@@ -368,16 +368,19 @@ class AdvancedTokenizer:
         whenever the file lives in a directory another user or process can write. The default is False because
         dumps written before save_tokens_to_file() started writing sidecars have none.
         """
-        import pickle, gzip  # nosec B403 - pickle is only used below to load back this class's own dump_tokens() output; the actual pickle.load() call at line 243 already carries a nosec B301 justification for the same trust assumption
+        import io, pickle, gzip  # nosec B403 - pickle is only used below to load back this class's own dump_tokens() output; the actual pickle.load() call at line 243 already carries a nosec B301 justification for the same trust assumption
 
         path = f"{name}.pickle"
+        # Read ONCE; verify those bytes and unpickle those same bytes, so a file replaced between check and load is never trusted.
+        with open(path, "rb") as raw_handle:
+            payload = raw_handle.read()
         if verify_sidecar:
-            from pyutilz.core.safe_pickle import PickleVerificationError, verify_sidecar as _verify_sidecar
+            from pyutilz.core.safe_pickle import PickleVerificationError, _verify_sidecar
 
-            if not _verify_sidecar(path):
+            if not _verify_sidecar(path, payload=payload):
                 raise PickleVerificationError(f"load_tokens: refusing to unpickle {path!r}; sha256 sidecar missing or mismatch.")
 
-        with gzip.open(path, "rb") as handle:
+        with gzip.open(io.BytesIO(payload), "rb") as handle:
             whole = pickle.load(handle)  # deserialize-ok: reads back this class's own save_tokens_to_file() output at a caller-named path; the file is unverified unless verify_sidecar=True  # nosec B301 - round-trip of this class's own save_tokens_to_file() output; name is caller-supplied, see verify_sidecar
 
         for var in vars:
