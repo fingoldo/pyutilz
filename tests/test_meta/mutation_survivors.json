@@ -179,5 +179,20 @@
   "src/pyutilz/llm/claude_code_cli.py::317fd8dc3a4c::operator: < becomes <=": "The deadline check compares time.monotonic() against a fixed deadline; `<` versus `<=` differs only on the exact clock tick where the two are equal, which no caller can observe.",
   "src/pyutilz/llm/claude_code_cli.py::d6038e30ac4b::constant: 1.0 becomes 1.1": "The queue poll interval (1.0 s versus 1.1 s) only sets how often the loop re-checks the deadline and the cancel event; the returned result, error and timeout flag do not depend on it.",
   "src/pyutilz/llm/claude_code_cli.py::4095462c5709::logic: True becomes False": "The stdout reader thread's daemon flag only changes behaviour at interpreter shutdown; the thread is always joined inside _reap_process before any result is returned.",
-  "src/pyutilz/llm/claude_code_cli.py::9f0d64edfb03::logic: True becomes False": "The stderr reader thread's daemon flag only changes behaviour at interpreter shutdown; the thread is always joined inside _reap_process before stderr is read."
+  "src/pyutilz/llm/claude_code_cli.py::9f0d64edfb03::logic: True becomes False": "The stderr reader thread's daemon flag only changes behaviour at interpreter shutdown; the thread is always joined inside _reap_process before stderr is read.",
+  "src/pyutilz/text/similarity/sentences.py::21d828b0ec8f::arguments transposed: short <-> long[k : k + short_len]": "levenshtein_distance is symmetric, so comparing the short word with the window in either argument order gives the same distance.",
+  "src/pyutilz/text/similarity/sentences.py::24644f19ff02::operator: < becomes <=": "When t_sim equals the current best the same value is reassigned, so changing < to <= changes nothing.",
+  "src/pyutilz/text/similarity/sentences.py::56af44618a82::logic: break becomes continue": "break only stops the scan early once a zero distance is found; continuing cannot lower a zero best, so the result is unchanged.",
+  "src/pyutilz/text/similarity/sentences.py::cf32dbe7f971::arguments transposed: cur_a_len <-> cur_b_len": "max() of the two word lengths is symmetric, so swapping them returns the same value.",
+  "src/pyutilz/text/similarity/sentences.py::a67f9701213a::arguments transposed: cur_a_len <-> cur_b_len": "min() of the two word lengths is symmetric, so swapping them returns the same value.",
+  "src/pyutilz/text/similarity/sentences.py::bfccba7a639f::arguments transposed: a <-> b": "levenshtein_distance is symmetric, so swapping the two words returns the same distance.",
+  "src/pyutilz/text/similarity/sentences.py::183d312762f1::operator: < becomes <=": "Equal lengths already return at line 63, so this branch only sees unequal lengths and < versus <= cannot differ.",
+  "src/pyutilz/text/similarity/sentences.py::db9f3dc59121::constant: 0.0 becomes 0.1": "Every cell of the matrix is overwritten by the nested loop at line 83, so the initial value has no effect.",
+  "src/pyutilz/text/similarity/sentences.py::421842ac6be0::arguments transposed: SentenceA[i] <-> SentenceB[j]": "_word_pair_similarity is symmetric in its two arguments (distance, max, min, prefix check and the length-ordered gliding), so swapping the words gives the same score.",
+  "src/pyutilz/text/similarity/sentences.py::0604a3746c5f::constant: 0 becomes 1": "best_perf starts at 0.0 and the comparison is >=, so any available pair replaces the default index; the default is never used while a pair remains.",
+  "src/pyutilz/text/similarity/sentences.py::bdb426e01a7a::constant: 0 becomes 1": "Same as 102:17: the default best_j is overwritten by the first available pair while any pair remains.",
+  "src/pyutilz/text/similarity/sentences.py::31ec058f3c4c::arguments transposed: N_a <-> N_b": "min() of the two sentence lengths is symmetric, so swapping them returns the same w_min.",
+  "src/pyutilz/text/similarity/sentences.py::cf4ab8a7209a::arguments transposed: N_a <-> N_b": "max() of the two sentence lengths is symmetric, so swapping them returns the same w_max.",
+  "src/pyutilz/text/similarity/sentences.py::35184fb6ce53::operator: > becomes >=": "w_max is at least 1 because empty sentences return None earlier, so w_max > 0 and w_max >= 0 are equivalent.",
+  "src/pyutilz/text/similarity/sentences.py::a742b5bfc9cf::constant: 0 becomes 1": "Unreachable: w_max is at least 1 (empty sentences return at line 217), so the else branch never runs."
 }
