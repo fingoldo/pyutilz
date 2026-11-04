@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pickle
 import threading
-import time
 
 import pytest
 
@@ -117,7 +116,7 @@ def test_path_lock_still_serializes_concurrent_writers_to_the_same_path(tmp_path
     t1.start()
     assert entered_first.wait(timeout=5)
     t2.start()
-    time.sleep(0.05)  # give second() a chance to (wrongly) enter if the lock were broken
+    t2.join(timeout=0.05)  # give second() a chance to (wrongly) enter if the lock were broken
     release_first.set()
     t1.join(timeout=10)
     t2.join(timeout=10)

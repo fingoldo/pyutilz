@@ -430,12 +430,12 @@ class TestResetWakesWaiters:
         deadline = time.monotonic() + 10
         while not any(entry["inflight"] for entry in sp._catalogue_cache.values()):
             assert time.monotonic() < deadline, "the first fetch never started"
-            time.sleep(0.01)
+            slow.join(timeout=0.01)
 
         waiter_out = []
         waiter = threading.Thread(target=lambda: waiter_out.append(sp.speech_catalogue(_mock(fast))), daemon=True)
         waiter.start()
-        time.sleep(0.2)  # the waiter has no listing and a fetch is in flight, so it is parked on the condition
+        waiter.join(timeout=0.2)  # the waiter has no listing and a fetch is in flight, so it is parked on the condition
         try:
             sp.reset_speech_catalogue_cache()
             waiter.join(timeout=5)

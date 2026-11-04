@@ -55,7 +55,7 @@ def _client(speech: Callable[[httpx.Request], httpx.Response], listing: Any = LI
             if hits is not None:
                 hits.append(str(request.url))
             if delay:
-                time.sleep(delay)
+                threading.Event().wait(delay)  # holds the fetch open so concurrent callers pile up behind it
             return httpx.Response(200, json=listing)
         return speech(request)
 

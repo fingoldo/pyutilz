@@ -22,7 +22,7 @@ region with the worker pid so we can tell which sweep won.
 from pyutilz.core import jsonlib
 import os
 import sys
-import time
+import threading
 
 # The cache module sets up its own hw_fingerprint via env; we force a stable
 # fake fingerprint so every worker agrees on the host dir without probing HW.
@@ -63,7 +63,7 @@ def main():
 
     def tuner():
         ran_sweep["v"] = True
-        time.sleep(sleep_ms / 1000.0)
+        threading.Event().wait(sleep_ms / 1000.0)  # stands in for a sweep of that duration
         return [{"backend": "measured", "winner_pid": os.getpid()}]
 
     if mode == "same_kernel":

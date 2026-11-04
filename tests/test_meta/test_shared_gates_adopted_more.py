@@ -2,11 +2,12 @@
 
 Each gate reads either ``src/pyutilz`` or ``tests/``; the floors sit well under the measured file counts (src/pyutilz about 270
 parsed files, tests/ about 320) so a wrong root or an over-broad exclude fails instead of passing on nothing.
-``caller_frame_mutation`` is advisory in py-ci-shared; here it is wired as blocking because the tree has no finding.
+``caller_frame_mutation`` is wired advisory (owner decision): findings warn and never fail.
 """
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 from py_ci_shared.caller_frame_mutation import assert_caller_frame_mutation
@@ -113,5 +114,12 @@ def test_loop_invariant_casts_and_heavy_calls_are_hoisted():
 
 
 def test_dataframe_parameters_are_not_mutated_in_place():
-    """X[col] = ..., X.columns = ... on a frame the caller passed in silently rewrites the caller's data."""
-    assert_caller_frame_mutation(SRC, advisory=False, min_files=150)
+    """X[col] = ..., X.columns = ... on a frame the caller passed in silently rewrites the caller's data.
+
+    Advisory by owner decision: a finding warns (CallerFrameMutationWarning) and never fails; a broken walk still fails.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert_caller_frame_mutation(SRC, advisory=True, min_files=150)
+    for warning in caught:
+        warnings.warn_explicit(warning.message, warning.category, warning.filename, warning.lineno)

@@ -46,7 +46,7 @@ permissions:
 jobs:
   merge-and-upload:
     name: Merge ci.yml + numba-coverage.yml raw coverage, upload combined flag
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # workflow_run fires on EVERY completion of numba-coverage-nightly regardless of outcome --
     # only chain off a genuinely green run that itself came from an already-vetted trigger
     # (see the on: block comment above for why 'workflow_run' is accepted here, not just 'push').

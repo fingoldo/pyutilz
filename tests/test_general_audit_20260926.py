@@ -525,7 +525,7 @@ class TestGen11SingleFlight:
 
             async def slow() -> str:
                 started.set()
-                await asyncio.sleep(10)
+                await asyncio.Event().wait()  # blocks until cancelled
                 return "x"
 
             fetch_task = asyncio.ensure_future(sfc.get_or_fetch(cache, "k", slow))

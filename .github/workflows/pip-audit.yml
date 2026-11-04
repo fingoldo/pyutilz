@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A hung `pip install` on a wedged index would otherwise burn the runner's default 6h against
     # the very Actions-minutes budget this job is designed to stay inside.
     timeout-minutes: 15

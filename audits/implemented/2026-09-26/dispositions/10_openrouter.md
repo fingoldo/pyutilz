@@ -25,7 +25,7 @@ All of them are built once by `build_provider_field` (`_request.py:45`) and sent
 **Disposition:** RESOLVED. `OpenRouterRequestMixin._apply_stream_chunk` (`_request.py:231`) reads `delta.annotations` and accumulates the url_citations into `last_web_search_citations`. The buffered path shares the parser, `url_citations`. Test: T::test_or4_citations_from_stream_delta_annotations_accumulate.
 
 ### OR-5
-**Disposition:** RESOLVED. In `_track_provider_specific_usage` (`openrouter_provider/_provider.py:607`), these per-call fields are now summed and never reset by a POST that lacks them: `last_upstream_inference_cost_usd`, `last_cache_write_tokens`, `last_cache_hit_tokens`, `last_audio_tokens` and `last_cache_discount_usd`. Test: T::test_or5_second_post_adds_to_and_never_erases_per_call_fields. The stale assertion in tests/test_llm_openrouter.py::TestExtendedUsageCapture::test_upstream_inference_cost_accumulates was re-framed to the summed value.
+**Disposition:** RESOLVED. In `_track_provider_specific_usage` (`openrouter_provider/_provider.py:607`), these per-call fields are now summed and never reset by a POST that lacks them: `last_upstream_inference_cost_usd`, `last_cache_write_tokens`, `last_cache_hit_tokens`, `last_audio_tokens` and `last_cache_discount_usd`. Test: T::test_or5_second_post_adds_to_and_never_erases_per_call_fields. The stale assertion in `tests/test_llm_openrouter_part2.py::TestExtendedUsageCapture::test_upstream_inference_cost_accumulates was re-framed to the summed value.
 
 ### OR-6
 **Disposition:** RESOLVED inside the OpenRouter files, with an optional HANDOFF to CORE.

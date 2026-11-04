@@ -80,15 +80,11 @@ class TestLoggingActivities:
     def test_log_activity(self):
         """Test logging activity"""
         from pyutilz.dev.logginglib import initialize_function_log, log_activity
-        import time
 
         log = initialize_function_log()
 
         # Start activity
         log_activity(log, "test_activity", verbose=False)
-
-        # Do some work
-        time.sleep(0.01)
 
         # Log activity again (should measure time)
         elapsed = log_activity(log, "test_activity", verbose=False)

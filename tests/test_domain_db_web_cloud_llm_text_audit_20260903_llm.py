@@ -228,7 +228,7 @@ class TestF08ClaudeCodePerCallState:
                 provider._reset_per_call_state()
                 order.append("reset:" + prompt)
                 provider._last_result_message = prompt
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0)
                 order.append("read:" + prompt + ":" + str(provider._last_result_message))
                 return prompt
 

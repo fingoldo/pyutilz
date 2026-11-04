@@ -131,7 +131,7 @@ USED correctly: `prompt_tokens_details.cached_tokens` (openai_compat.py:656), `c
 
 ### PROV-16 (High) -- Current model `deepseek-flash` unknown: 8192 max output, 64K window, wrong price
 
-**Disposition:** RESOLVED -- `deepseek-flash` added (384K output, 1M context), `deepseek-v4-flash` kept as the legacy alias billed at the Flash price, default model `deepseek-flash`, class defaults raised to the V4 values 384_000 / 1_000_000 (deepseek_provider.py:20, :70). Tests: `T::TestProv16Prov18DeepSeekFlash`; `tests/test_llm_deepseek.py` pricing/default tests reframed to the fetched table.
+**Disposition:** RESOLVED -- `deepseek-flash` added (384K output, 1M context), `deepseek-v4-flash` kept as the legacy alias billed at the Flash price, default model `deepseek-flash`, class defaults raised to the V4 values 384_000 / 1_000_000 (deepseek_provider.py:20, :70). Tests: `T::TestProv16Prov18DeepSeekFlash`; `tests/llm/test_deepseek_provider.py` pricing/default tests reframed to the fetched table.
 Evidence: D5 lists `deepseek-flash` (V4.1-Flash) and `deepseek-v4-pro`, both 1M context / 384K max output. Tables (deepseek_provider.py:348-369) have `deepseek-v4-flash` but not `deepseek-flash`; exact-match lookups (openai_compat.py:271, :283) give `_default_max_tokens=8192`, `_default_context_window=64_000`.
 Fix: add `deepseek-flash`; raise defaults to V4 values.
 
@@ -148,7 +148,7 @@ Evidence: :425. `thinking=` on deepseek-flash is warned "not supported" and drop
 
 ### PROV-19 (Low) -- HTTP 402 (no balance) retried forever
 
-**Disposition:** RESOLVED -- `_handle_special_status` (:100) now raises `LLMProviderError` on 402 (not an httpx error, so no retry predicate matches), unless the new `wait_on_insufficient_balance=True` constructor opt-in restores the warn-and-wait behaviour. The shared predicate in `_openai_compat_http.py` still classes 402 as retryable for other upstreams; unchanged. Tests: `T::TestProv19DeepSeek402`; `tests/test_llm_deepseek.py::test_handle_special_status_402_warns` now exercises the opt-in.
+**Disposition:** RESOLVED -- `_handle_special_status` (:100) now raises `LLMProviderError` on 402 (not an httpx error, so no retry predicate matches), unless the new `wait_on_insufficient_balance=True` constructor opt-in restores the warn-and-wait behaviour. The shared predicate in `_openai_compat_http.py` still classes 402 as retryable for other upstreams; unchanged. Tests: `T::TestProv19DeepSeek402`; `tests/llm/test_deepseek_provider.py::test_handle_special_status_402_warns` now exercises the opt-in.
 Evidence: `_is_retryable_http_error` treats 402 as retryable (_openai_compat_http.py:61-65) with INFINITE_RETRY; the warning at :401-406 says so. Deliberate, but a batch job hangs silently until top-up. Consider a cap / opt-in.
 USED correctly: `prompt_cache_hit_tokens` (openai_compat.py:656), `reasoning_content` via `_reasoning.from_message` (:892), `/user/balance` (:454-481).
 

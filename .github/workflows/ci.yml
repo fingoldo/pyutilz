@@ -44,7 +44,7 @@ jobs:
   # (macOS billed 10x, windows 2x) and queued behind the ~20-concurrent-job account budget.
   matrix-setup:
     name: Choose the matrix for this event
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
@@ -62,14 +62,14 @@ jobs:
           full = os.environ["EVENT_NAME"] in ("pull_request", "schedule") or os.environ.get("FORCE_FULL") == "true"
           versions = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
           if full:
-              legs = [{"os": "ubuntu-22.04" if v in ("3.8", "3.9") else "ubuntu-latest", "python-version": v} for v in versions]
-              legs += [{"os": "windows-latest", "python-version": v} for v in versions]
+              legs = [{"os": "ubuntu-22.04" if v in ("3.8", "3.9") else "ubuntu-24.04", "python-version": v} for v in versions]
+              legs += [{"os": "windows-2025", "python-version": v} for v in versions]
               # macos-latest is arm64 and setup-python publishes no 3.8/3.9 build for it, so the floor
               # runs on the Intel image instead of being dropped.
-              legs += [{"os": "macos-15-intel" if v in ("3.8", "3.9") else "macos-latest", "python-version": v} for v in versions]
+              legs += [{"os": "macos-15-intel" if v in ("3.8", "3.9") else "macos-15", "python-version": v} for v in versions]
           else:
-              legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-latest", "python-version": v} for v in ("3.8", "3.11", "3.14")]
-              legs += [{"os": "windows-latest", "python-version": "3.11"}, {"os": "macos-latest", "python-version": "3.11"}]
+              legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-24.04", "python-version": v} for v in ("3.8", "3.11", "3.14")]
+              legs += [{"os": "windows-2025", "python-version": "3.11"}, {"os": "macos-15", "python-version": "3.11"}]
           print("matrix=" + json.dumps({"include": legs}))
           PY
 
@@ -97,7 +97,7 @@ jobs:
         # test_no_stale_todos dates each TODO with git blame; a shallow clone dates every line to the boundary,
         # so py-ci-shared's stale_comment_age refuses it rather than pass having checked nothing. Full history
         # only on the ubuntu 3.11 leg, which always runs; the test skips explicitly on a shallow clone elsewhere.
-        fetch-depth: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') && '0' || '1' }}
+        fetch-depth: ${{ (matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.11') && '0' || '1' }}
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -151,13 +151,13 @@ jobs:
     - name: Run tests with coverage
       env:
         # Lets test_no_stale_todos skip on the shallow legs (see fetch-depth above); unset on the full-history leg.
-        PYUTILZ_CI_SHALLOW_CLONE: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') && '0' || '1' }}
+        PYUTILZ_CI_SHALLOW_CLONE: ${{ (matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.11') && '0' || '1' }}
       run: |
         pytest -m "not gpu" -n auto --dist=loadgroup --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=85 --durations=200
 
     - name: Upload coverage to Codecov
       uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@e13229e5707e73356eca2a74f39d4cd93af0db10  # v1.23.8+84  # pragma: allowlist secret
-      if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
+      if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-24.04'
       with:
         files: ./coverage.xml
         # Explicit flag so the per-push series is distinguishable from numba-disabled and combined.
@@ -173,7 +173,7 @@ jobs:
     # only version numba-coverage.yml runs) contributes; a different version's coverage.py
     # database format/line-numbering context isn't guaranteed compatible for `coverage combine`.
     - name: Upload raw coverage data (for the cross-workflow merged report)
-      if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest' && (success() || failure())
+      if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-24.04' && (success() || failure())
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
       with:
         name: raw-coverage-ci
@@ -196,7 +196,7 @@ jobs:
   # threshold on its own: it selects C901 only, so it cannot replace the rule set of the main gate.
   complexity-blocking:
     name: McCabe complexity (blocking, max 10)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -250,7 +250,7 @@ jobs:
     # Packaging sanity check on every push/PR, not just at release-tag time (publish.yml
     # already builds+twine-checks on tag push, but that's too late to catch a packaging bug --
     # by then it's the actual release). Mirrors mlframe's ci.yml build-verification job.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -304,7 +304,7 @@ jobs:
   ci-required:
     name: CI required checks
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: [test, ruff-blocking, complexity-blocking, lint-blocking, build]
     steps:

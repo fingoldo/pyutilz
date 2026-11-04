@@ -20,7 +20,7 @@ class _Provider(LLMProvider):
         self.calls.append({"prompt": prompt, **kwargs})
         async with self.semaphore:
             _progress.note_stream_progress(None, "x" * 10)
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0)
         return prompt
 
     async def count_tokens(self, text: str) -> int:

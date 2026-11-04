@@ -96,7 +96,7 @@ class TestGenerateBatchCancelsOrphanedTasks:
 
             async def generate(self, prompt, system=None, temperature=0.7, max_tokens=0, json_mode=False, thinking=None):
                 if prompt == "slow":
-                    await asyncio.sleep(10)
+                    await asyncio.Event().wait()  # blocks until cancelled
                 return "ok"
 
             async def generate_stream(self, *a, **kw):

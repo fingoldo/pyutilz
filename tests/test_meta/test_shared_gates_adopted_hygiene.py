@@ -5,10 +5,9 @@ Floors sit well under the measured counts (src/pyutilz about 270 parsed files, t
 ``pickle_state_completeness`` (flags the lock-guarded counters of SpeechAccounting that are meant to be pickled),
 ``env_flag_parsing`` (flags path and number variables, not boolean flags), ``runtime_registry_mutation`` (``kernel_tuner`` is a
 decorator that registers at import, so every process that imports the kernel module replays it), ``drifted_duplicate_literals``
-(the 15.0 s and 120.0 s defaults sit in unrelated packages that must not import each other), ``workflow_runner_labels``
-(pinning runner images changes the CI matrix and cannot be verified here), ``patch_target_read_at_call`` (38 inert patches
-in tests), ``wallclock_test_waits`` (35 sleeping tests), ``disposition_test_references`` (46 audit rows name tests that were
-renamed); the last three are open work, see audits/2026-11-05/.
+(the 15.0 s and 120.0 s defaults sit in unrelated packages that must not import each other), ``patch_target_read_at_call``
+(its 38 hits are all patches of the ``openrouter_provider`` and ``kernel_tuning.cache`` facades, which the code reads late through
+``sys.modules`` / ``_pkg()`` on purpose to keep the import graph acyclic; the gate cannot see that lookup, see audits/implemented/2026-11-05/).
 """
 
 from __future__ import annotations
@@ -70,6 +69,9 @@ from py_ci_shared.unsafe_deserialization import assert_unsafe_deserialization
 from py_ci_shared.vacuous_loop_assertions import assert_no_new_floorless_loop
 from py_ci_shared.validation_errors_echo_input import assert_validation_errors_echo_input
 from py_ci_shared.vendored_internal_imports import assert_no_vendored_internal_imports
+from py_ci_shared.wallclock_test_waits import assert_no_new_wallclock_test_waits
+from py_ci_shared.disposition_test_references import assert_disposition_tests_exist
+from py_ci_shared.workflow_runner_labels import assert_workflow_runner_labels_pinned
 from py_ci_shared.wrapper_protocol_parity import assert_wrapper_protocol_parity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -273,6 +275,21 @@ def test_tests_that_spawn_git_scrub_the_git_environment():
 def test_no_script_reports_skipped_as_a_pass():
     """A script that prints SKIPPED and exits 0 reports a pass."""
     assert_no_new_skip_as_pass(REPO_ROOT)
+
+
+def test_no_test_sleeps_on_the_wall_clock():
+    """A test that sleeps is slow and passes or fails with machine load; inject a clock or wait on the condition."""
+    assert_no_new_wallclock_test_waits(REPO_ROOT)
+
+
+def test_audit_dispositions_name_tests_that_exist():
+    """A disposition that cites a test the suite no longer has is a false RESOLVED; update the row with what became of it."""
+    assert_disposition_tests_exist(sorted((REPO_ROOT / "audits").rglob("*.md")), REPO_ROOT)
+
+
+def test_workflow_runner_labels_are_pinned():
+    """`*-latest` runner labels move when GitHub re-points them; pin the image."""
+    assert_workflow_runner_labels_pinned(REPO_ROOT, min_files=1)
 
 
 @pytest.mark.parametrize("baseline", sorted(META.glob("_*baseline*.json")), ids=lambda p: p.name)

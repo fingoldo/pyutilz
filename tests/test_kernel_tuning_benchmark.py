@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -48,7 +47,6 @@ def test_concurrency_runs_all_threads():
         # could count two threads for three workers. Holding the objects keeps each one distinct.
         with lock:
             seen_threads.add(threading.current_thread())
-        time.sleep(0.002)
 
     time_backend(fn, lambda: (0,), concurrency=3, n_iters=2, warmup=0)
     assert len(seen_threads) == 3  # each of the 3 worker threads actually ran
@@ -78,10 +76,15 @@ def test_slower_backend_measures_higher():
 
 
 def test_benchmark_backends_returns_per_backend_medians():
+    now = [0.0]
+
+    def slow(_):
+        now[0] += 0.01  # 10 ms on the injected clock
+
     res = benchmark_backends(
-        {"noop": lambda _: None, "sleep": lambda _: time.sleep(0.01)},
+        {"noop": lambda _: None, "sleep": slow},
         lambda: (0,),
-        n_iters=4, warmup=1,
+        n_iters=4, warmup=1, timer=lambda: now[0],
     )
     assert set(res) == {"noop", "sleep"}
     assert res["sleep"] > res["noop"]

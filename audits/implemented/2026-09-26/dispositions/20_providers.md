@@ -81,7 +81,7 @@ SDK import. Unknown IDs warn once and use a documented fallback.
 **Disposition:** NOT A DEFECT -- `num_tokens_from_messages` documents itself as the gpt-3.5-0613 framing estimate; its callers use it for budgeting only. The OpenAI "NOT USED" items: `max_completion_tokens`/`reasoning_effort` are now used (PROV-10/11); Responses API, Batch API, `service_tier` and `prompt_cache_key` are WON'T FIX here -- they need new request paths in openai_compat.py (not owned) and no caller in this package asks for them.
 
 ### PROV-16
-**Disposition:** RESOLVED -- `deepseek-flash` added (384K output, 1M context), `deepseek-v4-flash` kept as the legacy alias billed at the Flash price, default model `deepseek-flash`, class defaults raised to the V4 values 384_000 / 1_000_000 (deepseek_provider.py:20, :70). Tests: `T::TestProv16Prov18DeepSeekFlash`; `tests/test_llm_deepseek.py` pricing/default tests reframed to the fetched table.
+**Disposition:** RESOLVED -- `deepseek-flash` added (384K output, 1M context), `deepseek-v4-flash` kept as the legacy alias billed at the Flash price, default model `deepseek-flash`, class defaults raised to the V4 values 384_000 / 1_000_000 (deepseek_provider.py:20, :70). Tests: `T::TestProv16Prov18DeepSeekFlash`; `tests/llm/test_deepseek_provider.py` pricing/default tests reframed to the fetched table.
 
 **Live verification (2026-10-03):** `GET /models` lists `deepseek-flash` and `deepseek-v4-pro` with `max_output_tokens` 393,216 and `context_window` 1,048,576 (a 400,000 request is a 400 naming the range [1, 393216]); the table's rounded 384,000 / 1,000,000 now hold the exact figures. Tests: `tests/llm/test_providers_live_20261003.py`; raw results in `audits/implemented/2026-09-26/provider_live_checks.json`.
 
@@ -96,7 +96,7 @@ SDK import. Unknown IDs warn once and use a documented fallback.
 **Live verification (2026-10-03):** the toggle works on flash and v4-pro, AND on both legacy aliases (chat + enabled returned reasoning tokens, reasoner + disabled returned none), so the legacy refusal was removed. `completion_tokens` INCLUDES reasoning (18 = 16 reasoning + 2), matching the base billed-output formula. DeepSeek also takes `reasoning_effort` low|high|max (default high), which was never sent, so `thinking="low"` ran at high; it is now mapped and sent. Tests: `tests/llm/test_providers_live_20261003.py`; raw results in `audits/implemented/2026-09-26/provider_live_checks.json`.
 
 ### PROV-19
-**Disposition:** RESOLVED -- `_handle_special_status` (:100) now raises `LLMProviderError` on 402 (not an httpx error, so no retry predicate matches), unless the new `wait_on_insufficient_balance=True` constructor opt-in restores the warn-and-wait behaviour. The shared predicate in `_openai_compat_http.py` still classes 402 as retryable for other upstreams; unchanged. Tests: `T::TestProv19DeepSeek402`; `tests/test_llm_deepseek.py::test_handle_special_status_402_warns` now exercises the opt-in.
+**Disposition:** RESOLVED -- `_handle_special_status` (:100) now raises `LLMProviderError` on 402 (not an httpx error, so no retry predicate matches), unless the new `wait_on_insufficient_balance=True` constructor opt-in restores the warn-and-wait behaviour. The shared predicate in `_openai_compat_http.py` still classes 402 as retryable for other upstreams; unchanged. Tests: `T::TestProv19DeepSeek402`; `tests/llm/test_deepseek_provider.py::test_handle_special_status_402_warns` now exercises the opt-in.
 
 **Live verification (2026-10-03):** account has balance; the 402 path was not triggerable. `/user/balance` parsed (USD).
 

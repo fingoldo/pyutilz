@@ -551,10 +551,11 @@ class TestPerCallAttrRace:
 
         # Requests complete in REVERSE order (the request scheduled LAST finishes FIRST) --
         # the exact interleaving shape that reproduced the race pre-fix.
-        delays = {"req-0": 0.03, "req-1": 0.02, "req-2": 0.01}
+        delays = {"req-0": 3, "req-1": 2, "req-2": 1}  # event-loop turns to wait, not seconds
 
         async def fake_generate(prompt, **kwargs):
-            await asyncio.sleep(delays[prompt])
+            for _ in range(delays[prompt]):
+                await asyncio.sleep(0)
             p._last_usage = {"input_tokens": len(prompt), "output_tokens": 0, "reasoning_tokens": 0}
             p.last_tool_calls = [{"id": prompt}]
             p.last_citations = [{"source": prompt}]
@@ -636,17 +637,18 @@ class TestPerCallAttrDescriptor:
         o = _Owner()
 
         async def setter(value, delay):
-            await asyncio.sleep(delay)
+            for _ in range(delay):
+                await asyncio.sleep(0)
             o.attr = value
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0)
             return o.attr
 
         # Task scheduled last (smallest delay) finishes first -- if state leaked across
         # tasks, the earlier-finishing task would observe a later write.
         results = await asyncio.gather(
-            asyncio.create_task(setter("first", 0.03)),
-            asyncio.create_task(setter("second", 0.02)),
-            asyncio.create_task(setter("third", 0.01)),
+            asyncio.create_task(setter("first", 3)),
+            asyncio.create_task(setter("second", 2)),
+            asyncio.create_task(setter("third", 1)),
         )
         assert results == ["first", "second", "third"]
 

@@ -9,7 +9,7 @@ Worktrees (uncommitted, detached from origin/main): `scratchpad/wt-glossum-ds`, 
 `partial_text` kept), `raise ... from exc`; non-provider exceptions pass unchanged. The pyutilz class is looked up with
 `getattr(..., ())`, so an older pyutilz still imports. `retry_loop.retry_llm_with_budget` retries a retryable
 interruption once (sharing the one stall retry), records the attempt as `stream_interrupted` with its fragment, and
-raises a non-retryable one or a second one. Tests: `tests/test_llm/test_openrouter_adoption_ds7_ds9.py` (conversion,
+raises a non-retryable one or a second one. Tests: the downstream repos' test_openrouter_adoption_ds7_ds9 module (conversion,
 cause chain, non-conversion of other exceptions, retry-once, second/non-retryable raise).
 
 ### DS-8
@@ -36,7 +36,7 @@ recorded provider identity (`provider_identity()`: `openrouter{route:<sha12>}`),
 lookups, so runs under different route policies are never pooled or served from each other's cache; empty kwargs or a
 custom `provider_factory` keep the plain label (no change for existing data). Example `job_app_cover_letter/run.py` live
 mode now uses the default factory with `provider_quantizations=("bf16","fp16","fp8","unknown")`. Tests:
-`tests/unit/test_provider_kwargs_and_stream_labels.py`.
+the downstream repos' test_provider_kwargs_and_stream_labels module.
 
 ### DS-11
 **Disposition:** RESOLVED -- Fixed (llm_bench and glossum twin). `classify_provider_error` maps `LLMStreamInterruptedError` to
