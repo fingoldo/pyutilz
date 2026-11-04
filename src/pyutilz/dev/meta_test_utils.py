@@ -249,7 +249,7 @@ def capture_signature(obj: object) -> str:
         sig = inspect.signature(obj)  # type: ignore[arg-type]  # obj is intentionally untyped object; non-callables are caught below and yield "<no-signature>"
     except (ValueError, TypeError, RuntimeError) as exc:  # audit-exempt: non_neutral_except_fallback -- placeholder for an uninspectable callable, shown in the output rather than substituted as a measurement
         logger.debug("capture_signature: callable has no inspectable signature: %s: %s", type(exc).__name__, exc)
-        return "<no-signature>"
+        return "<no-signature>"  # key-fallback-ok: a placeholder shown in the signature snapshot, not a cache or digest key
     params = []
     for name, p in sig.parameters.items():
         kind_short = {
@@ -552,9 +552,10 @@ def optional_scalar_fields(cls: type, skip: Iterable[str] = ()) -> dict[str, obj
     unambiguous, comparable sentinel for.
     """
     hints = typing.get_type_hints(cls)
+    skipped = frozenset(skip)
     out: dict[str, object] = {}
     for f in dataclasses.fields(cls):
-        if f.name in skip:
+        if f.name in skipped:
             continue
         tp = hints.get(f.name)
         if tp is None:

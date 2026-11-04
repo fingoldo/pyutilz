@@ -14,7 +14,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The reusable workflow's own `deploy` job declares `permissions: pages: write, id-token: write`
 # internally, but a job calling a reusable workflow is capped at whatever the CALLING workflow

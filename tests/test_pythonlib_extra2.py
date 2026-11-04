@@ -444,18 +444,18 @@ def test_hashable_dict():
 from pyutilz.core.pythonlib import suppress_stdout_stderr
 
 
-def test_suppress_stdout_stderr():
+def test_suppress_stdout_stderr(monkeypatch):
     import io
     original_stdout = sys.stdout
     captured = io.StringIO()
-    sys.stdout = captured
-    try:
-        with suppress_stdout_stderr():
-            print("should be suppressed")
-    finally:
-        sys.stdout = original_stdout
+    monkeypatch.setattr(sys, "stdout", captured)
+    with suppress_stdout_stderr():
+        print("should be suppressed")
+    still_ours = sys.stdout is captured
+    monkeypatch.undo()
     assert captured.getvalue() == ""
-    # After context, stdout should be restored to the original object, not left redirected
+    # After context, stdout should be restored to the stream installed before it, not left redirected
+    assert still_ours
     assert sys.stdout is original_stdout
 
 

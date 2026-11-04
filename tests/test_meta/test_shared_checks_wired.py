@@ -204,7 +204,7 @@ def test_no_stale_todos():
     # the shallow legs. The skip needs BOTH the variable and a genuinely shallow clone, so a full clone, or a
     # local shallow clone without the opt-in, still fails loudly in py_ci_shared rather than passing vacuously.
     if os.environ.get("PYUTILZ_CI_SHALLOW_CLONE") == "1":
-        shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=REPO_ROOT, capture_output=True, text=True, check=False).stdout.strip()
+        shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=REPO_ROOT, capture_output=True, text=True, check=False, env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")}).stdout.strip()
         if shallow == "true":
             pytest.skip("shallow CI clone; the stale-TODO age check runs on ci.yml's full-history ubuntu 3.11 leg")
 

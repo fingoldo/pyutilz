@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
+import httpx  # optional-import-ok: only the llm package imports this module, and that package is the 'llm' extra that installs httpx
 
 logger = logging.getLogger(__name__)
 

@@ -41,7 +41,7 @@ def main():
     kernel_name = sys.argv[4] if len(sys.argv) > 4 else "shared_k"
     sleep_ms = int(sys.argv[5]) if len(sys.argv) > 5 else 150
 
-    os.environ["PYUTILZ_KERNEL_CACHE_DIR"] = cache_dir
+    os.environ["PYUTILZ_KERNEL_CACHE_DIR"] = cache_dir  # env-write-ok: a worker subprocess entry point; the write dies with the process and is never seen by another test
     ktc = _load_cache_module()
     # Pin a deterministic fingerprint so all workers share one host directory
     # without each running the (slow, possibly-stalling) cpuinfo/GPU probe.

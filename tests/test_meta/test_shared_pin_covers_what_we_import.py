@@ -12,6 +12,7 @@ SHA; this fails a bump that misses a line, a ref that is a tag or branch, and a 
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess  # nosec B404 - runs git against the local py-ci-shared checkout with a fixed argv, no external input
 from pathlib import Path
@@ -28,6 +29,11 @@ _REF_PATTERNS = (
     re.compile(r"py-ci-shared\s*@\s*git\+https://github\.com/fingoldo/py-ci-shared(?:\.git)?(?:@(?P<ref>[^\s;#'\"]+))?"),
 )
 _PRECOMMIT_REPO = re.compile(r"-\s*repo:\s*https://github\.com/fingoldo/py-ci-shared(?:\.git)?\s*\n\s*rev:\s*(?P<ref>[^\s#]+)(?P<rest>[^\n]*)")
+
+
+def _git_env() -> dict[str, str]:
+    """The environment with every GIT_* variable removed, so a hook-set GIT_DIR cannot point git at the wrong repository."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def _pin_files() -> list[Path]:
@@ -103,7 +109,7 @@ def test_the_pin_carries_every_module_we_import():
     package_dir = Path(py_ci_shared.__file__).resolve().parent
     checkout = package_dir.parent.parent  # src/py_ci_shared -> the checkout root, when the package is a git checkout
     listing = subprocess.run(  # nosec B603 B607 - fixed argv against the checkout that owns the imported package
-        ["git", "ls-tree", "--name-only", f"{sha}:src/py_ci_shared"], cwd=str(checkout), capture_output=True, text=True, check=False
+        ["git", "ls-tree", "--name-only", f"{sha}:src/py_ci_shared"], cwd=str(checkout), capture_output=True, text=True, check=False, env=_git_env()
     )
     if listing.returncode != 0:
         # CI installs from the pin into site-packages, where the installed package IS the pinned commit; the import check covers it.

@@ -376,7 +376,7 @@ class TestPoolCreationAndReset:
     def test_a_new_pool_is_sized_from_one_to_eight_by_default(self):
         with patch("pyutilz.database.psycopg2_pool.psycopg2.pool.ThreadedConnectionPool") as MockPool:
             pool_mod._ensure_pool("dsn-a")
-        MockPool.assert_called_once_with(1, 8, "dsn-a")
+        MockPool.assert_called_once_with(1, 8, "dsn-a", keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
 
     def test_a_second_dsn_is_refused_with_the_close_hint(self):
         with patch("pyutilz.database.psycopg2_pool.psycopg2.pool.ThreadedConnectionPool"):
@@ -634,7 +634,7 @@ class TestPoolBoundaries:
         ), patch("pyutilz.database.psycopg2_pool.register_vector", None):
             MockPool.return_value.getconn.return_value = _conn()
             get_connection(DSN, pool_max=5)
-        MockPool.assert_called_once_with(1, 5, DSN)
+        MockPool.assert_called_once_with(1, 5, DSN, keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
 
     def test_a_failed_checkout_is_not_returned_to_the_pool(self):
         pool = MagicMock()
