@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from pyutilz.dev import meta_test_utils as mtu
 from pyutilz.dev._pruned_walk import iter_files_pruned
 from pyutilz.dev.persistence_sweep import written_files
 
@@ -69,36 +68,4 @@ def test_written_files(tmp_path, listed):
     real = write(tmp_path, "store/a.jsonl", "{}\n")
     write(tmp_path, f"{DECOY_DIR}/store/b.jsonl", "{}\n")
     assert written_files([tmp_path]) == [real]
-    assert_never_entered(listed)
-
-
-def test_rglob_test_files(tmp_path, listed):
-    write(tmp_path, "tests/test_a.py")
-    write(tmp_path, f"{DECOY_DIR}/tests/test_b.py")
-    assert [p.name for p in mtu._rglob_test_files(tmp_path)] == ["test_a.py"]
-    assert_never_entered(listed)
-
-
-def test_consumer_corpus(tmp_path, listed):
-    write(tmp_path, "pkg/a.py", "REAL_MARKER = 1\n")
-    write(tmp_path, f"{DECOY_DIR}/pkg/b.py", "DECOY_MARKER = 1\n")
-    corpus = mtu.consumer_corpus(tmp_path)
-    assert "REAL_MARKER" in corpus
-    assert "DECOY_MARKER" not in corpus
-    assert_never_entered(listed)
-
-
-def test_scan_todo_markers(tmp_path, listed):
-    write(tmp_path, "pkg/a.py", "# TODO(me): real\n")
-    write(tmp_path, f"{DECOY_DIR}/pkg/b.py", "# TODO(me): decoy\n")
-    assert [Path(p).name for p, *_ in mtu.scan_todo_markers(tmp_path)] == ["a.py"]
-    assert_never_entered(listed)
-
-
-def test_unbacked_audit_dispositions_reads_only_the_audit_dir_it_was_given(tmp_path, listed):
-    audit = tmp_path / "audits"
-    write(audit, "a.md", "| 1 | Low | RESOLVED nothing cited |\n")
-    write(audit, f"{DECOY_DIR}/b.md", "| 2 | Low | RESOLVED nothing cited |\n")
-    out = mtu.unbacked_audit_dispositions(audit, tmp_path)
-    assert len(out) == 1
     assert_never_entered(listed)

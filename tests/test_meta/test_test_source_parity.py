@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 import pyutilz
-from pyutilz.dev.meta_test_utils import enumerate_test_files
+from py_ci_shared.meta_test_utils import enumerate_test_files
 
 PYUTILZ_DIR = Path(pyutilz.__file__).resolve().parent
 REPO_ROOT = PYUTILZ_DIR.parent.parent  # src/pyutilz/ → repo root
@@ -105,7 +105,7 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_retry_predicate_matches_sdk_hierarchy": "cross-cutting — covers retry predicates in llm.anthropic_provider/gemini_provider and database.redislib together",
     "test_hardware_detection": "covers pyutilz.system.hardware_monitor",
     "test_proxy": "covers pyutilz.web.proxy/* sub-package",
-    "test_dev_fixes_regression": "cross-cutting — regression tests spanning dev/logginglib, dev/notebook_init, dev/meta_test_utils, system/monitoring, system/hardware_monitor, system/distributed",
+    "test_dev_fixes_regression": "cross-cutting — regression tests spanning dev/logginglib, dev/notebook_init, system/monitoring, system/hardware_monitor, system/distributed",
     "test_llm_provider_audit_fixes": "cross-cutting — regression tests for the llm-providers quality audit (spans anthropic/gemini/openai-compat/claude-code provider modules)",
     "test_strings_facade": "sensor test for the text/strings subpackage split (facade re-export identity)",
     "test_core_audit_fixes": "cross-cutting - 2026-09-02 audit regression tests spanning core/pythonlib, core/serialization, core/matrix",

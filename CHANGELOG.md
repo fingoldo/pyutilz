@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Behaviour change
+
+- `pyutilz.dev.meta_test_utils` is gone and so are its 13 lazy re-exports on `pyutilz.dev` (`assert_fields_roundtrip`, `capture_module_surface`, `clear_repo_scan_caches`, `consumer_corpus`, `count_user_deferred_entries`, `enumerate_test_files`, `findings_ratchet`, `optional_scalar_fields`, `public_top_level_symbols`, `safe_import`, `snake_case_variants_of`, `strip_lineno`, `unbacked_audit_dispositions`). The module moved to `py_ci_shared.meta_test_utils` (py-ci-shared owns the gates and meta-test tooling); import it from there. No shim is left. py-ci-shared stays a development-time dependency found through `PY_CI_SHARED_DIR`, not a declared one. `dev._pruned_walk` stays because `persistence_sweep` needs a pruned walk at import time without py-ci-shared.
+
 ### Added
 
 - `dev` tree walks (`meta_test_utils` corpus, TODO-marker, repository-symbol and audit-document scans, `persistence_sweep.written_files`) go through one pruned walk, `dev._pruned_walk.iter_files_pruned`, which never enters `.claude` (Claude Code's agent worktrees, each a complete copy of the repository). `tests/test_meta/test_no_unpruned_tree_walk.py` fails a new `rglob`/`os.walk` in `src/pyutilz` that neither uses it nor carries `# walk-ok: <reason>`.

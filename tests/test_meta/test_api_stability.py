@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 import pyutilz
-from pyutilz.dev.meta_test_utils import (
+from py_ci_shared.meta_test_utils import (
     capture_module_surface,
 )
 
@@ -40,7 +40,7 @@ def _refresh_requested() -> bool:
     return "--refresh-api-snapshot" in sys.argv
 
 
-# Signature / surface capture moved to ``pyutilz.dev.meta_test_utils``;
+# Signature / surface capture moved to ``py_ci_shared.meta_test_utils``;
 # imported as ``capture_signature`` / ``capture_module_surface`` above.
 
 # Aliases whose target module imports an optional package inside a top-level ``try`` block. The names it exposes then

@@ -4,7 +4,6 @@ One test (or one parametrised group) per behavioural finding, named after the fi
 Every test here was verified to FAIL against the pre-fix code and to pass after the fix.
 """
 
-import ast
 import locale
 import logging
 import os
@@ -198,78 +197,6 @@ def test_f147_failed_log_fetch_is_reported_by_job_name(monkeypatch):
     monkeypatch.setattr(cla, "_fetch_job_log", boom)
     report = cla.analyze_run("owner/repo", "1")
     assert report.fetch_errors == ["tests (windows-latest, 3.8) (job id 48213771234)"]
-
-
-# ---------------------------------------------------------------------------
-# F06 / F58 / F126 / F135 / F136 -- meta_test_utils
-# ---------------------------------------------------------------------------
-
-
-def test_f06_citation_with_call_parens_resolves_without_removesuffix(tmp_path: Path):
-    """`str.removesuffix` is Python 3.9+ (PEP 616) on a path the 3.8 CI leg runs.
-
-    On 3.8 the call raised AttributeError on the FIRST bare qualified-name citation, turning
-    unbacked_audit_dispositions (public via __all__) red on that leg. Exercised here through the
-    same code path, plus a 3.8-shaped check that the call is gone.
-    """
-    from pyutilz.dev import meta_test_utils as mtu
-
-    tree = ast.parse(Path(mtu.__file__).read_text(encoding="utf-8"))
-    assert not hasattr(str, "removesuffix") or not any(isinstance(n, ast.Attribute) and n.attr == "removesuffix" for n in ast.walk(tree))
-    (tmp_path / "m.py").write_text("def my_function():\n    return 1\n", encoding="utf-8")
-    mtu.clear_repo_scan_caches()
-    assert mtu._names_a_repo_symbol("my_function()", tmp_path) is True
-
-
-def test_f58_bool_sentinel_is_the_non_default_value():
-    """The bool sentinel was True, which is also the commonest default: with `actual != expected`,
-    a parser that DROPPED the field still matched its True default and passed as intact."""
-    import dataclasses
-
-    from pyutilz.dev.meta_test_utils import optional_scalar_fields
-
-    @dataclasses.dataclass
-    class Cfg:
-        enabled: bool = True
-        disabled: bool = False
-        name: str = "x"
-
-    sentinels = optional_scalar_fields(Cfg)
-    assert sentinels["enabled"] is False
-    assert sentinels["disabled"] is True
-
-
-def test_f126_repo_scan_caches_can_be_cleared(tmp_path: Path):
-    """The lru_cache is keyed on the ROOT PATH alone, so a test that writes a file and a later test
-    that scans the same root saw a stale set -- making results depend on test order."""
-    from pyutilz.dev import meta_test_utils as mtu
-
-    (tmp_path / "first.py").write_text("A = 1\n", encoding="utf-8")
-    mtu.clear_repo_scan_caches()
-    assert "second.py" not in mtu._repo_filenames(tmp_path)
-    (tmp_path / "second.py").write_text("B = 2\n", encoding="utf-8")
-    mtu.clear_repo_scan_caches()
-    assert "second.py" in mtu._repo_filenames(tmp_path)
-
-
-def test_f135_call_expression_whitelist_is_not_counted_as_zero(tmp_path: Path):
-    """`set(_LEGACY_ENTRIES)` is an ast.Call too; recording it as 0 made tracked debt appear to
-    shrink in exactly the case where it grew."""
-    from pyutilz.dev.meta_test_utils import count_user_deferred_entries
-
-    (tmp_path / "test_w.py").write_text("_LEGACY = ['a', 'b']\n_USER_DEFERRED_EMPTY = set()\n_USER_DEFERRED_FULL = set(_LEGACY)\n", encoding="utf-8")
-    out = count_user_deferred_entries(tmp_path)
-    assert out.get("test_w::_USER_DEFERRED_EMPTY") == 0
-    assert "test_w::_USER_DEFERRED_FULL" not in out
-
-
-def test_f136_config_suffix_is_stripped_only_from_the_end():
-    """An unanchored replace("_config", "") dropped the INNER occurrence too."""
-    from pyutilz.dev.meta_test_utils import snake_case_variants_of
-
-    variants = snake_case_variants_of("MyConfigManagerConfig")
-    assert "my_config_manager" in variants
-    assert "my_manager" not in variants
 
 
 # ---------------------------------------------------------------------------

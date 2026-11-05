@@ -2,7 +2,7 @@
 
 Every meta-test that tolerates known debt keeps it in a named collection. A deferred item costs nothing to add and
 a real cleanup costs effort, so left alone the collections only grow. ``py_ci_shared.deferred_drift`` counts their
-entries with ``pyutilz.dev.meta_test_utils.count_user_deferred_entries`` and compares with ``_debt_baseline.json``:
+entries with ``py_ci_shared.deferred_entries.count_user_deferred_entries`` and compares with ``_debt_baseline.json``:
 a new or grown list fails, and so does a list that shrank or vanished until the baseline follows it down.
 
 Refresh after an intentional change::

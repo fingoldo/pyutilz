@@ -150,20 +150,6 @@ class TestNotebookPolarsConfig:
 
 
 # ---------------------------------------------------------------------------
-# meta_test_utils.py
-# ---------------------------------------------------------------------------
-
-
-class TestMetaAll:
-    """Finding 7: safe_import must be exported in __all__."""
-
-    def test_safe_import_in_all(self):
-        from pyutilz.dev import meta_test_utils as m
-
-        assert "safe_import" in m.__all__
-
-
-# ---------------------------------------------------------------------------
 # system/monitoring.py
 # ---------------------------------------------------------------------------
 

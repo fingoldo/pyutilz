@@ -75,7 +75,8 @@ Each meta-test exposes one or both whitelists at file scope:
 
 Shared helpers (`consumer_corpus`, `public_top_level_symbols`,
 `capture_signature`, `count_user_deferred_entries`, etc.) live in
-[`pyutilz.dev.meta_test_utils`](src/pyutilz/dev/meta_test_utils.py).
+`py_ci_shared.meta_test_utils` (the py-ci-shared package; moved out of `pyutilz.dev` with no re-export,
+so a test that needs them runs only where py-ci-shared is installed or found through `PY_CI_SHARED_DIR`).
 
 ## Live LLM tests
 
