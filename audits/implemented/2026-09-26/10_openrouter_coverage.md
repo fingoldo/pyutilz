@@ -105,7 +105,7 @@ Even without the early return, the string code `"server_error"` would map to 0 a
 
 ### OR-5 (Low) -- Most per-call OR fields are overwritten, not summed, when one call makes a second POST
 
-**Disposition:** RESOLVED. In `_track_provider_specific_usage` (`openrouter_provider/_provider.py:607`), these per-call fields are now summed and never reset by a POST that lacks them: `last_upstream_inference_cost_usd`, `last_cache_write_tokens`, `last_cache_hit_tokens`, `last_audio_tokens` and `last_cache_discount_usd`. Test: T::test_or5_second_post_adds_to_and_never_erases_per_call_fields. The stale assertion in tests/test_llm_openrouter.py::TestExtendedUsageCapture::test_upstream_inference_cost_accumulates was re-framed to the summed value.
+**Disposition:** RESOLVED. In `_track_provider_specific_usage` (`openrouter_provider/_provider.py:607`), these per-call fields are now summed and never reset by a POST that lacks them: `last_upstream_inference_cost_usd`, `last_cache_write_tokens`, `last_cache_hit_tokens`, `last_audio_tokens` and `last_cache_discount_usd`. Test: T::test_or5_second_post_adds_to_and_never_erases_per_call_fields. The stale assertion in `tests/test_llm_openrouter_part2.py::TestExtendedUsageCapture::test_upstream_inference_cost_accumulates was re-framed to the summed value.
 
 **Evidence.** `last_actual_cost_usd` is summed (`_provider.py:541-545`), but these are assigned:
 - `last_upstream_inference_cost_usd` (`:547-553`)

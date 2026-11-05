@@ -169,7 +169,7 @@ Severity counts: **Critical 0, High 4, Medium 16, Low 18 — 38 findings total.*
 - **Suggested fix**: `if not iterable: return pd.DataFrame() if return_dataframe else []` before the pool is constructed, and clamp with `max(1, ...)`.
 
 ### F23. [Low] `split_list_into_chunks_indices` is missing the `chunk_size == 0` guard its sibling has, and its docstring documents the wrong function — src/pyutilz/system/parallel.py:72
-- **Disposition**: COMPLETED — the chunk_size == 0 clamp added and the docstring rewritten to call this function and show its (left, right) output: src/pyutilz/system/parallel.py:75-88. Regression: tests/test_system_audit_fixes.py::test_split_list_into_chunks_indices_clamps_zero_chunk_size
+- **Disposition**: COMPLETED — the chunk_size == 0 clamp added and the docstring rewritten to call this function and show its (left, right) output: src/pyutilz/system/parallel.py:75-88. Regression: tests/test_system_audit_fixes.py::test_split_list_into_chunks_indices_rejects_non_positive_chunk_size
 - **Category**: boundary-error
 - **Problem**: `split_list_into_chunks` handles `chunk_size == 0` by clamping to 1 (lines 59-60). The index-returning twin immediately below has no such guard and divides at line 78. Its docstring (lines 73-75) is a verbatim copy of the other function's — it calls `split_list_into_chunks`, not this function, and shows lists of values rather than the `(left, right)` tuples this one yields.
 - **Failure scenario**: Reproduced. `list(split_list_into_chunks_indices([1,2,3], 0))` → `ZeroDivisionError: division by zero`, where the sibling with identical semantics returns `[[1],[2],[3]]`. A caller that switched from values to indices to save memory gets a crash for input that previously worked.

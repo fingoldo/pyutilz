@@ -132,6 +132,7 @@ class TestFullBenchmarkDetails:
     def test_the_default_head_keeps_the_original_columns_when_it_trims(self, backend_rows):
         big = pd.DataFrame({"a": np.arange(100_005), "s": ["x"] * 100_005})
         benchmarks.benchmark_dataframe_compression(big, nrepeats=1, return_styled=False, verbose=False)
+        assert backend_rows
         for _, _, df, _ in backend_rows:
             assert list(df.columns) == ["a", "s"]
             assert list(df.index) == list(range(100_000))

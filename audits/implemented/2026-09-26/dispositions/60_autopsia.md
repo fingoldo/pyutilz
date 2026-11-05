@@ -43,7 +43,7 @@ test_parse_complaint_and_disambiguation_both_build_through_the_private_policy,
 test_parse_complaint_degrades_when_the_policy_cannot_be_enforced,
 test_select_model_never_picks_a_model_without_a_private_endpoint and
 test_the_api_refuses_an_override_to_a_model_without_a_private_endpoint. The existing meta gate
-`test_no_paid_call_bypasses_the_archive` still passes, because the helper wraps its construction directly.
+test_no_paid_call_bypasses_the_archive (in the autopsia repo) still passes, because the helper wraps its construction directly.
 
 noema_app privacy text: NOT edited here. This is a handoff with the exact text change. In
 `lib/core/l10n/app_en.arb` `privacyWhatLeavesBody`, after "...to interpret it, including when a phrase is ambiguous;",

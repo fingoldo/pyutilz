@@ -221,7 +221,7 @@ Individually-actionable defects outside the two suite-wide classes: about 40 of 
 - `unpicklable_resource_state` - 8/8 real, exactly the pickle-breaking shape, no misfires.
 - `sentinel_guard_mismatch` and `sentinel_cached_as_answer` - 5 findings, 5 real, each a genuine silent-failure bug with a cross-file proof in the detail text. Best signal per finding in the whole run.
 - `getattr_literal_on_known_dataclass` - 1 finding, real. Its "receiver must be a class this tree defines" precondition is exactly what its noisy sibling lacks.
-- `import_cycle`, `mutation_during_iteration`, `locals_get_fragile_lookup`, `readonly_to_numpy_mutation`, `constructor_param_overwritten`, `test_asserts_against_production_constant` - low volume, high hit rate, all worth reading in full.
+- `import_cycle`, `mutation_during_iteration`, `locals_get_fragile_lookup`, `readonly_to_numpy_mutation`, `constructor_param_overwritten`, test_asserts_against_production_constant - low volume, high hit rate, all worth reading in full.
 - `nondiscriminating_test` - 1034 findings but a real 74% no-assert core and roughly 1% benchmark-fixture noise. Earned its keep loudly.
 - `duplicate_function_body` - earned its keep on the small repo (found the `_line_of` / `_balanced` / `_refresh_requested` triples immediately); on a 1700-file tree it needs a body-size floor to stay readable.
 - `non_neutral_except_fallback` - both py-ci-shared hits were real fail-open gates. Add an optional-dependency-probe exemption before pointing it at a repo with GPU/numba fallbacks.

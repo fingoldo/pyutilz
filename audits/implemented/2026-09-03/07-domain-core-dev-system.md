@@ -82,11 +82,11 @@ Work performed:
 - **Suggested fix**: change unraised_exceptions.py:139 to `"P2"`, and make the unknown-severity default in cli.py:94 / registry.py:358 sort and pass as *most* severe (`-1`) so a future stray value is loud instead of invisible.
 
 ### F10. [High] Two scanners are exported as public API but never registered, so `run_all()` and `--check` can never run them — src/pyutilz/dev/code_audit/__init__.py:524
-- **Disposition**: COMPLETED — both scanners are registered (assert_in_loop_first_failure_only, reexport_patch_target; the latter opt-in as the older half of the patch_target_is_a_reexport rename), and tests/test_code_audit.py::test_registry_and_facade_are_in_bijection replaces the vacuous callable() loop. registry.py:251-252,305
+- **Disposition**: COMPLETED — both scanners are registered (assert_in_loop_first_failure_only, reexport_patch_target; the latter opt-in as the older half of the patch_target_is_a_reexport rename), and the former test_code_audit module (moved to py-ci-shared 2026-10-22) replaces the vacuous callable() loop. registry.py:251-252,305
 - **Category**: dead-wiring
-- **Problem**: `scan_assert_in_loop_reports_only_the_first` (imported at `__init__.py:524`, exported at `:618`) and `scan_reexport_patch_target` (imported at `:526`, exported at `:620`) have no `register_scanner` call in `registry.py`. Enumerating every module-owned `scan_*` function gives 91 defined against 89 registered; the difference is exactly these two. Both work when called directly. `tests/test_code_audit.py:2330` carries the comment "Every scanner in the registry is the facade-level attribute of the same name" but the loop under it only asserts `callable(fn)` — a vacuous assertion, which is why the drift went unnoticed.
+- **Problem**: `scan_assert_in_loop_reports_only_the_first` (imported at `__init__.py:524`, exported at `:618`) and `scan_reexport_patch_target` (imported at `:526`, exported at `:620`) have no `register_scanner` call in `registry.py`. Enumerating every module-owned `scan_*` function gives 91 defined against 89 registered; the difference is exactly these two. Both work when called directly. the former test_code_audit module (moved to py-ci-shared 2026-10-22) carries the comment "Every scanner in the registry is the facade-level attribute of the same name" but the loop under it only asserts `callable(fn)` — a vacuous assertion, which is why the drift went unnoticed.
 - **Failure scenario**: a tree with two `for r in load_rows(): assert r > 0` sweeps. Direct call returns 2 findings (lines 6 and 8); `[f.check for f in run_all(tree, parallel=False) if 'assert_in_loop' in f.check]` returns `[]`. Likewise `scan_reexport_patch_target` returns a correct P2 finding on a `monkeypatch.setattr(facade, "fetch", ...)` tree while `run_all` reports nothing.
-- **Suggested fix**: register both. `reexport_patch_target.py` and `patch_target_is_a_reexport.py` are near-duplicate checks and only the latter is registered — a half-finished rename; either register the old one or delete the module and its `__init__` exports. Then replace the vacuous loop at tests/test_code_audit.py:2331 with an assertion that the registry and the facade are in bijection.
+- **Suggested fix**: register both. `reexport_patch_target.py` and `patch_target_is_a_reexport.py` are near-duplicate checks and only the latter is registered — a half-finished rename; either register the old one or delete the module and its `__init__` exports. Then replace the vacuous loop at the former test_code_audit module (moved to py-ci-shared 2026-10-22) with an assertion that the registry and the facade are in bijection.
 
 ### F11. [High] `import_cycles` discards every relative import made from a package `__init__.py`, hiding the most common real cycle shape — src/pyutilz/dev/code_audit/import_cycles.py:44
 - **Disposition**: COMPLETED - a package `__init__.py` now strips one level fewer for relative imports, and `from . import X` emits one edge per alias instead of an edge to the base package, src/pyutilz/dev/code_audit/import_cycles.py:43-66
@@ -620,14 +620,14 @@ Work performed:
 - **Failure scenario**: `if "x" not in src: pytest.fail("missing")` → no findings, though it is the same source-text assertion in a different spelling.
 - **Suggested fix**: also treat an `If` whose body calls `pytest.fail`/`self.fail` as an assertion.
 
-### F87. [Medium] `test_asserts_against_production_constant`: the path-construction escape only checks bare string Constants — src/pyutilz/dev/code_audit/test_asserts_against_production_constant.py:74
+### F87. [Medium] test_asserts_against_production_constant: the path-construction escape only checks bare string Constants — src/pyutilz/dev/code_audit/test_asserts_against_production_constant.py:74
 - **Disposition**: COMPLETED — `_is_path_construction()` accepts any `BinOp(Div)` whose left operand is path-shaped, so an f-string or a variable segment is silent, test_asserts_against_production_constant.py:96-113
 - **Category**: false-positive
 - **Problem**: the escape hatch recognises only a `Constant` string operand.
 - **Failure scenario**: `assert p == CHECKPOINT_DIR / f"{name}.jsonl"` and `assert p == CHECKPOINT_DIR / sub` are both flagged P2, though the module's own comment names that shape as must-be-silent.
 - **Suggested fix**: treat any `BinOp(Div)` whose left operand is a path-like constant as path construction.
 
-### F88. [Medium] `test_asserts_against_production_constant`: `pytest.approx(...)` suppresses the check the module exists to make — src/pyutilz/dev/code_audit/test_asserts_against_production_constant.py:66
+### F88. [Medium] test_asserts_against_production_constant: `pytest.approx(...)` suppresses the check the module exists to make — src/pyutilz/dev/code_audit/test_asserts_against_production_constant.py:66
 - **Disposition**: COMPLETED — `_unwrap_approx()` unwraps `pytest.approx(...)` to its first argument before the any-Call bail-out, test_asserts_against_production_constant.py:70-73,116-124
 - **Category**: false-negative
 - **Problem**: `if any(isinstance(sub, ast.Call) …): return set()` bails on any call in the compared expression. `_ASSERT_HELPERS` at :27 already lists `"approx"`, so the intent exists but is neutralised.
@@ -1384,7 +1384,7 @@ Work performed:
 - **Suggested fix**: emit P2/Low unless the receiver resolves to a connection/cursor-shaped name, or drop the generic container verbs from the default suffix set.
 
 ### F196. [Low] `domain_boundary` accepts a `severity` parameter but hardcodes `"P1"` for `boundary_symbol_missing` — src/pyutilz/dev/code_audit/domain_boundary.py:136
-- **Disposition**: COMPLETED by documenting, not by applying `severity`: `boundary_symbol_missing` is deliberately fixed at P1 because a manifest naming a symbol that no longer exists makes the boundary pass by vacuity, which must stay loud however advisory the leak check is configured to be (tests/test_code_audit.py:5387 pins this). The parameter's docstring now says so, src/pyutilz/dev/code_audit/domain_boundary.py:114-118,139-140
+- **Disposition**: COMPLETED by documenting, not by applying `severity`: `boundary_symbol_missing` is deliberately fixed at P1 because a manifest naming a symbol that no longer exists makes the boundary pass by vacuity, which must stay loud however advisory the leak check is configured to be (the former test_code_audit module (moved to py-ci-shared 2026-10-22) pins this). The parameter's docstring now says so, src/pyutilz/dev/code_audit/domain_boundary.py:114-118,139-140
 - **Category**: parameter-ignored
 - **Problem**: the parameter is documented at :114 as "severity tag for emitted findings", unqualified.
 - **Failure scenario**: a caller lowering the severity for an advisory boundary still gets P1 rows, which gate CI via cli.py:99.
@@ -1432,8 +1432,8 @@ Work performed:
 - **Failure scenario**: the fabricated-cycle tree from F11 reports `file="pkg.py"`; the real location is `pkg/__init__.py`. A file-keyed baseline entry never matches.
 - **Suggested fix**: emit `<name>/__init__.py` when the dotted name resolves to a package directory.
 
-### F203. [Low] `vacuous_assertions`' `test_glob` parameter is not a glob and inverts its own filter — src/pyutilz/dev/code_audit/vacuous_assertions.py:152
-- **Disposition**: COMPLETED — `test_glob` is applied with `fnmatch` instead of being compared for equality against its own default, vacuous_assertions.py:158-162
+### F203. [Low] `vacuous_assertions`' test_glob parameter is not a glob and inverts its own filter — src/pyutilz/dev/code_audit/vacuous_assertions.py:152
+- **Disposition**: COMPLETED — test_glob is applied with `fnmatch` instead of being compared for equality against its own default, vacuous_assertions.py:158-162
 - **Category**: name-behaviour-mismatch
 - **Problem**: `if not py.name.startswith("test_") and test_glob == "test_*.py": continue` — the pattern is compared for equality against the default, never used as a glob.
 - **Failure scenario**: `scan_vacuous_assertions(root, test_glob="check_*.py")` scans every `.py` file in the tree, production modules included.

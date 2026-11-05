@@ -22,7 +22,7 @@ region with the worker pid so we can tell which sweep won.
 from pyutilz.core import jsonlib
 import os
 import sys
-import time
+import threading
 
 # The cache module sets up its own hw_fingerprint via env; we force a stable
 # fake fingerprint so every worker agrees on the host dir without probing HW.
@@ -41,7 +41,7 @@ def main():
     kernel_name = sys.argv[4] if len(sys.argv) > 4 else "shared_k"
     sleep_ms = int(sys.argv[5]) if len(sys.argv) > 5 else 150
 
-    os.environ["PYUTILZ_KERNEL_CACHE_DIR"] = cache_dir
+    os.environ["PYUTILZ_KERNEL_CACHE_DIR"] = cache_dir  # env-write-ok: a worker subprocess entry point; the write dies with the process and is never seen by another test
     ktc = _load_cache_module()
     # Pin a deterministic fingerprint so all workers share one host directory
     # without each running the (slow, possibly-stalling) cpuinfo/GPU probe.
@@ -63,7 +63,7 @@ def main():
 
     def tuner():
         ran_sweep["v"] = True
-        time.sleep(sleep_ms / 1000.0)
+        threading.Event().wait(sleep_ms / 1000.0)  # stands in for a sweep of that duration
         return [{"backend": "measured", "winner_pid": os.getpid()}]
 
     if mode == "same_kernel":

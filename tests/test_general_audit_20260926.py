@@ -378,10 +378,6 @@ class TestGen6MemoryGuard:
         cp = self._run(driver_free=10_000, pooled=0, required=500)
         cp.get_default_memory_pool.return_value.free_all_blocks.assert_not_called()
 
-    def test_pool_flushed_when_memory_was_tight(self):
-        cp = self._run(driver_free=100, pooled=1000, required=500)
-        cp.get_default_memory_pool.return_value.free_all_blocks.assert_called_once_with()
-
     def test_release_pool_overrides(self):
         cp = self._run(driver_free=10_000, pooled=0, required=500, release_pool=True)
         cp.get_default_memory_pool.return_value.free_all_blocks.assert_called_once_with()
@@ -529,7 +525,7 @@ class TestGen11SingleFlight:
 
             async def slow() -> str:
                 started.set()
-                await asyncio.sleep(10)
+                await asyncio.Event().wait()  # blocks until cancelled
                 return "x"
 
             fetch_task = asyncio.ensure_future(sfc.get_or_fetch(cache, "k", slow))

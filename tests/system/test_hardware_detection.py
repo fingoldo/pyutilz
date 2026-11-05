@@ -2,6 +2,7 @@
 
 import pytest
 import platform
+import threading
 
 
 class TestUtilityFunctions:
@@ -466,7 +467,7 @@ class TestHardwareMonitor:
         # a diagnostic bound; a working monitor satisfies this on its first pass.
         deadline = time.monotonic() + 30.0
         while monitor.n_samples < 1 and time.monotonic() < deadline:
-            time.sleep(0.01)
+            threading.Event().wait(0.01)
         monitor.stop()
 
         assert monitor.n_samples >= 1, "the sampling thread collected nothing in 30s"

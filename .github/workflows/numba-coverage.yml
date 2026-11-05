@@ -31,7 +31,7 @@ permissions:
 jobs:
   numba-disabled-coverage:
     name: pytest with NUMBA_DISABLE_JIT=1 (kernel-body coverage)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # workflow_run fires on EVERY completion of the CI workflow regardless of outcome -- only
     # chain off a genuinely green main CI run, not a red one. Also gated on
     # workflow_run.event == 'push': this repo is public and CI also triggers on pull_request, so
@@ -152,7 +152,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload coverage to Codecov (numba-disabled flag)
-        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@670b80cbfd4b851578346741c21b62b8aa0ce4dc  # v1.23.7  # pragma: allowlist secret
+        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@e13229e5707e73356eca2a74f39d4cd93af0db10  # v1.23.8+84  # pragma: allowlist secret
         if: success()
         # The codecov CLI's coverage plugin re-runs `coverage xml` when it finds a .coverage data file, and
         # without this it reads pyproject's whole-suite fail_under=85 and logs a spurious "Coverage failure:

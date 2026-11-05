@@ -250,10 +250,12 @@ class TestSelectionAndRouting:
         regions = bench.sweep_backend_grid({"slow": slow, "fast": fast}, {"n": [10, 100]}, self._inp, reference="slow", repeats=3)
         assert regions and all(r["backend_choice"] == "fast" for r in regions)
 
-    def test_benchmarker_rejects_faster_but_divergent(self):
+    def test_benchmarker_rejects_faster_but_divergent(self, monkeypatch):
         # 'wrong' is instant but returns a different value -> equiv gate disqualifies
         # it, so the (slower) correct reference wins.
         from pyutilz.dev.benchmarking import sweep_backend_grid
+
+        _fake_clock(monkeypatch)
 
         regions = sweep_backend_grid(
             {"ref": lambda x: (_t() or x.sum()), "wrong": lambda x: x.sum() + 1e6},
@@ -280,14 +282,14 @@ class TestSelectionAndRouting:
         assert c.lookup("k", n=1000, location="host")["backend_choice"] == "numpy"
         assert c.lookup("k", n=1000, location="device")["backend_choice"] == "cupy"
 
-    def test_sweep_to_dispatch_routes_swept_winner(self):
+    def test_sweep_to_dispatch_routes_swept_winner(self, monkeypatch):
         # Full path: benchmark -> persist regions -> lookup returns the measured winner.
-        import time
         from pyutilz.dev.benchmarking import sweep_backend_grid
         from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
 
+        _fake_clock(monkeypatch)
         regions = sweep_backend_grid(
-            {"slow": lambda x: (time.sleep(0.004) or x.sum()), "fast": lambda x: x.sum()},
+            {"slow": lambda x: (_t() or x.sum()), "fast": lambda x: x.sum()},
             {"n": [10, 100]}, self._inp, reference="slow", repeats=3,
         )
         c = KernelTuningCache(in_memory=True)
@@ -296,9 +298,19 @@ class TestSelectionAndRouting:
         assert c.lookup("k", n=100)["backend_choice"] == "fast"
 
 
+_FAKE_NOW = [0.0]
+
+
 def _t():
-    import time
-    time.sleep(0.004)
+    """A call that 'takes' 4 ms on the injected clock (see ``_fake_clock``)."""
+    _FAKE_NOW[0] += 0.004
+
+
+def _fake_clock(monkeypatch):
+    from pyutilz.dev import benchmarking as bench
+
+    _FAKE_NOW[0] = 0.0
+    monkeypatch.setattr(bench, "timer", lambda: _FAKE_NOW[0])
 
 
 class TestRobustRanking:

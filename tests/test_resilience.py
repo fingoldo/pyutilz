@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import pickle
-import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -160,7 +159,7 @@ class TestCircuitBreaker:
             failing()
         assert cb.get_stats()["is_open"] is True
 
-        time.sleep(0.01)  # recovery_timeout_sec=0, any elapsed time clears it
+        # recovery_timeout_sec=0, so the breaker is already past its recovery window
 
         @cb.protect
         def succeeding():

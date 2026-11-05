@@ -6,7 +6,6 @@ Tests cover:
 """
 
 import pytest
-import time
 import threading
 
 
@@ -118,7 +117,7 @@ class TestTimeoutWrapper:
         # Should succeed without creating multiple executors
         assert results == list(range(10))
 
-    def test_timeout_wrapper_report_duration(self, caplog):
+    def test_timeout_wrapper_report_duration(self, caplog, monkeypatch):
         """``report_actual_duration=True`` LOGS the measured duration; the return value is unchanged.
 
         Reframed against the real contract (src/pyutilz/system/monitoring.py:227-229): the flag
@@ -132,9 +131,16 @@ class TestTimeoutWrapper:
 
         from pyutilz.system.monitoring import timeout_wrapper
 
+        from types import SimpleNamespace
+
+        from pyutilz.system import monitoring
+
+        fake_now = [1000.0]
+        monkeypatch.setattr(monitoring, "time", SimpleNamespace(time=lambda: fake_now[0]))
+
         @timeout_wrapper(timeout=5, report_actual_duration=True)
         def timed_function():
-            time.sleep(0.1)
+            fake_now[0] += 0.1  # the call "takes" 0.1s on the injected clock
             return "done"
 
         with caplog.at_level(logging.INFO, logger="pyutilz.system.monitoring"):
@@ -154,7 +160,6 @@ class TestTimeoutWrapper:
 
         @timeout_wrapper(timeout=5)
         def quiet_function():
-            time.sleep(0.1)
             return "done"
 
         with caplog.at_level(logging.INFO, logger="pyutilz.system.monitoring"):
@@ -174,7 +179,6 @@ class TestConcurrentExecution:
 
         @timeout_wrapper(timeout=5)
         def task(n):
-            time.sleep(0.1)
             return n * 2
 
         # Execute multiple tasks concurrently
@@ -190,7 +194,6 @@ class TestConcurrentExecution:
 
         @timeout_wrapper(timeout=5)
         def thread_safe_function(x):
-            time.sleep(0.01)
             return x**2
 
         results = []
@@ -215,25 +218,31 @@ class TestConcurrentExecution:
         assert set(results) == {i**2 for i in range(10)}
 
 
-@pytest.mark.parametrize("timeout_value,sleep_time,should_timeout", [
-    (2, 0.5, False),  # Completes before timeout
-    (1, 2, True),     # Times out
-    (5, 0.1, False),  # Completes quickly
+@pytest.mark.parametrize("timeout_value,blocks,should_timeout", [
+    (2, False, False),     # Completes before timeout
+    (0.05, True, True),    # Never finishes within the timeout
+    (5, False, False),     # Completes quickly
 ])
-def test_timeout_wrapper_parametrized(timeout_value, sleep_time, should_timeout):
+def test_timeout_wrapper_parametrized(timeout_value, blocks, should_timeout):
     """Parametrized test for different timeout scenarios"""
     from pyutilz.system.monitoring import timeout_wrapper
 
+    release = threading.Event()
+
     @timeout_wrapper(timeout=timeout_value)
     def sleepy_function():
-        time.sleep(sleep_time)
+        if blocks:
+            release.wait(30)  # held until the wrapper has given up on the call
         return "success"
 
-    result = sleepy_function()
+    try:
+        result = sleepy_function()
+    finally:
+        release.set()
 
     # One unconditional assertion over both parametrised cases: the decorator swallows the
     # TimeoutError and returns None, and otherwise passes the real return value straight through.
-    assert result == (None if should_timeout else "success"), f"unexpected result for timeout={timeout_value}, sleep={sleep_time}"
+    assert result == (None if should_timeout else "success"), f"unexpected result for timeout={timeout_value}, blocks={blocks}"
 
 
 def test_monitoring_module_imports_successfully():

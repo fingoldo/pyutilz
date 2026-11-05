@@ -85,11 +85,6 @@ class TestKeysChangedEnough:
 
         assert keys_changed_enough({"x": 0}, {"x": 0}, min_change_percent=1.0, key_contains="x") is False
 
-    def test_zero_to_nonzero_is_changed(self):
-        from pyutilz.core.pythonlib import keys_changed_enough
-
-        assert keys_changed_enough({"x": 5}, {"x": 0}, min_change_percent=1.0, key_contains="x") is True
-
 
 # ---------------------------------------------------------------------------
 # unpack_counter

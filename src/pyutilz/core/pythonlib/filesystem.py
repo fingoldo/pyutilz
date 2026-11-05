@@ -117,7 +117,7 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, *, allow_unverified: Opti
                 # branch below already documents.
                 import pandas as pd
 
-                return pd.read_pickle(io.BytesIO(_read_verified_pickle(fpath, allow_unverified)))  # nosec B301 - sidecar verified in _read_verified_pickles deserializing a named local file
+                return pd.read_pickle(io.BytesIO(_read_verified_pickle(fpath, allow_unverified)))  # deserialize-ok: the bytes come from _read_verified_pickle, which checks the sha256 sidecar first  # nosec B301 - sidecar verified in _read_verified_pickles deserializing a named local file
             from pyutilz.core.safe_pickle import safe_load
 
             return safe_load(fpath, allow_unverified=allow_unverified, **kwargs)

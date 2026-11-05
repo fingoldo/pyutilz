@@ -26,6 +26,11 @@ import weakref
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
+# TCP keepalives so a connection through a silent-drop tunnel fails in about a minute instead of the OS default (two hours on Windows).
+_KEEPALIVES_IDLE_S = 30
+_KEEPALIVES_INTERVAL_S = 10
+_KEEPALIVES_COUNT = 5
+
 psycopg2: Any
 try:
     import psycopg2  # type: ignore[no-redef]
@@ -90,7 +95,9 @@ def _ensure_pool(dsn: str, pool_max: int = 8) -> psycopg2.pool.ThreadedConnectio
             return _pool
         if _pool_dsn is not None and _pool_dsn != dsn:
             raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
-        _pool = psycopg2.pool.ThreadedConnectionPool(1, pool_max, dsn)
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            1, pool_max, dsn, keepalives=1, keepalives_idle=_KEEPALIVES_IDLE_S, keepalives_interval=_KEEPALIVES_INTERVAL_S, keepalives_count=_KEEPALIVES_COUNT
+        )
         _pool_dsn = dsn
         return _pool
 

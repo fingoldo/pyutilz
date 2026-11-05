@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Matches ci.yml's own full-suite `test` job budget; without it this job (which runs the
     # entire test suite with [all,dev] installed) inherits GitHub's 6-hour default, so a hung
     # test or a stalled pip install on the release path can burn hours of the account's
@@ -99,7 +99,7 @@ jobs:
 
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Download-artifact + a single upload call; anything slower than this is a stall, not work.
     timeout-minutes: 10
     environment: pypi

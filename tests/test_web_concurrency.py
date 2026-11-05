@@ -284,7 +284,6 @@ def test_get_url_proxy_snapshot_group_read_is_never_torn():
     thin wrapper (`_SlowLock`) that holds the real lock slightly longer, in case a future change
     to this code path (e.g. an added field whose value requires a GIL-releasing computation)
     creates a genuinely wider, more catchable window."""
-    import time
 
     class _SlowLock:
         def __init__(self, real_lock):
@@ -293,7 +292,7 @@ def test_get_url_proxy_snapshot_group_read_is_never_torn():
         def acquire(self, *args, **kwargs):
             ok = self._real.acquire(*args, **kwargs)
             if ok:
-                time.sleep(0.001)
+                threading.Event().wait(0.001)
             return ok
 
         def release(self):

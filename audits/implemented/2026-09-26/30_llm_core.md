@@ -76,7 +76,7 @@ Fix: widen the except to `(json.JSONDecodeError, RecursionError)` and map both t
 
 ### CORE-7 (Low) -- `extract_json` step 4 is quadratic in the number of `{` candidates, and step 5 logs the full response at ERROR
 
-**Disposition:** RESOLVED -- profiling showed the quadratic cost is building each `JSONDecodeError`, which counts newlines up to the failure position, and not the scan itself. Stopping at the first failure that reaches end-of-input would also lose `{"a": {"b": 2}`, so the scan stops instead once failed candidates have cost `_JSON_SCAN_BUDGET_CHARS` (20M chars, `base.py:464`). A 180 KB runaway went from 10.3 s to well under 2 s. The ERROR log now shows only `%.2000s` of the response plus its length. Tests: `test_runaway_scan_is_capped` (counts raw_decode calls), `test_runaway_scan_is_fast`, `test_object_nested_in_an_unterminated_one_is_still_found`, `test_object_after_non_runaway_failures_is_found`, `test_failure_log_is_truncated`.
+**Disposition:** RESOLVED -- profiling showed the quadratic cost is building each `JSONDecodeError`, which counts newlines up to the failure position, and not the scan itself. Stopping at the first failure that reaches end-of-input would also lose `{"a": {"b": 2}`, so the scan stops instead once failed candidates have cost `_JSON_SCAN_BUDGET_CHARS` (20M chars, `base.py:464`). A 180 KB runaway went from 10.3 s to well under 2 s. The ERROR log now shows only `%.2000s` of the response plus its length. Tests: `test_runaway_scan_is_capped` (counts raw_decode calls), test_runaway_scan_is_fast (removed; test_runaway_scan_is_capped counts decode calls instead), `test_object_nested_in_an_unterminated_one_is_still_found`, `test_object_after_non_runaway_failures_is_found`, `test_failure_log_is_truncated`.
 Evidence: `base.py:503-511` calls `raw_decode` from every `{`, and each call can scan to the end of the text. Reproduced: 60 KB with
 5,000 unterminated `{"b": 1, ` fragments took 0.54 s. The time grows about quadratically with length. `base.py:529` logs the
 entire `text` at ERROR.
@@ -88,7 +88,7 @@ candidates. Truncate the logged response (`%.2000s`).
 
 **Disposition:** RESOLVED -- `_timeout_for` adds a reasoning budget stated separately from `max_tokens` (`reasoning.max_tokens`, `thinking.budget_tokens`, via `_separate_reasoning_budget`, `_timeouts.py:13`) to the derived tokens. It also uses that budget when no `max_tokens` is given. The value is still clamped by `_max_derived_timeout_s`. Tests: `TestReasoningBudgetInTimeout`.
 Evidence: `_timeouts.py:78-79` computes `max(base, tokens/30)`. For a 500-token request, `base` (240 s per
-`tests/test_llm_openai_compat.py:759`) wins, yet the docstring (`:51-54`) cites a 393 s silent-thinking TTFT. When the provider's
+`tests/test_openai_compat.py:759`) wins, yet the docstring (`:51-54`) cites a 393 s silent-thinking TTFT. When the provider's
 reasoning budget is separate from `max_tokens` (Anthropic `budget_tokens`, some routes), a small `max_tokens` can still hit a long
 think.
 Impact: ReadTimeout storms on reasoning calls with small answer budgets, retried under CORE-4.
@@ -140,7 +140,7 @@ keys.
 
 ### CORE-14 (Low) -- Test gaps for important core behaviour
 
-**Disposition:** RESOLVED -- every CORE finding above has a regression test in `tests/test_llm_core_audit_20260926.py`, including `images_on_disk` (CORE-1), two event loops (CORE-2), PerCallAttr growth (CORE-3), the deadline (CORE-4), default-pricing logging (CORE-5) and deep nesting (CORE-6). `split_data_uri`, `build_gemini_parts`, `_note_aborted_stream_attempt` and `_repaired_stream_body` belong to modules outside this owner set (`_stream_attempts.py`, `openai_compat.py`), apart from `split_data_uri`, which the CORE-1 tests exercise through `images_on_disk`. Line references above were taken before the base.py split (follow-up 3). After the split, `PerCallAttr`, `LazySemaphore` and `PerLoopHTTPClient` live in `src/pyutilz/llm/_descriptors.py` (`:85`, `:120`, `:215`). In `base.py`: `_longest_prefix_match` is at `:52`, `_longest_prefix_pricing` at `:77`, `_BATCH_FORWARDED_KEYS` at `:205`, `_JSON_SCAN_BUDGET_CHARS` at `:209`, `LLMProvider._client` at `:230`, the `extract_json` except at `:438`, and the batch progress reset at `:684`.
+**Disposition:** RESOLVED -- every CORE finding above has a regression test in the test_llm_core_audit_20260926_* files under tests/llm (split per module 2026-10-24), including `images_on_disk` (CORE-1), two event loops (CORE-2), PerCallAttr growth (CORE-3), the deadline (CORE-4), default-pricing logging (CORE-5) and deep nesting (CORE-6). `split_data_uri`, `build_gemini_parts`, `_note_aborted_stream_attempt` and `_repaired_stream_body` belong to modules outside this owner set (`_stream_attempts.py`, `openai_compat.py`), apart from `split_data_uri`, which the CORE-1 tests exercise through `images_on_disk`. Line references above were taken before the base.py split (follow-up 3). After the split, `PerCallAttr`, `LazySemaphore` and `PerLoopHTTPClient` live in `src/pyutilz/llm/_descriptors.py` (`:85`, `:120`, `:215`). In `base.py`: `_longest_prefix_match` is at `:52`, `_longest_prefix_pricing` at `:77`, `_BATCH_FORWARDED_KEYS` at `:205`, `_JSON_SCAN_BUDGET_CHARS` at `:209`, `LLMProvider._client` at `:230`, the `extract_json` except at `:438`, and the batch progress reset at `:684`.
 Evidence (grep over `tests/`): 0 files reference `images_on_disk`, `split_data_uri`, `build_gemini_parts`,
 `_note_aborted_stream_attempt` (covered only indirectly via `last_aborted_stream_attempts` in
 `tests/llm/test_stream_not_retried_after_generation.py`), or `_repaired_stream_body`. No test uses a provider across two event loops
@@ -149,7 +149,7 @@ Evidence (grep over `tests/`): 0 files reference `images_on_disk`, `split_data_u
 Fix: add regression tests together with each fix above.
 
 ## Checked and found sound
-- `_timeout_for` max_tokens=0 sentinel: explicit None checks (`_timeouts.py:64-77`), tested at `tests/test_llm_openai_compat.py:805-809`.
+- `_timeout_for` max_tokens=0 sentinel: explicit None checks (`_timeouts.py:64-77`), tested at `tests/test_openai_compat.py:805-809`.
   The stream and buffered paths both derive the body budget the same way (`openai_compat.py:543-551` vs `:746-760`) and both pass
   `_timeout_for(body)` (`:419`, `:836`).
 - The negative `PYUTILZ_LLM_MAX_RETRIES` guard and the 402 elapsed-time grace (`_retry.py`).

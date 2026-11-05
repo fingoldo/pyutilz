@@ -208,7 +208,7 @@ class TestEnsureWarm:
 
         async def run():
             loop = asyncio.get_running_loop()
-            real_to_thread = asyncio.to_thread
+            real_to_thread = getattr(asyncio, "to_thread", None)  # absent on 3.8; the version parameter then picks the executor path
             real_exec = loop.run_in_executor
 
             in_thread = []

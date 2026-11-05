@@ -169,17 +169,20 @@ def _resolve_serialized_source(obj: Any, verify_sidecar: bool) -> Any:
             # round-trip of None.
             logger.error("File %s not found", obj)
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), obj)
+        # Read ONCE and verify those same bytes: verifying the path and then opening it again would let a file replaced in
+        # between (os.replace by another process) reach pickle unverified.
+        with open(obj, "rb") as f:
+            payload = f.read()
         if verify_sidecar:
-            from pyutilz.core.safe_pickle import verify_sidecar as _verify_sidecar
+            from pyutilz.core.safe_pickle import _verify_sidecar
 
-            if not _verify_sidecar(obj):
+            if not _verify_sidecar(obj, payload=payload):
                 raise PickleVerificationError(
                     f"unserialize: refusing to unpickle {obj!r}; sha256 sidecar missing or mismatch. "
                     "Run pyutilz.core.safe_pickle.write_sidecar(path) on a trusted copy, or call "
                     "unserialize(..., verify_sidecar=False) to accept the historical unverified behaviour."
                 )
-        with open(obj, "rb") as f:
-            return f.read()
+        return payload
     if isinstance(obj, io.IOBase):
         return obj.read()
     return obj

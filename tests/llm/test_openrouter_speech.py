@@ -31,6 +31,12 @@ def _fresh_catalogue() -> Any:
     osp.reset_speech_catalogue_cache()
 
 
+def test_reset_forgets_which_models_were_warned_about_expiry() -> None:
+    osp._expiry_warned.add("some/model")
+    osp.reset_speech_catalogue_cache()
+    assert osp._expiry_warned == set()
+
+
 seen_params: List[Any] = []
 
 

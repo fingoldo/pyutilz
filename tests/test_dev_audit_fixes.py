@@ -88,15 +88,17 @@ def test_logged_finalizes_and_records_the_error_on_a_raising_call():
 # -------------------- F25: benchmark log matches the returned estimator ------
 
 
-def test_benchmark_log_reports_the_min_over_reps(caplog):
-    import time
+def test_benchmark_log_reports_the_min_over_reps(caplog, monkeypatch):
+    from pyutilz.dev import benchmarking as bench
 
+    now = [0.0]
+    monkeypatch.setattr(bench, "timer", lambda: now[0])
     calls = {"n": 0}
 
     def slowest_last():
         calls["n"] += 1
         if calls["n"] == 3:  # make the LAST repetition clearly the slowest
-            time.sleep(0.05)
+            now[0] += 0.05
         return 1
 
     with caplog.at_level(logging.INFO):

@@ -39,7 +39,9 @@ class TestMatchesNumpy:
 
     def test_outputs_are_float64(self):
         arr = np.ones((5, 3), dtype=np.int32)
-        for out in column_sum_min_max(arr):
+        outs = list(column_sum_min_max(arr))
+        assert len(outs) == 3
+        for out in outs:
             assert out.dtype == np.float64
 
 

@@ -172,7 +172,7 @@ async def test_concurrent_fetches_for_same_key_dedup_to_one_call():
     async def fetcher():
         nonlocal call_count
         call_count += 1
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)
         return 123
 
     results = await asyncio.gather(*[sfc.get_or_fetch(cache, "shared", fetcher) for _ in range(10)])
@@ -189,7 +189,7 @@ async def test_concurrent_fetches_for_different_keys_run_independently():
 
     async def fetcher(key):
         call_order.append(key)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0)
         return len(key)
 
     results = await asyncio.gather(
@@ -242,7 +242,7 @@ async def test_waiters_get_default_when_fetcher_fails():
 
     async def failing_fetcher():
         started.set()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)
         raise RuntimeError("boom")
 
     async def waiter():

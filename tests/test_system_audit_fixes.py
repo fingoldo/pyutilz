@@ -235,7 +235,7 @@ def _wait_for_samples(monitor: UtilizationMonitor, minimum: int = 1, timeout: fl
     while time.monotonic() < deadline:
         if monitor.n_samples >= minimum:
             return True
-        time.sleep(0.01)
+        threading.Event().wait(0.01)
     return monitor.n_samples >= minimum
 
 

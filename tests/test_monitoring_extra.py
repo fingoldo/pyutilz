@@ -1,3 +1,4 @@
+import threading
 import time
 
 import pytest
@@ -253,7 +254,7 @@ class TestTimeoutWrapperExceptions:
 
         @timeout_wrapper(timeout=0.2)
         def hangs():
-            time.sleep(30)
+            threading.Event().wait(30)  # a hung call: blocks until the daemon thread dies with the process
             return "should not reach here"
 
         @timeout_wrapper(timeout=5)

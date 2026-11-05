@@ -1,6 +1,6 @@
 # Dispositions: 30_llm_core.md (CORE-*)
 
-Tests: `tests/test_llm_core_audit_20260926.py` (53 passed). The neighbouring LLM suites were also run (522 tests). The 13 failures there are in
+Tests: the test_llm_core_audit_20260926_* files under tests/llm (split per module 2026-10-24) (53 passed). The neighbouring LLM suites were also run (522 tests). The 13 failures there are in
 files other agents are editing concurrently (`_claude_models`, `openrouter_provider/_accounting`, `openai_compat._post_and_unwrap`,
 `openai_provider` warn-once, `claude_code` count_tokens, `openrouter_batch`) and none of them touch CORE code. The F10 thread test is slow
 (297 s) on the unmodified `__set__` as well: an A/B measured 26-34 s for 15 iterations with both the old and the new version.
@@ -51,7 +51,7 @@ promised, once per (provider, model). The fallback value stays `_DEFAULT_PRICING
 position, and not the scan itself. Stopping at the first failure that reaches end-of-input would also lose `{"a": {"b": 2}`, so the scan
 stops instead once failed candidates have cost `_JSON_SCAN_BUDGET_CHARS` (20M chars, `base.py:464`). A 180 KB runaway went from 10.3 s
 to well under 2 s. The ERROR log now shows only `%.2000s` of the response plus its length. Tests: `test_runaway_scan_is_capped` (counts
-raw_decode calls), `test_runaway_scan_is_fast`, `test_object_nested_in_an_unterminated_one_is_still_found`,
+raw_decode calls), test_runaway_scan_is_fast (removed; test_runaway_scan_is_capped counts decode calls instead), `test_object_nested_in_an_unterminated_one_is_still_found`,
 `test_object_after_non_runaway_failures_is_found`, `test_failure_log_is_truncated`.
 
 ### CORE-8
@@ -87,7 +87,7 @@ is closed and no clone is built. It also closes each per-loop clone. The first f
 `test_unknown_keys_are_reported`.
 
 ### CORE-14
-**Disposition:** RESOLVED -- every CORE finding above has a regression test in `tests/test_llm_core_audit_20260926.py`, including
+**Disposition:** RESOLVED -- every CORE finding above has a regression test in the test_llm_core_audit_20260926_* files under tests/llm (split per module 2026-10-24), including
 `images_on_disk` (CORE-1), two event loops (CORE-2), PerCallAttr growth (CORE-3), the deadline (CORE-4), default-pricing logging
 (CORE-5) and deep nesting (CORE-6). `split_data_uri`, `build_gemini_parts`, `_note_aborted_stream_attempt` and `_repaired_stream_body`
 belong to modules outside this owner set (`_stream_attempts.py`, `openai_compat.py`), apart from `split_data_uri`, which the CORE-1
@@ -155,7 +155,7 @@ default" intent. The bytecode return-value check reads that owner's function.
 ### HANDOFF 20_providers #4: F10 failure under -n 4
 **Disposition:** RESOLVED -- it was the per-test timeout on the 297 s runtime, which is fixed above.
 
-Follow-up test runs: `tests/test_llm_core_audit_20260926.py` + `tests/test_llm_supports_json_mode.py` 67 passed. The LLM neighbours (the
+Follow-up test runs: the test_llm_core_audit_20260926_* files under tests/llm (split per module 2026-10-24) + `tests/test_llm_supports_json_mode.py` 67 passed. The LLM neighbours (the
 openai_compat, base, factory, providers, retry and 20260903 audit files, `tests/llm`, and the provider contract) 493 passed, 0 failed. mypy
 and ruff are clean on every touched source file.
 
@@ -224,7 +224,7 @@ with `getattr(..., None) or {}`. Re-verified: the 3 tests pass.
   - F10 moved to `tests/test_llm_percallattr_first_touch_threads.py`, which brings
     `test_domain_db_web_cloud_llm_text_audit_20260903_llm.py` to 972 lines. The class that kept the F41 tests is now
     `TestF41PerCallAttrContextVars`.
-  - A one-line comment was folded in `tests/test_llm_openrouter.py`, back to its baseline of 1709.
+  - A one-line comment was folded in `tests/llm/test_openrouter_provider.py`, back to its baseline of 1709.
 - `test_unused_parameter_baseline`: the two `_extra_request_body::model` entries were re-keyed to the modules the
   methods moved to (`_openai_compat_body.RequestBodyMixin`, `openrouter_provider/_request.OpenRouterRequestMixin`).
   The justifications are unchanged and no entry was added.
@@ -242,7 +242,7 @@ with `getattr(..., None) or {}`. Re-verified: the 3 tests pass.
   - `test_pooled_memory_counts_as_available` now asserts that the pool was flushed.
   - `test_platform_ids_resolve` now asserts equality with the canonical id's entry.
   - My `images_on_disk` test now asserts `len(written) == 3` before its `all()`.
-  - My wall-clock `test_runaway_scan_is_fast` was removed; `test_runaway_scan_is_capped` counts decode calls instead.
+  - My wall-clock test_runaway_scan_is_fast (removed; test_runaway_scan_is_capped counts decode calls instead) was removed; `test_runaway_scan_is_capped` counts decode calls instead.
 - `test_audit_rounds_countable`: added `audits/2026-09-26/TRACKER.md` (one status row per report, and per finding for
   the downstream report). DS-12 (downstream pins on 1.1.0) stays **OPEN** until the release, so the round correctly
   stays in the open tree.
