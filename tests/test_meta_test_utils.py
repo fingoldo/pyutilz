@@ -65,3 +65,19 @@ class TestFindingsRatchet:
         baseline = tmp_path / "baseline.json"
         baseline.write_text(json.dumps(["x"]), encoding="utf-8")
         assert mtu.findings_ratchet(["x"], baseline) == ([], [])
+
+
+def test_repository_scans_do_not_enter_agent_worktrees(tmp_path):
+    """`.claude` holds complete copies of the repository; a scan that entered them parsed every file once per copy."""
+    (tmp_path / "real.py").write_text("def real_function():\n    return 1\n", encoding="utf-8")
+    nested = tmp_path / ".claude" / "worktrees" / "agent-1"
+    nested.mkdir(parents=True)
+    (nested / "copied_only.py").write_text("def copied_function():\n    return 2\n", encoding="utf-8")
+    mtu.clear_repo_scan_caches()
+    try:
+        assert "real.py" in mtu._repo_filenames(tmp_path)
+        assert "copied_only.py" not in mtu._repo_filenames(tmp_path)
+        assert "real_function" in mtu._repo_symbols(tmp_path)
+        assert "copied_function" not in mtu._repo_symbols(tmp_path)
+    finally:
+        mtu.clear_repo_scan_caches()

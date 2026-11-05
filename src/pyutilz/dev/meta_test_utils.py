@@ -655,11 +655,16 @@ def clear_repo_scan_caches() -> None:
     _repo_symbols.cache_clear()
 
 
+# Directories a whole-repository scan never enters. `.claude` holds Claude Code's agent worktrees, each a COMPLETE checkout of the
+# repository being scanned: walking them multiplied a 15 s scan by the number of worktrees (measured: 19 min in one test).
+_REPO_SCAN_SKIP_DIRS = frozenset({".git", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules", ".venv", ".claude"})
+
+
 @lru_cache(maxsize=8)
 def _repo_filenames(repo_root: Path) -> frozenset[str]:
     """Every filename in the repository, cached on the root path -- see :func:`clear_repo_scan_caches`."""
-    skip = {".git", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules", ".venv"}
-    return frozenset(p.name for p in repo_root.rglob("*") if p.is_file() and not skip & set(p.parts))
+    skip = _REPO_SCAN_SKIP_DIRS
+    return frozenset(p.name for p in repo_root.rglob("*") if p.is_file() and not skip & set(p.relative_to(repo_root).parts[:-1]))
 
 
 @lru_cache(maxsize=8)
@@ -671,11 +676,11 @@ def _repo_symbols(repo_root: Path) -> frozenset[str]:
     """
     import ast
 
-    skip = {".git", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules", ".venv"}
+    skip = _REPO_SCAN_SKIP_DIRS
     names: set[str] = set()
     unreadable: list[str] = []
     for py in repo_root.rglob("*.py"):
-        if skip & set(py.parts):
+        if skip & set(py.relative_to(repo_root).parts[:-1]):
             continue
         try:
             tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
