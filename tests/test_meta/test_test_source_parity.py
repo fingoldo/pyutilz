@@ -82,6 +82,9 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
 # but cover a real concern. Reverse-direction whitelist.
 _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
+    "test_shared_gates_adopted_hygiene": "cross-cutting: py-ci-shared source, test and CI-wiring gates wired at the 2026-11-04 pin, each over src/pyutilz or tests/",
+    "test_shared_gates_adopted_more": "cross-cutting: the 2026-11-04 round of py-ci-shared gates over src/pyutilz or tests/ (one advisory-only)",
+    "test_pyutilz_bound_redundant_test_fit": "cross-cutting: the py-ci-shared redundant-test-fit gate run against this repo's own test suite",
     "test_mutation_teeth": "cross-cutting meta-test: mutation teeth over the production lines a commit changed, via the py-ci-shared harness",
     "test_audit_20261015_runtime": "cross-cutting regression tests for the 2026-10-15 audit findings C-01, C-02, C-03, C-07, C-08, C-09, R-01, R-02, R-03, S-10, X-07, X-18, P-05 over the database, config, cache and resilience modules",
     "test_printed_advice_messages": "cross-cutting: the refusal messages that advise a keyword (load_file, _alternate_values_clause, build_upsert_query, _normalise_encryption), each pinned by the printed-advice gate",
