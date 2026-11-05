@@ -40,6 +40,12 @@ _PERMITTED_RELOAD_SITES: dict[str, str] = {
     "__init__ only (lazy-alias plumbing) -- reload only re-executes the ONE module passed to "
     "it, so this does not cascade-reload already-imported submodules like "
     "pyutilz.core.pythonlib, and __init__.py defines no sentinel objects of its own.",
+    "tests/test_image.py:254": "re-executes pyutilz.core.image so its Pillow access binds the real package for "
+    "one test; core/image.py defines no module-level sentinel objects (its imports are stdlib and "
+    "pyutilz.text.strings only), so re-execution cannot rebind any identity another module holds.",
+    "tests/test_image.py:375": "re-executes pyutilz.core.image so its Pillow access binds the real package for "
+    "one test; core/image.py defines no module-level sentinel objects (its imports are stdlib and "
+    "pyutilz.text.strings only), so re-execution cannot rebind any identity another module holds.",
     "tests/test_pythonlib_extra2.py:538": "deliberately reloads pyutilz.core.pythonlib to prove "
     "get_attr() survives it -- pythonlib.py's only historical sentinel hazard was "
     "_GET_ATTR_UNSET, and get_attr() now captures a second `_unset` parameter from the SAME "

@@ -242,14 +242,13 @@ class _FakeImage:
 
 class TestImageProperties:
     @pytest.fixture(autouse=True)
-    def _real_pillow(self):
+    def _real_pillow(self, monkeypatch):
         # The module-wide fixture swaps Pillow for stubs in sys.modules; these tests need the real decoder, so put
         # the real package back (and re-bind image_mod to it) for their duration, then restore the stubs.
         import importlib
 
         stubbed = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "PIL" or k.startswith("PIL.")}
-        saved_module = sys.modules.get("pyutilz.core.image")
-        sys.modules["pyutilz.core.image"] = image_mod
+        monkeypatch.setitem(sys.modules, "pyutilz.core.image", image_mod)
         try:
             importlib.import_module("PIL.Image")
             importlib.reload(image_mod)
@@ -258,8 +257,6 @@ class TestImageProperties:
             for k in [k for k in sys.modules if k == "PIL" or k.startswith("PIL.")]:
                 sys.modules.pop(k)
             sys.modules.update(stubbed)
-            if saved_module is not None:
-                sys.modules["pyutilz.core.image"] = saved_module
 
     def test_the_dimensions_and_pixel_bytes_come_back_in_order(self, tmp_path):
         path = _save_jpeg(tmp_path, size=(7, 5))
@@ -367,13 +364,12 @@ class TestImageProperties:
 
 
 @pytest.fixture
-def _real_pillow_fixture():
+def _real_pillow_fixture(monkeypatch):
     """Put the real Pillow back in place of the module-wide stub for one test, then restore the stub."""
     import importlib
 
     stubbed = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "PIL" or k.startswith("PIL.")}
-    saved_module = sys.modules.get("pyutilz.core.image")
-    sys.modules["pyutilz.core.image"] = image_mod
+    monkeypatch.setitem(sys.modules, "pyutilz.core.image", image_mod)
     try:
         importlib.import_module("PIL.Image")
         importlib.reload(image_mod)
@@ -382,8 +378,6 @@ def _real_pillow_fixture():
         for k in [k for k in sys.modules if k == "PIL" or k.startswith("PIL.")]:
             sys.modules.pop(k)
         sys.modules.update(stubbed)
-        if saved_module is not None:
-            sys.modules["pyutilz.core.image"] = saved_module
 
 
 @pytest.mark.usefixtures("_real_pillow_fixture")
