@@ -69,13 +69,13 @@ _PERMITTED_SYS_MODULES_POP_SITES: dict[str, str] = {
     "outlives the fixture by either lookup route.",
     "tests/test_image.py:61": "the teardown half of the same fixture -- pops the stub-built "
     "module back out before reinstating the saved one; paired with the entry above.",
-    "tests/test_dev_fixes_regression.py:195": "re-imports pyutilz.system.monitoring under a "
+    "tests/test_dev_fixes_regression.py:181": "re-imports pyutilz.system.monitoring under a "
     "patched atexit.register to observe the shared executor's shutdown being registered at "
     "import time (unobservable any other way -- atexit has no introspection API). The finally "
     "block shuts down the throwaway executor and restores both sys.modules and the "
     "pyutilz.system.monitoring parent-package attribute, so tests asserting _TIMEOUT_EXECUTOR "
     "identity (tests/test_monitoring.py) are unaffected by execution order.",
-    "tests/test_dev_fixes_regression.py:207": "the restore half of the same finally block.",
+    "tests/test_dev_fixes_regression.py:193": "the restore half of the same finally block.",
 }
 
 # Only pops of a pyutilz-owned module can split OUR identity; popping a third-party stub key
@@ -98,7 +98,7 @@ _POP_PREFIXES = ("pyutilz",)
 # ``monkeypatch.setitem(sys.modules, ...)`` (undone automatically) is the preferred form. Any entry
 # below must say what removes the key again, and when.
 _PERMITTED_SYS_MODULES_WRITE_SITES: dict[str, str] = {
-    "tests/test_dev_fixes_regression.py:205": "the RESTORE half of a try/finally -- puts the saved "
+    "tests/test_dev_fixes_regression.py:191": "the RESTORE half of a try/finally -- puts the saved "
     "pyutilz.system.monitoring module back after the throwaway re-import; paired with the pop "
     "entry for the same finally block above.",
     "tests/test_image.py:60": "the restore half of the _stub_pil fixture teardown -- reinstates the " "real PIL modules saved on setup.",
