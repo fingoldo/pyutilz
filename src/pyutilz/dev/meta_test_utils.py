@@ -44,6 +44,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Optional
 import logging
 
+from pyutilz.dev._pruned_walk import DEFAULT_PRUNED_DIRS, iter_files_pruned
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,8 +95,8 @@ def _rglob_test_files(root: Path) -> "typing.Iterator[Path]":
     """
     from py_ci_shared.code_audit._base import _DEFAULT_EXCLUDE_DIRS
 
-    for p in root.rglob("test_*.py"):
-        if not any(part in _DEFAULT_EXCLUDE_DIRS for part in p.relative_to(root).parts[:-1]):
+    for p in iter_files_pruned(root, (".py",), _DEFAULT_EXCLUDE_DIRS):
+        if p.name.startswith("test_"):
             yield p
 
 
@@ -135,7 +137,7 @@ def consumer_corpus(
     excluded_resolved = {p.resolve() for p in exclude_files}
     chunks: list[str] = []
     unreadable: list[str] = []
-    for py in package_dir.rglob("*.py"):
+    for py in iter_files_pruned(package_dir, (".py",), DEFAULT_PRUNED_DIRS):
         if py.resolve() in excluded_resolved:
             continue
         if any(frag in py.parts for frag in excluded_fragments):
@@ -398,7 +400,7 @@ def scan_todo_markers(
     excluded_fragments = set(_DEFAULT_EXCLUDED_FRAGMENTS) | set(extra_excludes)
     out: list[tuple[Path, int, str, str]] = []
     unreadable: list[str] = []
-    for py in package_dir.rglob("*.py"):
+    for py in iter_files_pruned(package_dir, (".py",), DEFAULT_PRUNED_DIRS):
         if any(frag in py.parts for frag in excluded_fragments):
             continue
         try:
@@ -664,7 +666,7 @@ _REPO_SCAN_SKIP_DIRS = frozenset({".git", "__pycache__", ".mypy_cache", ".pytest
 def _repo_filenames(repo_root: Path) -> frozenset[str]:
     """Every filename in the repository, cached on the root path -- see :func:`clear_repo_scan_caches`."""
     skip = _REPO_SCAN_SKIP_DIRS
-    return frozenset(p.name for p in repo_root.rglob("*") if p.is_file() and not skip & set(p.relative_to(repo_root).parts[:-1]))
+    return frozenset(p.name for p in iter_files_pruned(repo_root, exclude_dirs=skip))
 
 
 @lru_cache(maxsize=8)
@@ -679,9 +681,7 @@ def _repo_symbols(repo_root: Path) -> frozenset[str]:
     skip = _REPO_SCAN_SKIP_DIRS
     names: set[str] = set()
     unreadable: list[str] = []
-    for py in repo_root.rglob("*.py"):
-        if skip & set(py.relative_to(repo_root).parts[:-1]):
-            continue
+    for py in iter_files_pruned(repo_root, (".py",), skip):
         try:
             tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
         except (SyntaxError, ValueError, OSError) as exc:
@@ -779,7 +779,7 @@ def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_pref
         test_corpus += py.read_text(encoding="utf-8", errors="replace")
     by_name = _repo_filenames(repo_root)
 
-    for doc in sorted(audit_dir.rglob("*.md")):
+    for doc in iter_files_pruned(audit_dir, (".md",)):
         for lineno, line in enumerate(doc.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             if not line.lstrip().startswith("|") or not _DISPOSITION_RE.search(line):
                 continue

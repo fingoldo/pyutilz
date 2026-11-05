@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `dev` tree walks (`meta_test_utils` corpus, TODO-marker, repository-symbol and audit-document scans, `persistence_sweep.written_files`) go through one pruned walk, `dev._pruned_walk.iter_files_pruned`, which never enters `.claude` (Claude Code's agent worktrees, each a complete copy of the repository). `tests/test_meta/test_no_unpruned_tree_walk.py` fails a new `rglob`/`os.walk` in `src/pyutilz` that neither uses it nor carries `# walk-ok: <reason>`.
+
 - `pyutilz.llm`: the OpenRouter speech client (`OpenRouterSpeech`, `SpeechRequest`, `SpeechResult`, `SpeechAccounting`, `SpeechError`, `SpeechInputError`) is re-exported lazily from the package; the module `pyutilz.llm.openrouter_speech` is unchanged.
 
 - CI badges and the `badges` branch are documented in [docs/guides/ci_badges.md](docs/guides/ci_badges.md): the pandas and polars

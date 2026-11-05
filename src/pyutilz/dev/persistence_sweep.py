@@ -90,13 +90,15 @@ def written_files(roots: Iterable[Any], suffixes: Sequence[str] = TEXT_FILE_SUFF
     """Every file with one of ``suffixes`` under each root (a directory or a single file), sorted."""
     from pathlib import Path
 
+    from pyutilz.dev._pruned_walk import iter_files_pruned
+
     out: List[Path] = []
     for root in roots:
         path = Path(root)
         if path.is_file():
             out.append(path)
         elif path.is_dir():
-            out.extend(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in suffixes)
+            out.extend(p for p in iter_files_pruned(path) if p.suffix.lower() in suffixes)
     return sorted(set(out))
 
 
