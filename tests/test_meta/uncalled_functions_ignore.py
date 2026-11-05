@@ -42,5 +42,6 @@ UNCALLED_FUNCTIONS_IGNORE: Dict[str, str] = {
     "fetch_generation_provider": "Public GET /generation lookup in llm.openrouter_speech returning the serving provider; glossum calls it for the manifest.",
     "reset_speech_catalogue_cache": "Public cache reset for the speech catalogue in llm.openrouter_speech, for tests and long-lived callers.",
     "_retry_after": "Private Retry-After parser in llm.openrouter_speech used through the public speech client path (called by name from its retry loop).",
+    "verify_sidecar": "Public sha256 sidecar check in core.safe_pickle, listed in __all__ and documented in the module docstring as the entry point for consumers; safe_load runs the same check through _verify_sidecar.",
     "compute_total_gpus_ram": "Public aggregate GPU RAM statistics over a list of GPU info dicts in system.system.probing; exposed by the star import of system.system; no in-repo caller.",
 }
