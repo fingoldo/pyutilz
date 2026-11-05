@@ -41,7 +41,7 @@ class TestModelCaps:
         assert str(info.value) == "elevenlabs/eleven-v3 accepts at most 5000 characters per request, got 5001"
 
     def test_an_unknown_model_has_no_cap(self):
-        _req(model="openai/tts", text="x" * 50_000).validate()
+        assert _req(model="openai/tts", text="x" * 50_000).validate() is None
 
 
 class TestConstants:
@@ -146,8 +146,8 @@ class TestValidateTextAndFormat:
         )
 
     def test_auto_and_off_normalisation_are_accepted(self):
-        _req(apply_text_normalization="auto").validate()
-        _req(apply_text_normalization="off").validate()
+        assert _req(apply_text_normalization="auto").validate() is None
+        assert _req(apply_text_normalization="off").validate() is None
 
 
 class TestCheckOptions:
@@ -161,8 +161,8 @@ class TestCheckOptions:
             _req(seed=True).validate()
 
     def test_the_seed_range_ends_are_accepted(self):
-        _req(seed=0).validate()
-        _req(seed=2**32 - 1).validate()
+        assert _req(seed=0).validate() is None
+        assert _req(seed=2**32 - 1).validate() is None
 
     def test_a_blank_language_code_is_refused_with_its_value(self):
         with pytest.raises(SpeechInputError) as info:
@@ -192,7 +192,7 @@ class TestCheckVoiceSettings:
         assert str(info.value) == "voice_settings.stability must be a number within (0.0, 1.0), got 1.5"
 
     def test_the_unit_range_ends_are_accepted(self):
-        _req(voice_settings={"stability": 0.0, "style": 1.0}).validate()
+        assert _req(voice_settings={"stability": 0.0, "style": 1.0}).validate() is None
 
     def test_a_boolean_fraction_is_refused(self):
         with pytest.raises(SpeechInputError):
@@ -217,7 +217,7 @@ class TestCheckSpeed:
         assert str(info.value) == "elevenlabs/eleven-v4 rejects a non-default speed"
 
     def test_a_speed_rejecting_model_accepts_the_default_speed(self):
-        _req(model="elevenlabs/eleven-v4", speed=1.0).validate()
+        assert _req(model="elevenlabs/eleven-v4", speed=1.0).validate() is None
 
     def test_a_speed_below_the_range_is_refused_with_the_range(self):
         with pytest.raises(SpeechInputError) as info:
@@ -225,8 +225,8 @@ class TestCheckSpeed:
         assert str(info.value) == "speed must be within (0.7, 1.2), got 0.6"
 
     def test_the_speed_range_ends_are_accepted(self):
-        _req(speed=0.7).validate()
-        _req(speed=1.2).validate()
+        assert _req(speed=0.7).validate() is None
+        assert _req(speed=1.2).validate() is None
 
     def test_a_non_finite_speed_check_uses_math_isfinite(self):
         assert not math.isfinite(float("nan"))
@@ -234,7 +234,7 @@ class TestCheckSpeed:
 
 class TestElevenLabsOptionDetection:
     def test_a_non_elevenlabs_model_with_only_plain_options_is_accepted(self):
-        _req(model="openai/tts-1").validate()
+        assert _req(model="openai/tts-1").validate() is None
 
     def test_an_empty_voice_settings_mapping_still_counts_as_an_elevenlabs_option(self):
         with pytest.raises(SpeechInputError):

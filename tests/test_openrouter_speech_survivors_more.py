@@ -435,7 +435,7 @@ class TestResetWakesWaiters:
         waiter_out = []
         waiter = threading.Thread(target=lambda: waiter_out.append(sp.speech_catalogue(_mock(fast))), daemon=True)
         waiter.start()
-        time.sleep(0.2)  # the waiter has no listing and a fetch is in flight, so it is parked on the condition
+        time.sleep(0.2)  # audit-exempt: sleep_then_assert -- the parked state is not observable from outside the cache; the sleep only lets the waiter reach the condition before the reset
         try:
             sp.reset_speech_catalogue_cache()
             waiter.join(timeout=5)

@@ -311,7 +311,7 @@ class TestSidecarWriting:
         p = tmp_path / "named.pkl"
         _make_pickle(str(p), {"a": 1})
         write_sidecar(str(p))
-        assert (tmp_path / "named.pkl.sha256").read_text() == f"{_digest_of(str(p))}  named.pkl\n"
+        assert (tmp_path / "named.pkl.sha256").read_text() == f"{_digest_of(str(p))}  named.pkl\n"  # audit-exempt: source_text_assertion -- the sidecar file format is the behaviour under test; read_text applies universal newlines, so the CRLF text write on Windows still matches
 
     def test_a_failed_sidecar_replace_removes_its_temp_file(self, tmp_path):
         p = tmp_path / "t.pkl"

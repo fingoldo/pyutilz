@@ -129,8 +129,8 @@ class TestChoicePayload:
         assert str(info.value) == "choice question needs 2..255 options, got 256"
 
     def test_two_and_two_hundred_fifty_five_options_are_accepted(self):
-        ChoiceQuestion("i", {"a": "x", "b": "y"}).to_payload()
-        ChoiceQuestion("i", {str(i): "d" for i in range(255)}).to_payload()
+        assert ChoiceQuestion("i", {"a": "x", "b": "y"}).to_payload()
+        assert ChoiceQuestion("i", {str(i): "d" for i in range(255)}).to_payload()
 
     def test_blank_instructions_are_refused(self):
         with pytest.raises(ValueError) as info:
@@ -163,8 +163,8 @@ class TestScorePayload:
         assert str(info.value) == "score question needs 2..10 levels, got 11"
 
     def test_two_and_ten_levels_are_accepted(self):
-        ScoreQuestion("i", ["a", "b"]).to_payload()
-        ScoreQuestion("i", [str(i) for i in range(10)]).to_payload()
+        assert ScoreQuestion("i", ["a", "b"]).to_payload()
+        assert ScoreQuestion("i", [str(i) for i in range(10)]).to_payload()
 
     def test_blank_instructions_are_refused(self):
         with pytest.raises(ValueError) as info:

@@ -22,7 +22,7 @@ class TestCoverageSideValidation:
 
     @pytest.mark.parametrize("side", ["min", "max", "both"])
     def test_each_valid_side_is_accepted(self, side):
-        common._validate_coverage_side(side)
+        assert common._validate_coverage_side(side) is None
 
 
 class TestCoverageBoundary:

@@ -458,7 +458,7 @@ class TestConnectionProbe:
 class TestVectorRegistration:
     def test_no_registration_without_pgvector(self):
         with patch("pyutilz.database.psycopg2_pool.register_vector", None):
-            pool_mod._maybe_register_vector(MagicMock(), _conn())
+            assert pool_mod._maybe_register_vector(MagicMock(), _conn()) is None
 
     def test_a_connection_is_registered_only_once(self):
         conn = _conn()

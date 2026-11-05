@@ -201,9 +201,9 @@ class TestToolUseTripwire:
         assert str(info.value) == "Claude Code returned a tool-use block ('?'); this provider is text-generation-only"
 
     def test_a_non_list_content_or_a_non_dict_block_raises_nothing(self):
-        cli._raise_on_cli_tool_use({"message": {"content": "text"}})
-        cli._raise_on_cli_tool_use({"message": {"content": ["plain string"]}})
-        cli._raise_on_cli_tool_use({"message": {"content": [{"type": "text"}]}})
+        assert cli._raise_on_cli_tool_use({"message": {"content": "text"}}) is None
+        assert cli._raise_on_cli_tool_use({"message": {"content": ["plain string"]}}) is None
+        assert cli._raise_on_cli_tool_use({"message": {"content": [{"type": "text"}]}}) is None
 
     def test_a_thinking_count_ignores_non_dict_blocks_and_a_non_list_content(self):
         assert cli._count_thinking_blocks({"message": {"content": ["x", {"type": "thinking"}]}}) == 1

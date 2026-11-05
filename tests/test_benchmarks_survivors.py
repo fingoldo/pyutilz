@@ -231,10 +231,12 @@ class TestFullBenchmarkWiring:
     def test_head_limits_the_frame_and_the_default_head_is_one_hundred_thousand(self, fake_backends):
         big = pd.DataFrame({"a": np.arange(100_001)})
         benchmarks.benchmark_dataframe_compression(big, nrepeats=1, return_styled=False, verbose=False)
+        assert fake_backends
         assert all(len(df) == 100_000 for _, _, df, _ in fake_backends)
 
     def test_the_default_repeat_count_is_ten(self, frame, fake_backends):
         benchmarks.benchmark_dataframe_compression(frame, head=0, return_styled=False, verbose=False)
+        assert fake_backends
         assert all(nrepeats == 10 for *_, nrepeats in fake_backends)
 
     def test_the_table_is_indexed_by_config_with_only_the_four_mean_columns(self, frame, fake_backends):

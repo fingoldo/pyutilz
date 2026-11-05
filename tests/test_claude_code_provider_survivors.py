@@ -273,7 +273,7 @@ class TestCostAndTokens:
 
 class TestCleanup:
     def test_no_path_means_nothing_is_removed(self):
-        prov._remove_system_prompt_file(None)
+        assert prov._remove_system_prompt_file(None) is None
 
     def test_an_existing_prompt_file_is_removed(self, tmp_path):
         path = tmp_path / "system.txt"

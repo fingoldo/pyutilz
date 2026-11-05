@@ -77,10 +77,12 @@ class TestPackArgumentOrder:
 class TestParquetDetails:
     def test_the_default_repeat_count_for_parquet_is_three(self, frame, tmp_path, distinct_measure):
         benchmarks.benchmark_dataframe_parquet_compression(frame, str(tmp_path), max_compression_level=1, skip_configs=())
+        assert distinct_measure
         assert all(c["nrepeats"] == 3 for c in distinct_measure)
 
     def test_every_compression_level_reads_back_with_read_parquet(self, frame, tmp_path, distinct_measure):
         benchmarks.benchmark_dataframe_parquet_compression(frame, str(tmp_path), nrepeats=1, max_compression_level=2, skip_configs=())
+        assert distinct_measure
         assert all(c["read_method"] == "read_parquet" for c in distinct_measure)
 
     def test_a_failing_level_config_is_named_in_the_log_and_the_base_still_lands(self, frame, tmp_path, monkeypatch, caplog):
@@ -123,6 +125,7 @@ class TestFullBenchmarkDetails:
     def test_the_default_repeat_count_is_ten_and_the_default_verbose_logs(self, frame, backend_rows, caplog):
         caplog.set_level(logging.INFO)
         benchmarks.benchmark_dataframe_compression(frame, head=0, return_styled=False)
+        assert backend_rows
         assert all(nrepeats == 10 for *_, nrepeats in backend_rows)
         assert "Pandas:" in caplog.text
 
