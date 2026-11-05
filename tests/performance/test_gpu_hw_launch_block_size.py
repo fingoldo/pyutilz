@@ -33,7 +33,7 @@ class _Kernel:
 def _device(monkeypatch):
     monkeypatch.setattr(hw, "_DEV_PROPS", dict(_PROPS))
     monkeypatch.setattr(hw, "_DEV_PROPS_ID", None)
-    monkeypatch.setattr(hw, "_current_device_id", lambda: None)
+    monkeypatch.setattr(hw, "_cupy_device_id", lambda: None)
 
 
 def test_a_light_kernel_gets_the_preferred_width_among_those_that_fill_the_sm():

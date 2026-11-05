@@ -34,20 +34,28 @@ _DEV_PROPS_ID: "int | None" = None
 _DEV_PROPS_LOCK = threading.Lock()
 
 
-def _current_device_id() -> "int | None":
-    """Id of the current cupy device, or ``None`` when cupy / CUDA is unavailable."""
+_DEVICE_ERROR_LOGGED = False
+
+
+def _cupy_device_id() -> "int | None":
+    """Id of the current cupy device, or ``None`` when cupy is not installed or CUDA cannot be queried (a CUDA failure is logged once)."""
+    global _DEVICE_ERROR_LOGGED
     try:
         import cupy as cp
-
+    except ImportError:  # a host without cupy has no device to ask: the "no hardware information" case, not an error
+        return None
+    try:
         return int(cp.cuda.Device().id)
-    except Exception as _silent_exc:
-        logger.debug("gpu_hw_launch: suppressed %r", _silent_exc)
+    except Exception as exc:
+        if not _DEVICE_ERROR_LOGGED:
+            _DEVICE_ERROR_LOGGED = True
+            logger.warning("gpu_hw_launch: querying the current CUDA device failed (%s: %s); launch geometry falls back to the callers' defaults", type(exc).__name__, exc)
         return None
 
 
 def launch_device_id() -> int:
     """Id of the current CUDA device (the one the next launch runs on), 0 when it cannot be read: what a capability query must be asked about instead of a hard-coded device 0."""
-    dev = _current_device_id()
+    dev = _cupy_device_id()
     return 0 if dev is None else int(dev)
 
 
@@ -55,7 +63,7 @@ def device_props() -> dict:
     """Launch-relevant properties of the CURRENT device (cached per device id). Empty dict if cupy/CUDA is unavailable - callers
     treat an empty dict as 'no HW info' and fall back to their historical default / KTC sweep."""
     global _DEV_PROPS
-    cur = _current_device_id()
+    cur = _cupy_device_id()
     if _DEV_PROPS is not None and (_DEV_PROPS_ID is None or cur is None or _DEV_PROPS_ID == cur):  # fast path, no lock
         return _DEV_PROPS
     with _DEV_PROPS_LOCK:
@@ -233,6 +241,18 @@ def fixed_shared_block_size(
     return int(best_w)
 
 
+def _kernel_registers(kernel: object) -> int:
+    """Registers per thread of a compiled kernel (``num_regs``), 32 when the kernel does not report a positive number."""
+    reported = getattr(kernel, "num_regs", None)
+    return int(reported) if reported is not None and int(reported) > 0 else 32
+
+
+def _kernel_static_shared(kernel: object) -> int:
+    """Static shared memory bytes of a compiled kernel (``shared_size_bytes``), 0 when it does not report one."""
+    reported = getattr(kernel, "shared_size_bytes", None)
+    return int(reported) if reported is not None and int(reported) > 0 else 0
+
+
 def block_size_for(
     kernel: object,
     *,
@@ -252,8 +272,8 @@ def block_size_for(
     most that many threads; ``work_items`` stops it growing past the work (one thread per item cannot use more).
     Returns ``default`` when there is no device information, so the CPU / no-CUDA path and the old behaviour are unchanged.
     """
-    regs = int(getattr(kernel, "num_regs", 0) or 0) or 32
-    static = int(getattr(kernel, "shared_size_bytes", 0) or 0)
+    regs = _kernel_registers(kernel)
+    static = _kernel_static_shared(kernel)
     candidates = occupancy_block_candidates(regs_per_thread=regs, static_smem=static, dyn_smem=int(dyn_smem), min_active_blocks=min_active_blocks, block_cap=max_width)
     if pow2:
         candidates = [b for b in candidates if b & (b - 1) == 0]
@@ -276,6 +296,6 @@ def block_size_for(
 def launch_1d(kernel: object, n_work: int, *, dyn_smem: int = 0, max_width: "int | None" = None, pow2: bool = False, default_block: int = 256) -> "tuple[tuple[int], tuple[int]]":
     """``((grid,), (block,))`` for a flat 1-D launch of ``kernel`` over ``n_work`` elements: the block from :func:`block_size_for`, the grid from :func:`fill_grid_1d`."""
     block = block_size_for(kernel, dyn_smem=dyn_smem, max_width=max_width, work_items=n_work, pow2=pow2, default=default_block)
-    regs = int(getattr(kernel, "num_regs", 0) or 0) or 32
-    static = int(getattr(kernel, "shared_size_bytes", 0) or 0)
+    regs = _kernel_registers(kernel)
+    static = _kernel_static_shared(kernel)
     return (fill_grid_1d(n_work, block, regs_per_thread=regs, static_smem=static, dyn_smem=int(dyn_smem)),), (block,)

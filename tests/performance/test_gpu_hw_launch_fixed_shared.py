@@ -56,7 +56,7 @@ def test_properties_are_requeried_when_the_current_device_changes(monkeypatch):
     first = dict(_PASCAL)
     monkeypatch.setattr(hw, "_DEV_PROPS", first)
     monkeypatch.setattr(hw, "_DEV_PROPS_ID", 0)
-    monkeypatch.setattr(hw, "_current_device_id", lambda: 0)
+    monkeypatch.setattr(hw, "_cupy_device_id", lambda: 0)
     assert hw.device_props() is first
     calls = []
 
@@ -67,5 +67,5 @@ def test_properties_are_requeried_when_the_current_device_changes(monkeypatch):
         return hw._DEV_PROPS
 
     monkeypatch.setattr(hw, "_device_props_uncached", _fake_uncached)
-    monkeypatch.setattr(hw, "_current_device_id", lambda: 1)
+    monkeypatch.setattr(hw, "_cupy_device_id", lambda: 1)
     assert hw.device_props()["sm_count"] == 108 and calls == [1]
