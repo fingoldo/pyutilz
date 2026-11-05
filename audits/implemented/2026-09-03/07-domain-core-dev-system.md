@@ -57,7 +57,7 @@ Work performed:
 - **Disposition**: COMPLETED — str.removesuffix replaced with an endswith-guarded slice for Python 3.8, src/pyutilz/dev/meta_test_utils.py:737
 - **Category**: py38-incompatibility
 - **Problem**: `name = text.removesuffix("()")`. `str.removesuffix` was added in Python 3.9 (PEP 616); on 3.8 it raises `AttributeError`. `from __future__ import annotations` does not help — this is a runtime call. Grep-confirmed as the only occurrence in `src/`.
-- **Failure scenario**: on Python 3.8, `unbacked_audit_dispositions` (meta_test_utils.py:713, public via `__all__` at :84) raises `AttributeError: 'str' object has no attribute 'removesuffix'` on the first bare qualified-name citation, turning `tests/test_meta_test_utils_roundtrip.py:241-268` red on the 3.8 CI leg.
+- **Failure scenario**: on Python 3.8, `unbacked_audit_dispositions` (meta_test_utils.py:713, public via `__all__` at :84) raises `AttributeError: 'str' object has no attribute 'removesuffix'` on the first bare qualified-name citation, turning the removed `test_meta_test_utils_roundtrip.py` lines 241-268 (bd8c4ea) red on the 3.8 CI leg.
 - **Suggested fix**: `name = text[:-2] if text.endswith("()") else text`.
 
 ### F07. [High] `column_sum_min_max` reads out of bounds on a zero-row array, returning uninitialized memory instead of raising — src/pyutilz/core/array_summary.py:55
