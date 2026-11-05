@@ -71,3 +71,13 @@ def test_launch_1d_covers_the_work_and_fills_every_sm():
     (small_grid,), (small_block,) = hw.launch_1d(_Kernel(32), 1000)
     assert small_block * small_grid >= 1000
     assert small_grid >= _PROPS["sm_count"]
+
+
+def test_pow2_keeps_a_tree_reduction_on_a_power_of_two():
+    """A kernel that halves the block needs a power of two: with ``pow2`` the choice is one, capped by ``max_width``."""
+    for regs in (32, 64, 96):
+        block = hw.block_size_for(_Kernel(regs), pow2=True, max_width=256)
+        assert block & (block - 1) == 0 and 32 <= block <= 256
+    assert hw.block_size_for(_Kernel(32), pow2=True, max_width=256) == 256
+    (grid,), (block,) = hw.launch_1d(_Kernel(32), 1000, pow2=True, max_width=256)
+    assert block & (block - 1) == 0

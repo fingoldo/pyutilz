@@ -240,6 +240,7 @@ def block_size_for(
     min_active_blocks: int = 2,
     max_width: "int | None" = None,
     work_items: "int | None" = None,
+    pow2: bool = False,
     preferred: int = 256,
     default: int = 256,
 ) -> int:
@@ -254,6 +255,8 @@ def block_size_for(
     regs = int(getattr(kernel, "num_regs", 0) or 0) or 32
     static = int(getattr(kernel, "shared_size_bytes", 0) or 0)
     candidates = occupancy_block_candidates(regs_per_thread=regs, static_smem=static, dyn_smem=int(dyn_smem), min_active_blocks=min_active_blocks, block_cap=max_width)
+    if pow2:
+        candidates = [b for b in candidates if b & (b - 1) == 0]
     if not candidates:
         return int(default)
     props = device_props()
@@ -270,9 +273,9 @@ def block_size_for(
     return int(best)
 
 
-def launch_1d(kernel: object, n_work: int, *, dyn_smem: int = 0, max_width: "int | None" = None, default_block: int = 256) -> "tuple[tuple[int], tuple[int]]":
+def launch_1d(kernel: object, n_work: int, *, dyn_smem: int = 0, max_width: "int | None" = None, pow2: bool = False, default_block: int = 256) -> "tuple[tuple[int], tuple[int]]":
     """``((grid,), (block,))`` for a flat 1-D launch of ``kernel`` over ``n_work`` elements: the block from :func:`block_size_for`, the grid from :func:`fill_grid_1d`."""
-    block = block_size_for(kernel, dyn_smem=dyn_smem, max_width=max_width, work_items=n_work, default=default_block)
+    block = block_size_for(kernel, dyn_smem=dyn_smem, max_width=max_width, work_items=n_work, pow2=pow2, default=default_block)
     regs = int(getattr(kernel, "num_regs", 0) or 0) or 32
     static = int(getattr(kernel, "shared_size_bytes", 0) or 0)
     return (fill_grid_1d(n_work, block, regs_per_thread=regs, static_smem=static, dyn_smem=int(dyn_smem)),), (block,)
