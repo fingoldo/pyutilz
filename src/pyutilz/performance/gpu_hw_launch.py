@@ -42,11 +42,11 @@ def _cupy_device_id() -> "int | None":
     global _DEVICE_ERROR_LOGGED
     try:
         import cupy as cp
-    except ImportError:  # a host without cupy has no device to ask: the "no hardware information" case, not an error
+    except ImportError:  # best-effort: a host without cupy has no device to ask, the "no hardware information" case rather than an error
         return None
     try:
         return int(cp.cuda.Device().id)
-    except Exception as exc:
+    except Exception as exc:  # best-effort: no device information only means the callers keep their defaults; the failure is logged once
         if not _DEVICE_ERROR_LOGGED:
             _DEVICE_ERROR_LOGGED = True
             logger.warning("gpu_hw_launch: querying the current CUDA device failed (%s: %s); launch geometry falls back to the callers' defaults", type(exc).__name__, exc)

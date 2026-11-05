@@ -500,7 +500,7 @@ class TestGoldenDigestsForRemainingTags:
         assert dc.hash_array_summary(np.zeros((0, 3))) == "55c2cbf88b75389a3548866dac4c2dd9"  # pragma: allowlist secret
 
     def test_an_array_nested_in_a_container_contributes_its_fixed_width_digest(self):
-        assert dc.hash_object([np.arange(4)]) == "6c13206f396020b203d3e407d0aee20c"  # pragma: allowlist secret
+        assert dc.hash_object([np.arange(4, dtype=np.int64)]) == "6c13206f396020b203d3e407d0aee20c"  # pragma: allowlist secret
 
     def test_empty_bytes_are_length_prefixed_and_pinned(self):
         assert dc.hash_object(b"") == "8e93b0f4c91ab797943fd990c8b04b44"  # pragma: allowlist secret

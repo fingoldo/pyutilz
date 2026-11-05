@@ -333,6 +333,7 @@ def capture_module_surface(mod: object) -> dict[str, str]:
     # ``callable(text, ...)`` (a CALLABLE, so the value-branch narrowing did not cover it) on
     # whichever CI leg both installs spaCy and runs a sentencizing test first (2026-09-03).
     lazy_globals = frozenset(getattr(mod, "__lazy_globals__", ()))
+    unreadable: set[str] = set()  # attributes that cannot be read at import time: reported by name below, the rest of the surface is still captured
     for name in dir(mod):
         if name.startswith("_"):
             continue
@@ -342,7 +343,7 @@ def capture_module_surface(mod: object) -> dict[str, str]:
         try:
             obj = getattr(mod, name)
         except Exception:  # audit-exempt: non_neutral_except_fallback -- placeholder for an attribute that cannot be read at import time, reported by name
-            out[name] = "<inaccessible-at-import-time>"
+            unreadable.add(name)
             continue
         if inspect.ismodule(obj):
             continue
@@ -365,6 +366,8 @@ def capture_module_surface(mod: object) -> dict[str, str]:
         if _is_foreign_symbol(obj):
             continue
         out[name] = _surface_kind(obj)
+    for name in sorted(unreadable):
+        out[name] = "<inaccessible-at-import-time>"
     return out
 
 
