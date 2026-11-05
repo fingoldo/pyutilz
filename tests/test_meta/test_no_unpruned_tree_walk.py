@@ -74,7 +74,7 @@ def test_no_module_walks_a_tree_without_pruning():
 
 
 def test_helper_modules_exist():
-    assert all((SRC / rel).is_file() for rel in HELPER_MODULES)
+    assert HELPER_MODULES and all((SRC / rel).is_file() for rel in HELPER_MODULES)
 
 
 @pytest.mark.parametrize(

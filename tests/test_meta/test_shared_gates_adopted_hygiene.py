@@ -118,7 +118,7 @@ _SRC_GATES = [
 @pytest.mark.parametrize("gate", _SRC_GATES, ids=lambda g: g.__module__.rsplit(".", 1)[-1])
 def test_source_tree_gate_is_clean(gate):
     """Each shared source-tree gate finds nothing under src/pyutilz (its own module docstring says what it looks for)."""
-    gate(SRC, min_files=FLOOR)
+    assert gate(SRC, min_files=FLOOR) is None
 
 
 def test_no_unresolved_attribute_on_a_first_party_module():
