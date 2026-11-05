@@ -26,6 +26,8 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["block_size_for", "device_props", "fill_grid_1d", "fixed_shared_block_size", "launch_1d", "launch_device_id", "occupancy_block_candidates"]
+
 # Device-property cache: the properties of ONE device, the one whose id is ``_DEV_PROPS_ID`` (None = the id was not
 # recorded, e.g. a test that sets ``_DEV_PROPS`` directly). A different current device re-queries, so a host with
 # two different cards never hands the first card's limits to the second.
