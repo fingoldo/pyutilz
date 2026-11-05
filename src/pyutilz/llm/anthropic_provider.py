@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import asyncio
 import logging
 from typing import Any, ClassVar
@@ -43,6 +44,7 @@ def _is_temperature_rejection(exc: Exception) -> bool:
 # model turned out to need adaptive thinking, False when it turned out to need the manual budget form. Process-local
 # for the same reason as ``_MODELS_REJECTING_TEMPERATURE``: a cache of an API fact, never configuration.
 _LEARNED_THINKING_MODE: dict[str, bool] = {}
+_LEARNED_THINKING_LOCK = threading.Lock()
 
 
 def _thinking_mode_rejection(exc: Exception) -> bool | None:
@@ -482,13 +484,18 @@ class AnthropicProvider(LLMProvider):
                     kwargs.pop("temperature", None)
                     continue
                 wants_adaptive = _thinking_mode_rejection(exc) if "thinking" in kwargs else None
-                if wants_adaptive is None or _LEARNED_THINKING_MODE.get(self.model) == wants_adaptive:
+                if wants_adaptive is None:
+                    raise
+                with _LEARNED_THINKING_LOCK:  # the test and the write are one step: two requests rejected at once learn the mode once
+                    already_learned = _LEARNED_THINKING_MODE.get(self.model) == wants_adaptive
+                    if not already_learned:
+                        _LEARNED_THINKING_MODE[self.model] = wants_adaptive
+                if already_learned:
                     raise
                 logger.info(
                     "%s rejects this thinking mode; using %s thinking for the rest of this process",
                     self.model, "adaptive" if wants_adaptive else "budgeted",
                 )
-                _LEARNED_THINKING_MODE[self.model] = wants_adaptive
                 kwargs.pop("thinking", None)
                 output_config = {k: v for k, v in (kwargs.pop("output_config", None) or {}).items() if k != "effort"}
                 rebuilt = anthropic_thinking_request(thinking, kwargs["max_tokens"], model=self.model)

@@ -294,23 +294,23 @@ def _scan_first_object(stripped: str) -> dict[str, Any] | None:
     (measured 10 s on 180 KB). The scan therefore stops once the failures have cost _JSON_SCAN_BUDGET_CHARS; a
     normal response never gets near it, and an object nested in an unterminated one (``{"a": {"b": 2}``) is still found.
     """
-    spent = 0
+    skipped_chars = 0  # the length of the brace spans that were not JSON objects, counted against the scan budget
     for i, ch in enumerate(stripped):
         if ch != "{":
             continue
         end = _object_span_end(stripped, i)
         if end < 0:
-            spent += len(stripped) - i
+            skipped_chars += len(stripped) - i
         else:
             try:
                 obj = jsonlib.loads(stripped[i:end])
             except jsonlib.JSONDecodeError:
-                spent += end - i
+                skipped_chars += end - i
             else:
                 if isinstance(obj, dict):
                     return obj
                 continue
-        if spent >= _JSON_SCAN_BUDGET_CHARS:
+        if skipped_chars >= _JSON_SCAN_BUDGET_CHARS:
             break
     return None
 

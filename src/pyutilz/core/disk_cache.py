@@ -338,6 +338,7 @@ def _scan_cache_entries(cache_dir: Path) -> Optional[tuple[Dict[Path, int], Dict
 def _live_cache_bytes(payload_sizes: Dict[Path, int], sidecar_sizes: Dict[Path, int]) -> int:
     """Total bytes the cache occupies, sweeping any orphan sidecar whose payload is already gone."""
     total = sum(payload_sizes.values())
+    failed_unlink_bytes = 0  # an orphan sidecar that cannot be removed still occupies its bytes, so it is counted
     for owner, size in sidecar_sizes.items():
         if owner in payload_sizes:
             total += size
@@ -345,8 +346,8 @@ def _live_cache_bytes(payload_sizes: Dict[Path, int], sidecar_sizes: Dict[Path, 
         try:
             Path(str(owner) + ".sha256").unlink()
         except OSError:
-            total += size
-    return total
+            failed_unlink_bytes += size
+    return total + failed_unlink_bytes
 
 
 class DiskCache:
