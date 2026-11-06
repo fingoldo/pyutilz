@@ -30,3 +30,33 @@ class TestPreviousNonWhitespace:
 
     def test_position_zero_has_no_previous_character(self):
         assert wt._previous_non_whitespace("abc", 0, [" "]) == -1
+
+
+class TestFixBrokenSentences:
+    def test_empty_and_none_are_returned_unchanged(self):
+        assert wt.fix_broken_sentences("") == ""
+        assert wt.fix_broken_sentences(None) is None
+
+    def test_a_break_before_a_capital_after_a_word_becomes_a_full_stop(self):
+        assert wt.fix_broken_sentences("hello\nWorld") == "hello. World."
+
+    def test_a_break_after_a_sentence_end_becomes_a_space(self):
+        assert wt.fix_broken_sentences("end.\nWorld") == "end. World."
+
+    def test_a_break_before_a_digit_is_repaired_like_a_capital(self):
+        assert wt.fix_broken_sentences("a\n5") == "a. 5"
+
+    def test_a_break_before_a_lowercase_letter_after_a_word_becomes_a_space(self):
+        assert wt.fix_broken_sentences("word\nlower") == "word lower."
+
+    def test_a_break_before_a_space_and_capital_after_a_word_becomes_a_full_stop(self):
+        assert wt.fix_broken_sentences("word\n Capital") == "word. Capital."
+
+    def test_a_break_before_a_space_after_a_sentence_end_is_kept(self):
+        assert wt.fix_broken_sentences("end!\n Capital") == "end!\n Capital."
+
+    def test_a_trailing_letter_gets_a_full_stop(self):
+        assert wt.fix_broken_sentences("finished") == "finished."
+
+    def test_a_trailing_full_stop_is_not_doubled(self):
+        assert wt.fix_broken_sentences("finished.") == "finished."
