@@ -52,7 +52,10 @@ from multiprocessing import Array  # noqa: F401
 # imported by every pandaslib user. The display helpers below import it on first call, so the names stay available.
 import importlib.util as _importlib_util
 
-HAS_IPYTHON = _importlib_util.find_spec("IPython") is not None
+try:
+    HAS_IPYTHON = _importlib_util.find_spec("IPython") is not None
+except ImportError:  # a meta-path finder that refuses the name (an import blocker) answers by raising, not by returning None
+    HAS_IPYTHON = False
 
 
 def display(obj: object) -> None:
