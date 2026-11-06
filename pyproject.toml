@@ -626,6 +626,8 @@ GPUtil = "GPUtil"
 DEP002 = [
     "sqlglot",  # parses the query builders' output in tests/test_meta/test_generated_sql_property.py; deptry scans src/ only, so a test-only dep can never look used
     "hypothesis",  # property-based tests in tests/test_similarity.py import it through importorskip; deptry scans src/ only
+    "jinja2",  # pandas Styler, which the tests in tests/test_benchmarks_survivors.py import, needs it; deptry scans src/ only
+    "backports.zoneinfo",  # loaded by importlib.import_module on Python 3.8 only (claude_code_cli._zoneinfo_module), which deptry cannot see
     "selenium",
     "undetected-chromedriver",
     "boto3",

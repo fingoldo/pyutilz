@@ -185,7 +185,7 @@ except ImportError:
     _PATCHES_APPLIED = False
 
     # Placeholder so the text-block isinstance check in _assistant_message_text stays defined without the SDK.
-    class TextBlock:
+    class TextBlock:  # type: ignore[no-redef]  # redefines the SDK's TextBlock only where the import above failed; the code is needed on the no-SDK legs
         def __init__(self, text: str = "") -> None:
             self.text = text
 
