@@ -51,5 +51,9 @@ updates:
         update-types:
           - minor
           - patch
+    # ruff is pinned to py-ci-shared's RUFF_VERSION (its workflows run that exact release, and the pinned-tool-versions
+    # gate fails on any other pin). A bump here breaks that gate until py-ci-shared releases the new version first.
+    ignore:
+      - dependency-name: "ruff"
     cooldown:
       default-days: 7
