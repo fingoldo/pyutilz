@@ -163,3 +163,37 @@ class TestEnsureSpaceAfterComma:
 
     def test_text_without_commas_is_unchanged(self):
         assert wt.ensure_space_after_comma("plain text") == "plain text"
+
+
+class TestStripTildaBullets:
+    def test_a_leading_marker_is_removed(self):
+        assert wt._strip_tilda_bullets("~ great") == "great"
+        assert wt._strip_tilda_bullets("- great") == "great"
+
+    def test_a_trailing_marker_is_removed(self):
+        assert wt._strip_tilda_bullets("great ~") == "great"
+
+    def test_an_interior_dash_is_kept(self):
+        assert wt._strip_tilda_bullets("- Great product - really") == "Great product - really"
+
+    def test_text_without_markers_is_unchanged(self):
+        assert wt._strip_tilda_bullets("a-b") == "a-b"
+
+
+class TestSentencizeText:
+    def test_empty_and_blank_input_is_returned_unchanged(self):
+        assert wt.sentencize_text("") == ""
+        assert wt.sentencize_text("   ") == "   "
+
+    def test_a_missing_full_stop_is_added_and_the_first_letter_capitalised(self):
+        assert wt.sentencize_text("hello world") == "Hello world."
+
+    def test_a_sentence_end_mark_is_kept(self):
+        assert wt.sentencize_text("Done!") == "Done!"
+
+    def test_an_emoticon_ending_is_kept(self):
+        text = "Not sure what to make of the included love note, it did make me smile though :)"
+        assert wt.sentencize_text(text) == text
+
+    def test_a_leading_digit_is_not_capitalised_but_still_gets_a_full_stop(self):
+        assert wt.sentencize_text("1st") == "1st."
