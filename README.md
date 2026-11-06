@@ -27,7 +27,7 @@ pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql + redis 
 pip install pyutilz[web]              # selenium + undetected-chromedriver + requests + grequests + fake-useragent + curl-cffi
 pip install pyutilz[cloud]            # boto3 + google-cloud-storage
 pip install pyutilz[nlp]              # spacy (>=3.10 only) + nltk + tiktoken + jellyfish + beautifulsoup4 + inflect + emoji-data-python
-pip install pyutilz[llm]              # anthropic + google-genai (>=1.51, Python 3.10+ only) + httpx + tenacity + pydantic + pydantic-settings + tiktoken
+pip install pyutilz[llm]              # anthropic + google-genai (>=1.51, Python 3.10+ only) + httpx + tenacity + pydantic + pydantic-settings + tiktoken + backports-zoneinfo (Python 3.8 only)
 pip install pyutilz[system]           # scipy + Pillow + py-cpuinfo + GPUtil + xmltodict + jellyfish
 pip install pyutilz[stats]            # documented empty alias -- pyutilz.stats needs only core numpy
 pip install pyutilz[speedups]         # empty alias kept for install compatibility -- orjson is already a core dependency
@@ -36,7 +36,7 @@ pip install pyutilz[prefect]          # prefect, requests (pyutilz.system.schedu
 pip install pyutilz[tensorflow]       # tensorflow (system.parallel.set_tf_gpu only)
 pip install pyutilz[gpu]              # cupy -- see the caveat below
 pip install pyutilz[docs]             # mkdocs-material, to build this documentation site
-pip install pyutilz[dev]              # pydantic + pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + pytest-xdist + pytest-randomly + hypothesis + ruff + black + mypy + bandit + sqlglot
+pip install pyutilz[dev]              # pydantic + pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + pytest-xdist + pytest-randomly + hypothesis + jinja2 + ruff + black + mypy + bandit + sqlglot
 ```
 
 `[all]` = `pandas,polars,database,web,cloud,nlp,llm,system,stats,speedups`. It deliberately leaves out four
