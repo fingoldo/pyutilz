@@ -5,6 +5,23 @@ import sys
 from unittest.mock import MagicMock
 
 
+def _pil_entries() -> dict:
+    """Every PIL module currently in sys.modules, keyed by name."""
+    return {k: v for k, v in sys.modules.items() if k == "PIL" or k.startswith("PIL.")}
+
+
+def _restore_pil(snapshot: dict) -> None:
+    """Drop every PIL module, then put back exactly the snapshot.
+
+    Restoring only the stub keys left real plugin modules (PIL.PngImagePlugin and friends) bound to a
+    discarded PIL.Image, so a later Image.open() found no registered plugin and raised "cannot identify
+    image file" for valid files in whichever test ran next on the worker.
+    """
+    for k in [k for k in sys.modules if k == "PIL" or k.startswith("PIL.")]:
+        del sys.modules[k]
+    sys.modules.update(snapshot)
+
+
 class _FakeIFDRational:
     def __init__(self, val):
         self.val = val
@@ -40,7 +57,9 @@ def _stub_pil():
 
     import pyutilz.core as _pyutilz_core
 
-    saved = {k: sys.modules.get(k) for k in stubs}
+    saved_pil = _pil_entries()
+    for k in saved_pil:
+        del sys.modules[k]
     saved_image_mod = sys.modules.pop("pyutilz.core.image", None)
     # sys.modules.pop() does NOT clear the submodule binding on the PARENT package, so the
     # re-import triggered inside this fixture rebinds ``pyutilz.core.image`` to the
@@ -53,11 +72,7 @@ def _stub_pil():
     sys.modules.update(stubs)
     yield
     # Restore originals
-    for k, v in saved.items():
-        if v is None:
-            sys.modules.pop(k, None)
-        else:
-            sys.modules[k] = v
+    _restore_pil(saved_pil)
     sys.modules.pop("pyutilz.core.image", None)
     if saved_image_mod is not None:
         sys.modules["pyutilz.core.image"] = saved_image_mod
@@ -247,16 +262,16 @@ class TestImageProperties:
         # the real package back (and re-bind image_mod to it) for their duration, then restore the stubs.
         import importlib
 
-        stubbed = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "PIL" or k.startswith("PIL.")}
+        stubbed = _pil_entries()
+        for k in stubbed:
+            del sys.modules[k]
         monkeypatch.setitem(sys.modules, "pyutilz.core.image", image_mod)
         try:
             importlib.import_module("PIL.Image")
             importlib.reload(image_mod)
             yield
         finally:
-            for k in [k for k in sys.modules if k == "PIL" or k.startswith("PIL.")]:
-                sys.modules.pop(k)
-            sys.modules.update(stubbed)
+            _restore_pil(stubbed)
 
     def test_the_dimensions_and_pixel_bytes_come_back_in_order(self, tmp_path):
         path = _save_jpeg(tmp_path, size=(7, 5))
@@ -368,16 +383,16 @@ def _real_pillow_fixture(monkeypatch):
     """Put the real Pillow back in place of the module-wide stub for one test, then restore the stub."""
     import importlib
 
-    stubbed = {k: sys.modules.pop(k) for k in list(sys.modules) if k == "PIL" or k.startswith("PIL.")}
+    stubbed = _pil_entries()
+    for k in stubbed:
+        del sys.modules[k]
     monkeypatch.setitem(sys.modules, "pyutilz.core.image", image_mod)
     try:
         importlib.import_module("PIL.Image")
         importlib.reload(image_mod)
         yield
     finally:
-        for k in [k for k in sys.modules if k == "PIL" or k.startswith("PIL.")]:
-            sys.modules.pop(k)
-        sys.modules.update(stubbed)
+        _restore_pil(stubbed)
 
 
 @pytest.mark.usefixtures("_real_pillow_fixture")

@@ -468,7 +468,9 @@ class TestCheckHugePagesLinux:
 
     def test_huge_pages_error(self):
         from pyutilz.system.system import check_huge_pages_linux
-        with patch("builtins.open", side_effect=PermissionError):
+        # Scoped to the probing module: a process-wide builtins.open patch also breaks logging, which reopens a
+        # FileHandler stream inside the warning this path logs.
+        with patch("pyutilz.system.system.probing.open", side_effect=PermissionError, create=True):
             assert check_huge_pages_linux() is False
 
 
