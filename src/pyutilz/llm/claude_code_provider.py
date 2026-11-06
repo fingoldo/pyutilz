@@ -184,6 +184,11 @@ except ImportError:
     _HAS_SDK = False
     _PATCHES_APPLIED = False
 
+    # Placeholder so the text-block isinstance check in _assistant_message_text stays defined without the SDK.
+    class TextBlock:
+        def __init__(self, text: str = "") -> None:
+            self.text = text
+
 
 # One steer, used by both JSON entry points. They had different wordings, which split a prefix
 # that is otherwise byte-identical across calls and so cache-shared between them.
