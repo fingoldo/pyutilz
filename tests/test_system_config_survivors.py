@@ -105,6 +105,10 @@ class TestUnreadable:
         directory = tmp_path / "as_dir.toml"
         directory.mkdir()
         cfg._path = directory
+        # Pin the debounce and the recorded mtime so the check always runs and sees a changed mtime,
+        # whatever the timestamp resolution or the clock state left by earlier tests.
+        cfg._last_check = -100.0
+        cfg._mtime = -1.0
         clock.now = 10.0
         assert cfg.get("db", "retries") == 3
         assert f"Config file {directory} unreadable (keeping previous values)" in caplog.text
