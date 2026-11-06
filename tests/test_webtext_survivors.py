@@ -123,3 +123,43 @@ class TestMissedSpaceBetweenSentences:
 
     def test_chained_sentences_are_each_split(self):
         assert wt.fix_missed_space_between_sentences("x.y.z") == "x. y. z"
+
+
+class TestMergePunctuationSigns:
+    def test_consecutive_sentence_end_tokens_are_merged(self):
+        assert wt.merge_punctuation_signs(["Hi", ".", "!", "x"]) == ["Hi", ".!", "x"]
+
+    def test_a_single_sentence_end_token_is_kept(self):
+        assert wt.merge_punctuation_signs(["Hi", "."]) == ["Hi", "."]
+
+    def test_an_empty_list_stays_empty(self):
+        assert wt.merge_punctuation_signs([]) == []
+
+    def test_a_leading_sentence_end_token_is_kept(self):
+        assert wt.merge_punctuation_signs(["."]) == ["."]
+
+    def test_plain_words_are_not_merged(self):
+        assert wt.merge_punctuation_signs(["a", "b"]) == ["a", "b"]
+
+    def test_repeated_question_marks_merge(self):
+        assert wt.merge_punctuation_signs(["?", "?"]) == ["??"]
+
+
+class TestEnsureSpaceAfterComma:
+    def test_a_comma_before_a_letter_gets_a_space(self):
+        assert wt.ensure_space_after_comma("a,b,c") == "a, b, c"
+
+    def test_a_comma_before_a_digit_gets_a_space(self):
+        assert wt.ensure_space_after_comma("a,1") == "a, 1"
+
+    def test_a_comma_full_stop_pair_becomes_a_full_stop(self):
+        assert wt.ensure_space_after_comma("devices,.") == "devices."
+
+    def test_a_comma_already_followed_by_a_space_is_kept(self):
+        assert wt.ensure_space_after_comma("a,  b") == "a,  b"
+
+    def test_a_trailing_comma_is_kept(self):
+        assert wt.ensure_space_after_comma("a,") == "a,"
+
+    def test_text_without_commas_is_unchanged(self):
+        assert wt.ensure_space_after_comma("plain text") == "plain text"
