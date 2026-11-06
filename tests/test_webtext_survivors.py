@@ -82,3 +82,20 @@ class TestBreakBeforeWordBoundaries:
 
     def test_a_break_at_the_start_before_a_capital_is_kept(self):
         assert wt.fix_broken_sentences("\nWorld") == "\nWorld."
+
+
+class TestLinebreakEdgeBoundaries:
+    def test_a_trailing_break_at_the_end_of_the_text_is_kept(self):
+        assert wt.fix_broken_sentences("a\n") == "a\n"
+
+    def test_a_break_at_index_one_joins_the_word_before_it(self):
+        assert wt.fix_broken_sentences("x\nA") == "x. A."
+
+    def test_a_break_before_a_trailing_space_is_kept(self):
+        assert wt.fix_broken_sentences("word\n ") == "word\n "
+
+    def test_a_break_before_space_and_a_lowercase_letter_is_kept(self):
+        assert wt.fix_broken_sentences("word\n a") == "word\n a."
+
+    def test_a_break_before_space_and_a_digit_becomes_a_full_stop(self):
+        assert wt.fix_broken_sentences("word\n 5") == "word. 5"
