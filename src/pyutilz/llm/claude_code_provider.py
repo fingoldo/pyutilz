@@ -184,10 +184,7 @@ except ImportError:
     _HAS_SDK = False
     _PATCHES_APPLIED = False
 
-    # Placeholder so the text-block isinstance check in _assistant_message_text stays defined without the SDK.
-    class TextBlock:  # type: ignore[no-redef]  # redefines the SDK's TextBlock only where the import above failed; the code is needed on the no-SDK legs
-        def __init__(self, text: str = "") -> None:
-            self.text = text
+    from pyutilz.llm._sdk_placeholders import TextBlock  # type: ignore[assignment,no-redef]
 
 
 # One steer, used by both JSON entry points. They had different wordings, which split a prefix
