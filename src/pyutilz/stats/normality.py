@@ -105,8 +105,8 @@ def dagostino_k2(x: np.ndarray) -> tuple:
     n >= 20 required for the finite-sample transforms; returns NaN
     stat/p on smaller samples.
 
-    The kernel is compiled with a NaN-safe fastmath flag set, so non-finite input propagates to a NaN statistic instead of
-    being folded away; ``normality_verdict`` still filters non-finite values first.
+    Precondition: ``x`` should be finite. The fastmath set omits ``nnan`` and ``ninf``, so a non-finite input propagates
+    to a NaN statistic instead of being folded away; ``normality_verdict`` still filters non-finite values first.
     """
     n = x.size
     if n < 20:
@@ -200,7 +200,8 @@ def anderson_darling_normal(x: np.ndarray) -> tuple:
     up to A* ~ 5; beyond that we saturate p=0 since rejection is
     certain at any sensible alpha.
 
-    Compiled with a NaN-safe fastmath flag set, so NaN/inf input propagates to a NaN result; ``normality_verdict`` filters first.
+    Precondition: ``x`` should be finite. The fastmath set omits ``nnan`` and ``ninf``, so NaN/inf input propagates to a NaN
+    result; ``normality_verdict`` filters first.
     """
     n = x.size
     if n < 8:

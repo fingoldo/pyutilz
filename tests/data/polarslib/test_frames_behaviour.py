@@ -60,7 +60,7 @@ class TestDropConstantColumns:
         assert frames.remove_constant_columns is frames.drop_constant_columns
 
     def test_verbose_logs_the_count_with_an_underscore_separator_and_the_names(self, caplog):
-        df = pl.DataFrame({f"c{i}": [1, 1] for i in range(1000)} | {"keep": [1, 2]})
+        df = pl.DataFrame({**{f"c{i}": [1, 1] for i in range(1000)}, "keep": [1, 2]})
         with caplog.at_level(logging.WARNING, logger=frames.logger.name):
             frames.drop_constant_columns(df, verbose=True)
         messages = [r.getMessage() for r in caplog.records]

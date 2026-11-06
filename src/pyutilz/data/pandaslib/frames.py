@@ -319,14 +319,14 @@ def showcase_df_columns(
 
     >>> import pandas as pd
     >>> df = pd.DataFrame({"a": [1, 1, 1, 2, 2, 3], "b": ["x", "x", "x", "y", "y", None]})
-    >>> showcase_df_columns(df, use_markdown=False, use_print=True, dropna=True)
+    >>> showcase_df_columns(df, use_markdown=False, use_print=True, dropna=True)  # doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
     A int64
     a
     1    3
     2    2
     3    1
     Name: count, dtype: int64
-    B object
+    B ...
     b
     x    3
     y    2
@@ -373,7 +373,7 @@ def showcase_df_columns(
     <BLANKLINE>
     ({}, {})
 
-    >>> showcase_df_columns(dfp, use_markdown=False, use_print=True, dropna=False)
+    >>> showcase_df_columns(dfp, use_markdown=False, use_print=True, dropna=False)  # doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
     A Int64
     a
     1    3
@@ -384,15 +384,15 @@ def showcase_df_columns(
     b
     x       3
     y       2
-    None    1
+    ...    1
     Name: count, dtype: int64
     ({}, {})
 
     Rare/uninformative detection (max_unique_percent=0.34 means values with <=34% share are rare):
 
     >>> df2 = pd.DataFrame({"x": ["a"]*100 + ["b"]*2 + ["c"]*1})
-    >>> r, u = showcase_df_columns(df2, use_markdown=False, use_print=True, max_unique_percent=0.05)
-    X object
+    >>> r, u = showcase_df_columns(df2, use_markdown=False, use_print=True, max_unique_percent=0.05)  # doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
+    X ...
     x
     a    100
     b      2

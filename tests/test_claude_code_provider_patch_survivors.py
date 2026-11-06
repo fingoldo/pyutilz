@@ -8,6 +8,8 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from pyutilz.llm import claude_code_provider as ccp
 
 
@@ -62,6 +64,9 @@ class TestUnsupportedSdkVersion:
         assert any(r.levelno == logging.ERROR and "9.9.9" in r.getMessage() for r in caplog.records)
 
 
+# _patched_build exists only when claude-code-sdk is installed and its version is supported; the SDK is an optional
+# dependency that no CI extra installs, so the gate is tested only where the patch is applied.
+@pytest.mark.skipif(not hasattr(ccp, "_patched_build"), reason="command-builder patch needs claude-code-sdk installed and supported")
 class TestPatchedCommandBuilderGate:
     def test_a_streaming_command_is_never_rewritten_even_when_it_carries_print(self, monkeypatch):
         monkeypatch.setattr(ccp, "_orig_build", lambda self: ["claude", "--print", "x"])

@@ -217,6 +217,8 @@ class TestEnsureWarm:
                 used.append("thread")
                 in_thread.append(True)
                 try:
+                    if real_to_thread is None:  # 3.8: no asyncio.to_thread, so dispatch through the real executor
+                        return await real_exec(None, func, *args)
                     return await real_to_thread(func, *args)
                 finally:
                     in_thread.pop()
@@ -226,7 +228,8 @@ class TestEnsureWarm:
                     used.append("executor")
                 return real_exec(executor, func, *args)
 
-            monkeypatch.setattr(cat.asyncio, "to_thread", spy_to_thread)
+            # asyncio.to_thread is absent on 3.8: raising=False lets the spy stand in for the version the test fakes
+            monkeypatch.setattr(cat.asyncio, "to_thread", spy_to_thread, raising=False)
             monkeypatch.setattr(loop, "run_in_executor", spy_exec)
             _install(monkeypatch, _Http({"data": [{"id": "m"}]}))
             await cat._ensure_catalogue_warm_async()
@@ -238,6 +241,12 @@ class TestEnsureWarm:
     def test_the_fetch_is_handed_to_the_thread_with_its_timeout(self, monkeypatch):
         monkeypatch.setattr(cat.sys, "version_info", (3, 9))
         seen = []
+
+        async def fake_to_thread(func, *args):
+            return func(*args)
+
+        # asyncio.to_thread is absent on 3.8; the fake keeps the 3.9+ branch under test on that interpreter.
+        monkeypatch.setattr(cat.asyncio, "to_thread", fake_to_thread, raising=False)
         monkeypatch.setattr(cat, "_fetch_models_catalogue", lambda timeout=10.0: seen.append(timeout) or {})
         asyncio.run(cat._ensure_catalogue_warm_async(timeout=3.0))
         assert seen == [3.0]
