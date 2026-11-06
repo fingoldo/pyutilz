@@ -99,3 +99,27 @@ class TestLinebreakEdgeBoundaries:
 
     def test_a_break_before_space_and_a_digit_becomes_a_full_stop(self):
         assert wt.fix_broken_sentences("word\n 5") == "word. 5"
+
+
+class TestMissedSpaceBetweenSentences:
+    def test_a_missing_space_after_a_full_stop_is_inserted(self):
+        assert wt.fix_missed_space_between_sentences("Hello.World") == "Hello. World"
+
+    def test_a_decimal_point_between_digits_is_not_split(self):
+        assert wt.fix_missed_space_between_sentences("$2.50") == "$2.50"
+        assert wt.fix_missed_space_between_sentences("1.5") == "1.5"
+
+    def test_a_full_stop_before_a_digit_after_a_letter_is_split(self):
+        assert wt.fix_missed_space_between_sentences("a.1") == "a. 1"
+
+    def test_a_space_already_present_is_left_alone(self):
+        assert wt.fix_missed_space_between_sentences("end. World") == "end. World"
+
+    def test_a_full_stop_before_punctuation_is_left_alone(self):
+        assert wt.fix_missed_space_between_sentences("Hi.!") == "Hi.!"
+
+    def test_a_full_stop_at_the_end_is_left_alone(self):
+        assert wt.fix_missed_space_between_sentences("end.") == "end."
+
+    def test_chained_sentences_are_each_split(self):
+        assert wt.fix_missed_space_between_sentences("x.y.z") == "x. y. z"
