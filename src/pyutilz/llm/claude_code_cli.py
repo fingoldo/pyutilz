@@ -525,10 +525,7 @@ def _hour_24(hour: int, ampm: Optional[str]) -> int:
 
 def _zoneinfo_module() -> Any:
     """The zoneinfo module: the stdlib one on 3.9+, the ``backports.zoneinfo`` package on 3.8."""
-    try:
-        return importlib.import_module("zoneinfo")
-    except ImportError:
-        return importlib.import_module("backports.zoneinfo")
+    return importlib.import_module("zoneinfo" if sys.version_info >= (3, 9) else "backports.zoneinfo")
 
 
 def _reset_timezone(error_text: str) -> Any:
