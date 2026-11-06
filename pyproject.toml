@@ -269,6 +269,8 @@ llm = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "tiktoken>=0.5",
+    # claude_code_cli resolves the reset-time zone with zoneinfo; the stdlib module starts at 3.9.
+    "backports.zoneinfo>=0.2.1 ; python_version < '3.9'",
 ]
 
 # System utilities
@@ -349,6 +351,8 @@ dev = [
     # at import time), so `pip install .[dev]` alone gets it without a redundant redeclaration.
     # dev/signature_models.py builds pydantic models from signatures and imports pydantic at module level.
     "pydantic>=2.0",
+    # tests/test_benchmarks_survivors.py imports pandas.io.formats.style, which needs jinja2 on the pandas the 3.8 leg installs.
+    "jinja2>=3.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0",

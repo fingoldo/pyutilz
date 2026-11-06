@@ -137,6 +137,7 @@ class TestFindClaudeExecutable:
         monkeypatch.setattr(cli.sys, "platform", "win32")
         monkeypatch.setenv("APPDATA", str(tmp_path / "missing"))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))  # os.path.expanduser reads HOME off Windows
         roaming_npm = tmp_path / "AppData" / "Roaming" / "npm"
         roaming_npm.mkdir(parents=True)
         (roaming_npm / "claude.cmd").write_text("@echo off")

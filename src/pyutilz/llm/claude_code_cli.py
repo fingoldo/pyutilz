@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import importlib
 import logging
 import os
 import queue
@@ -522,14 +523,21 @@ def _hour_24(hour: int, ampm: Optional[str]) -> int:
     return hour
 
 
+def _zoneinfo_module() -> Any:
+    """The zoneinfo module: the stdlib one on 3.9+, the ``backports.zoneinfo`` package on 3.8."""
+    try:
+        return importlib.import_module("zoneinfo")
+    except ImportError:
+        return importlib.import_module("backports.zoneinfo")
+
+
 def _reset_timezone(error_text: str) -> Any:
     """The ``zoneinfo`` zone named in the error text, or None when absent or unloadable."""
     tz_match = _TIMEZONE_PATTERN.search(error_text)
     if not tz_match:
         return None
     try:
-        import zoneinfo
-        return zoneinfo.ZoneInfo(tz_match.group(1))
+        return _zoneinfo_module().ZoneInfo(tz_match.group(1))
     except (ImportError, KeyError):
         logger.debug("Could not load timezone %s, using local time", tz_match.group(1))
         return None
