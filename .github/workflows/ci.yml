@@ -148,6 +148,12 @@ jobs:
       # spacy behind python_version >= '3.10', so the 3.8/3.9 legs have no spacy to download into.
       run: python -m spacy download en_core_web_sm || true
 
+    - name: Point the gate tests at the installed py-ci-shared
+      # pyproject's ruff `extend` and the timezone/complexity gates read $PY_CI_SHARED_DIR/configs/. The package
+      # ships those configs as package data, so the installed package directory is the same tree. Empty on
+      # the 3.8 legs, where py_ci_shared is not installed and conftest ignores the meta-tests that need it.
+      run: echo "PY_CI_SHARED_DIR=$(python -c 'import os, py_ci_shared; print(os.path.dirname(py_ci_shared.__file__))' 2>/dev/null)" >> "$GITHUB_ENV"
+
     - name: Run tests with coverage
       env:
         # Lets test_no_stale_todos skip on the shallow legs (see fetch-depth above); unset on the full-history leg.
