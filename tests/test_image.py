@@ -22,6 +22,27 @@ def _restore_pil(snapshot: dict) -> None:
     sys.modules.update(snapshot)
 
 
+def _bind_real_pillow(module) -> dict:
+    """Re-execute ``module`` against the real Pillow and return its globals as they were before, for ``_unbind_module``.
+
+    ``importlib.reload`` runs in place on the module object tests import at collection time, so without this restore the
+    module keeps a Pillow package that was dropped from sys.modules: its Image object is then paired with plugin modules
+    that were restored, Image.open() finds no registered plugin, and later tests in the same worker fail on valid files.
+    """
+    import importlib
+
+    saved_globals = dict(module.__dict__)
+    importlib.import_module("PIL.Image")
+    importlib.reload(module)
+    return saved_globals
+
+
+def _unbind_module(module, saved_globals: dict) -> None:
+    """Put back the globals ``_bind_real_pillow`` saved, so the module again uses the Pillow objects it was loaded with."""
+    module.__dict__.clear()
+    module.__dict__.update(saved_globals)
+
+
 class _FakeIFDRational:
     def __init__(self, val):
         self.val = val
@@ -260,17 +281,20 @@ class TestImageProperties:
     def _real_pillow(self, monkeypatch):
         # The module-wide fixture swaps Pillow for stubs in sys.modules; these tests need the real decoder, so put
         # the real package back (and re-bind image_mod to it) for their duration, then restore the stubs.
-        import importlib
-
         stubbed = _pil_entries()
         for k in stubbed:
             del sys.modules[k]
         monkeypatch.setitem(sys.modules, "pyutilz.core.image", image_mod)
+        saved_globals = None
         try:
-            importlib.import_module("PIL.Image")
-            importlib.reload(image_mod)
+            saved_globals = _bind_real_pillow(image_mod)
             yield
         finally:
+            # Undo the test's own patches first: a monkeypatch of image_mod.PIL recorded during the test holds the
+            # fresh Pillow object and would otherwise write it back over the restored globals at teardown.
+            monkeypatch.undo()
+            if saved_globals is not None:
+                _unbind_module(image_mod, saved_globals)
             _restore_pil(stubbed)
 
     def test_the_dimensions_and_pixel_bytes_come_back_in_order(self, tmp_path):
@@ -381,17 +405,18 @@ class TestImageProperties:
 @pytest.fixture
 def _real_pillow_fixture(monkeypatch):
     """Put the real Pillow back in place of the module-wide stub for one test, then restore the stub."""
-    import importlib
-
     stubbed = _pil_entries()
     for k in stubbed:
         del sys.modules[k]
     monkeypatch.setitem(sys.modules, "pyutilz.core.image", image_mod)
+    saved_globals = None
     try:
-        importlib.import_module("PIL.Image")
-        importlib.reload(image_mod)
+        saved_globals = _bind_real_pillow(image_mod)
         yield
     finally:
+        monkeypatch.undo()
+        if saved_globals is not None:
+            _unbind_module(image_mod, saved_globals)
         _restore_pil(stubbed)
 
 
