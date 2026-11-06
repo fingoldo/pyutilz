@@ -40,10 +40,10 @@ _PERMITTED_RELOAD_SITES: dict[str, str] = {
     "__init__ only (lazy-alias plumbing) -- reload only re-executes the ONE module passed to "
     "it, so this does not cascade-reload already-imported submodules like "
     "pyutilz.core.pythonlib, and __init__.py defines no sentinel objects of its own.",
-    "tests/test_image.py:254": "re-executes pyutilz.core.image so its Pillow access binds the real package for "
+    "tests/test_image.py:271": "re-executes pyutilz.core.image so its Pillow access binds the real package for "
     "one test; core/image.py defines no module-level sentinel objects (its imports are stdlib and "
     "pyutilz.text.strings only), so re-execution cannot rebind any identity another module holds.",
-    "tests/test_image.py:375": "re-executes pyutilz.core.image so its Pillow access binds the real package for "
+    "tests/test_image.py:392": "re-executes pyutilz.core.image so its Pillow access binds the real package for "
     "one test; core/image.py defines no module-level sentinel objects (its imports are stdlib and "
     "pyutilz.text.strings only), so re-execution cannot rebind any identity another module holds.",
     "tests/test_pythonlib_extra2.py:538": "deliberately reloads pyutilz.core.pythonlib to prove "
@@ -63,11 +63,11 @@ _PERMITTED_RELOAD_SITES: dict[str, str] = {
 # handing out the OLD object while ``import pkg.sub`` builds a NEW one. Any entry here must say
 # how the parent-package attribute is restored, not merely that sys.modules is.
 _PERMITTED_SYS_MODULES_POP_SITES: dict[str, str] = {
-    "tests/test_image.py:44": "the _stub_pil fixture pops pyutilz.core.image so it re-imports "
+    "tests/test_image.py:63": "the _stub_pil fixture pops pyutilz.core.image so it re-imports "
     "against this file's MagicMock PIL stubs; teardown restores BOTH the sys.modules entry and "
     "the pyutilz.core.image PARENT-PACKAGE attribute (setattr/delattr), so no stub-built module "
     "outlives the fixture by either lookup route.",
-    "tests/test_image.py:61": "the teardown half of the same fixture -- pops the stub-built "
+    "tests/test_image.py:76": "the teardown half of the same fixture -- pops the stub-built "
     "module back out before reinstating the saved one; paired with the entry above.",
     "tests/test_dev_fixes_regression.py:181": "re-imports pyutilz.system.monitoring under a "
     "patched atexit.register to observe the shared executor's shutdown being registered at "
@@ -101,8 +101,9 @@ _PERMITTED_SYS_MODULES_WRITE_SITES: dict[str, str] = {
     "tests/test_dev_fixes_regression.py:191": "the RESTORE half of a try/finally -- puts the saved "
     "pyutilz.system.monitoring module back after the throwaway re-import; paired with the pop "
     "entry for the same finally block above.",
-    "tests/test_image.py:60": "the restore half of the _stub_pil fixture teardown -- reinstates the " "real PIL modules saved on setup.",
-    "tests/test_image.py:63": "the restore half of the same teardown for pyutilz.core.image.",
+    "tests/test_image.py:78": "the restore half of the _stub_pil fixture teardown for pyutilz.core.image -- puts back "
+    "the module saved on setup. The PIL modules themselves are restored by _restore_pil, which is a helper call, not "
+    "a subscript write.",
     "tests/test_meta/test_lazy_import_safety.py:116": "installs a lazy PROXY (not a stub for a "
     "missing package) under pyutilz.<alias>, which is exactly what the production __init__ "
     "installs there anyway -- the key is occupied by an equivalent proxy before and after, so "
