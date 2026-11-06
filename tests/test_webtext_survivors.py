@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pyutilz.text.strings import webtext as wt
 
 
@@ -197,3 +199,22 @@ class TestSentencizeText:
 
     def test_a_leading_digit_is_not_capitalised_but_still_gets_a_full_stop(self):
         assert wt.sentencize_text("1st") == "1st."
+
+
+class TestSuffixize:
+    def test_a_singular_count_keeps_the_noun(self):
+        pytest.importorskip("inflect")
+        assert wt.suffixize("job", 1) == "job"
+
+    def test_a_plural_count_pluralises_the_noun(self):
+        pytest.importorskip("inflect")
+        assert wt.suffixize("job", 2) == "jobs"
+        assert wt.suffixize("child", 2) == "children"
+
+
+class TestCleanDescriptionPipeline:
+    def test_an_ampersand_becomes_and_and_the_sentence_is_finished(self):
+        assert wt.clean_description("a & b") == "A and b."
+
+    def test_newlines_are_unified_before_cleaning(self):
+        assert wt.clean_description("a|b", newlines="|") == "A b."
