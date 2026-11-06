@@ -60,3 +60,25 @@ class TestFixBrokenSentences:
 
     def test_a_trailing_full_stop_is_not_doubled(self):
         assert wt.fix_broken_sentences("finished.") == "finished."
+
+
+class TestBreakBeforeAlphaBoundaries:
+    def test_a_break_after_punctuation_is_kept_without_a_space(self):
+        assert wt.fix_broken_sentences("end.\nlower") == "end.\nlower."
+
+    def test_a_break_after_a_space_is_kept(self):
+        assert wt.fix_broken_sentences("a \nlower") == "a \nlower."
+
+    def test_a_break_after_a_word_joins_with_a_space(self):
+        assert wt.fix_broken_sentences("word\nlower") == "word lower."
+
+    def test_a_break_at_the_very_start_is_kept(self):
+        assert wt.fix_broken_sentences("\nlower") == "\nlower."
+
+
+class TestBreakBeforeWordBoundaries:
+    def test_a_break_after_a_space_that_follows_a_sentence_end_is_removed(self):
+        assert wt.fix_broken_sentences("end. \nWorld") == "end. World."
+
+    def test_a_break_at_the_start_before_a_capital_is_kept(self):
+        assert wt.fix_broken_sentences("\nWorld") == "\nWorld."
