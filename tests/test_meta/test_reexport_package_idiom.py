@@ -19,6 +19,8 @@ folklore.
 import ast
 from pathlib import Path
 
+from py_ci_shared.import_cycles import assert_no_import_cycles
+
 import pyutilz
 
 _SRC = Path(pyutilz.__file__).resolve().parent
@@ -36,6 +38,11 @@ def _iter_modules():
         if "__pycache__" in path.parts or path.name == "__init__.py":
             continue
         yield path
+
+
+def test_no_import_cycle():
+    """No strongly connected import component, and no import that breaks when a cycle member is imported first (shared gate)."""
+    assert_no_import_cycles(_SRC, package="pyutilz", min_files=150)
 
 
 def test_no_submodule_from_imports_its_own_package_at_top_level():

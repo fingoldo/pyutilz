@@ -44,6 +44,7 @@ def pkg(tmp_path, monkeypatch):
     root.mkdir()
     (root / "__init__.py").write_text("")
     (root / "big.py").write_text(SOURCE, encoding="utf-8")
+    saved = {m: mod for m, mod in sys.modules.items() if m.startswith("carvepkg")}
     monkeypatch.syspath_prepend(str(tmp_path))
     # A carvepkg module left by an earlier test would shadow this test's fresh package: hide it for this test only.
     for name in [m for m in sys.modules if m.startswith("carvepkg")]:
@@ -53,6 +54,7 @@ def pkg(tmp_path, monkeypatch):
     # them. Drop them here so the next test starts clean.
     for name in [m for m in sys.modules if m.startswith("carvepkg")]:
         sys.modules.pop(name, None)
+    sys.modules.update(saved)
 
 
 def test_carved_module_pulls_dependencies_and_source_reexports(pkg):
