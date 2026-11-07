@@ -202,3 +202,41 @@ class TestChangeLoggingContinues:
         cfg.get("db", "retries")
         assert "[config] [aaa] changed: {} -> 1" in caplog.text
         assert "[config] [db].retries changed: 3 -> 9" in caplog.text
+
+
+class TestStampSentinelsAndTypeCasts:
+    def test_a_file_appearing_later_with_stamp_zero_point_one_is_reloaded(self, tmp_path, clock):
+        path = tmp_path / "late.toml"
+        cfg = cfgmod.TomlLiveConfig(path, logger=_LOG)
+        path.write_text("[db]\nretries = 6\n", encoding="utf-8")
+        os.utime(path, (0.1, 0.1))
+        clock.now = 10.0
+        assert cfg.get("db", "retries", default=-1) == 6
+
+    def test_an_unreadable_path_with_stamp_zero_point_one_is_still_rechecked(self, tmp_path, clock, caplog):
+        caplog.set_level(logging.WARNING)
+        directory = tmp_path / "as_dir.toml"
+        directory.mkdir()
+        cfg = cfgmod.TomlLiveConfig(directory, logger=_LOG)
+        os.utime(directory, (0.1, 0.1))
+        clock.now = 10.0
+        cfg.get("db", "retries")
+        assert caplog.text.count(f"Config file {directory} unreadable (keeping previous values)") == 2
+
+    def test_a_datetime_value_is_returned_for_a_datetime_request(self, tmp_path):
+        import datetime
+
+        path = tmp_path / "dt.toml"
+        path.write_text("[s]\nwhen = 1979-05-27T07:32:00Z\n", encoding="utf-8")
+        cfg = cfgmod.TomlLiveConfig(path, logger=_LOG)
+        value = cfg.get("s", "when", type_=datetime.datetime)
+        assert value == datetime.datetime(1979, 5, 27, 7, 32, tzinfo=datetime.timezone.utc)
+
+    def test_a_datetime_value_is_not_cast_to_its_base_date_type(self, tmp_path):
+        import datetime
+
+        path = tmp_path / "dt2.toml"
+        path.write_text("[s]\nwhen = 1979-05-27T07:32:00Z\n", encoding="utf-8")
+        cfg = cfgmod.TomlLiveConfig(path, logger=_LOG)
+        value = cfg.get("s", "when", default="fallback", type_=datetime.date)
+        assert isinstance(value, datetime.datetime)
