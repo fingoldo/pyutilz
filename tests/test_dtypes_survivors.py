@@ -415,3 +415,71 @@ class TestRecordConversion:
 class TestFloatFieldStopsAtItsOwnPower:
     def test_a_float_column_out_of_range_for_every_smaller_float_type_stops_at_its_current_power(self):
         assert _pick([1e300], "float", 64, src="float64", float_fields=["x"], ensure=False) is None
+
+
+class TestOptimizeDtypesDefaults:
+    def test_the_default_call_optimizes_the_frame_in_place(self):
+        df = pd.DataFrame({"n": [1, 2, 3]})
+        dt.optimize_dtypes(df)
+        assert df["n"].dtype == "uint8"
+
+    def test_the_default_call_is_quiet(self, recording_logger):
+        df = pd.DataFrame({"n": [1, 2, 3]})
+        dt.optimize_dtypes(df, inplace=False)
+        assert recording_logger.infos == []
+
+    def test_the_default_precision_check_accepts_a_decimal_that_float32_holds_approximately(self):
+        df = pd.DataFrame({"x": [0.1, 0.2]})
+        out = dt.optimize_dtypes(df, inplace=False)
+        assert out["x"].dtype == "float32"
+
+    def test_the_exact_round_trip_rejects_the_decimal_when_requested(self):
+        df = pd.DataFrame({"x": [0.1, 0.2]})
+        out = dt.optimize_dtypes(df, inplace=False, exact_float_roundtrip=True)
+        assert out["x"].dtype == "float64"
+
+
+class TestOptimizeDtypesPipeline:
+    def test_an_unsigned_source_column_is_reduced_without_a_crash(self):
+        df = pd.DataFrame({"u": np.array([1, 2], dtype=np.uint64)})
+        out = dt.optimize_dtypes(df, inplace=False)
+        assert out["u"].dtype == "uint8"
+
+    def test_a_numeric_text_column_is_promoted_and_then_reduced(self):
+        df = pd.DataFrame({"n": ["12", "7"]})
+        out = dt.optimize_dtypes(df, inplace=False)
+        assert out["n"].dtype == "uint8"
+
+    def test_a_skipped_text_column_stays_text(self):
+        df = pd.DataFrame({"s": ["12", "7"]})
+        out = dt.optimize_dtypes(df, inplace=False, skip_columns=["s"])
+        assert out["s"].dtype == object
+
+    def test_a_low_cardinality_text_column_becomes_a_category_in_place(self):
+        df = pd.DataFrame({"c": ["a", "b", "a"]})
+        dt.optimize_dtypes(df)
+        assert df["c"].dtype.name == "category"
+
+    def test_the_exact_flag_reaches_the_precision_check_as_passed(self):
+        df = pd.DataFrame({"x": [0.1, 0.2]})
+        out = dt.optimize_dtypes(df, inplace=False, exact_float_roundtrip=True)
+        assert out["x"].dtype == "float64"
+
+    def test_the_size_reduction_pass_is_labelled_and_transient(self, monkeypatch):
+        seen: list = []
+
+        def fake_tqdmu(iterable, **kwargs):
+            seen.append(kwargs)
+            return iterable
+
+        monkeypatch.setattr(dt, "tqdmu", fake_tqdmu)
+        dt.optimize_dtypes(pd.DataFrame({"n": [1, 2]}), inplace=False)
+        assert {"desc": "size reduction", "leave": False} in seen
+
+
+class TestDecimalTextColumns:
+    def test_decimal_text_is_promoted_to_float_and_downcast_to_float32(self):
+        df = pd.DataFrame({"x": ["1.5", "2.25"]})
+        out = dt.optimize_dtypes(df, inplace=False)
+        assert out["x"].dtype == "float32"
+        assert list(out["x"]) == [1.5, 2.25]
