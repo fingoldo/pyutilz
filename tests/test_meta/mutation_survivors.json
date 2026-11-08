@@ -228,5 +228,9 @@
   "src/pyutilz/text/strings/webtext.py::878f8f982096::constant: 0 becomes 1": "Scan start p = 1 instead of 0 skips only a token at index 0; with no previous non-whitespace character every handler returns the text unchanged, so the result is identical.",
   "src/pyutilz/text/strings/webtext.py::dee32abda160::operator: > becomes >=": "Guard s >= 0 changes nothing: with s == 0 the final splice appends text[0:], rebuilding the whole text unchanged.",
   "src/pyutilz/text/strings/webtext.py::2f42c3e80e94::constant: 0 becomes 1": "Guard s > 1 is equivalent to s > 0: a splice sets s = p + token_len, which is at least 2, so s never equals 1.",
-  "src/pyutilz/text/strings/webtext.py::f01c112bd667::operator: < becomes <=": "Lower-bound guard 0 <= j is always true here: j = p + len(token) is at least 1, so 0 < j and 0 <= j agree."
+  "src/pyutilz/text/strings/webtext.py::f01c112bd667::operator: < becomes <=": "Lower-bound guard 0 <= j is always true here: j = p + len(token) is at least 1, so 0 < j and 0 <= j agree.",
+  "src/pyutilz/data/pandaslib/dtypes.py::dc9b25946ee0::logic: any becomes all": "Column with NaNs: changing any to all lets it through the isna guard, but NaN never equals 0.0, so the fractional check (fract_part == 0.0).all() still rejects the column.",
+  "src/pyutilz/data/pandaslib/dtypes.py::e0cb6ad737b1::operator: - becomes +": "Mantissa rounding to precision-1 digits changes only beyond the 16th significant digit; the later rounding to the float precision absorbs it. No value in a 600-point grid differs.",
+  "src/pyutilz/data/pandaslib/dtypes.py::34c9b49ebcd1::constant: 1 becomes 2": "Same as 251:85: the second argument of the mantissa rounding only affects digits below the float precision, which the later rounding discards; no value in the grid differs.",
+  "src/pyutilz/data/pandaslib/dtypes.py::fd990b1126d5::arguments transposed: orig.astype(\"float\" + str(p)).astype(np.float64) <-> orig.astype(np.float64)": "np.array_equal is symmetric, so swapping its two arguments cannot change the result."
 }
