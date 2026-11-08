@@ -245,5 +245,7 @@
   "src/pyutilz/data/pandaslib/frames.py::d08ff8c0730d::operator: > becomes >=": "A cap of zero is handled by the branch above, so changing this > to >= only affects negative caps, which the else branch already prints in full.",
   "src/pyutilz/data/pandaslib/frames.py::78efceaaa8a9::operator: > becomes >=": "wants_display only decides whether value lists are built; with zero uniques the print path never reads them, so n_unique >= 0 changes nothing observable.",
   "src/pyutilz/data/pandaslib/frames.py::e9a476d289a5::comparison: is not becomes is": "wants_display only decides whether value lists are built; with a zero cap the print path never reads them, so the is/is-not swap changes nothing observable.",
-  "src/pyutilz/data/pandaslib/frames.py::3c2539623bd9::operator: > becomes >=": "With zero uniques the rare analysis over an empty value count records nothing, so n_unique > 0 becoming >= 0 changes no output."
+  "src/pyutilz/data/pandaslib/frames.py::3c2539623bd9::operator: > becomes >=": "With zero uniques the rare analysis over an empty value count records nothing, so n_unique > 0 becoming >= 0 changes no output.",
+  "src/pyutilz/data/pandaslib/frames.py::3dbf68da00cc::logic: and becomes or": "wants_display only decides whether value lists are built; a zero cap never reads them, so the or form changes nothing observable.",
+  "src/pyutilz/data/pandaslib/frames.py::812af74e09e9::operator: < becomes <=": "With zero uniques the value lists are empty, and recording rare or uninformative categories from empty lists adds nothing, so widening the lower bound to <= changes no output."
 }
