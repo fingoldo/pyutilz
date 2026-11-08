@@ -280,3 +280,66 @@ class TestExcludeAndArgumentOrder:
         monkeypatch.setattr(io_ops, "get_df_memory_consumption", lambda df, deep: 1024**3)
         io_ops._collect_frames(str(tmp_path), "*.csv", None, None, "read_csv", True, False, 0.1, 1.0, "to_csv", "csv", None, None)
         assert seen == [("DataFrame", str(tmp_path / "a.csv"))]
+
+
+class TestFlushAndCleanup:
+    def test_the_frames_are_concatenated_into_the_joint_file_with_the_given_options(self, monkeypatch):
+        calls: list = []
+
+        def spy(lst, file_name, write_fcn, write_extension, set_index):
+            calls.append((len(lst), file_name, write_fcn, write_extension, set_index))
+            return pd.DataFrame({"x": [1, 2]})
+
+        monkeypatch.setattr(io_ops._facade, "concat_and_flush_df_list", spy)
+        io_ops._flush_and_cleanup([pd.DataFrame({"x": [1]})], [], "joint.pckl", "to_pickle", "pckl", "key", False)
+        assert calls == [(1, "joint.pckl", "to_pickle", "pckl", "key")]
+
+    def test_the_merged_size_is_logged_when_a_result_exists(self, monkeypatch, recording_logger):
+        monkeypatch.setattr(io_ops._facade, "concat_and_flush_df_list", lambda *a, **k: pd.DataFrame({"x": [1, 2, 3]}))
+        io_ops._flush_and_cleanup([], [], "joint", "to_csv", "csv", None, False)
+        assert ("Final df size (%s rows)", 3) in recording_logger.infos
+
+    def test_nothing_is_logged_when_no_result_comes_back(self, monkeypatch, recording_logger):
+        monkeypatch.setattr(io_ops._facade, "concat_and_flush_df_list", lambda *a, **k: None)
+        out = io_ops._flush_and_cleanup([], [], "joint", "to_csv", "csv", None, False)
+        assert out is None
+        assert recording_logger.infos == []
+
+    def test_the_source_files_are_removed_when_asked(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(io_ops._facade, "concat_and_flush_df_list", lambda *a, **k: pd.DataFrame({"x": [1]}))
+        src = tmp_path / "src.csv"
+        src.write_text("x\n1\n", encoding="utf-8")
+        io_ops._flush_and_cleanup([], [str(src)], "joint", "to_csv", "csv", None, True)
+        assert not src.exists()
+
+    def test_the_source_files_are_kept_when_not_asked(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(io_ops._facade, "concat_and_flush_df_list", lambda *a, **k: pd.DataFrame({"x": [1]}))
+        src = tmp_path / "src.csv"
+        src.write_text("x\n1\n", encoding="utf-8")
+        io_ops._flush_and_cleanup([], [str(src)], "joint", "to_csv", "csv", None, False)
+        assert src.exists()
+
+    def test_a_source_that_cannot_be_removed_is_warned_about_with_the_count(self, monkeypatch, recording_logger):
+        monkeypatch.setattr(io_ops._facade, "concat_and_flush_df_list", lambda *a, **k: pd.DataFrame({"x": [1]}))
+        monkeypatch.setattr(io_ops, "_try_remove_source", lambda filename: False)
+        io_ops._flush_and_cleanup([], ["left.csv", "other.csv"], "joint", "to_csv", "csv", None, True)
+        assert recording_logger.warnings == [
+            (
+                "%d source file(s) could not be removed after the concat and are still on disk, e.g. %s",
+                2,
+                "left.csv",
+            )
+        ]
+
+    def test_no_warning_when_every_source_is_removed(self, monkeypatch, recording_logger):
+        monkeypatch.setattr(io_ops._facade, "concat_and_flush_df_list", lambda *a, **k: pd.DataFrame({"x": [1]}))
+        monkeypatch.setattr(io_ops, "_try_remove_source", lambda filename: True)
+        io_ops._flush_and_cleanup([], ["a.csv"], "joint", "to_csv", "csv", None, True)
+        assert recording_logger.warnings == []
+
+    def test_removal_is_not_attempted_when_not_asked(self, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(io_ops._facade, "concat_and_flush_df_list", lambda *a, **k: pd.DataFrame({"x": [1]}))
+        monkeypatch.setattr(io_ops, "_try_remove_source", lambda filename: calls.append(filename) or True)
+        io_ops._flush_and_cleanup([], ["a.csv"], "joint", "to_csv", "csv", None, False)
+        assert calls == []
