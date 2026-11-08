@@ -343,3 +343,95 @@ class TestFlushAndCleanup:
         monkeypatch.setattr(io_ops, "_try_remove_source", lambda filename: calls.append(filename) or True)
         io_ops._flush_and_cleanup([], ["a.csv"], "joint", "to_csv", "csv", None, False)
         assert calls == []
+
+
+class TestReadStatsDefaults:
+    def test_the_documented_defaults_are_pinned(self):
+        import inspect
+
+        params = inspect.signature(io_ops.read_stats_from_multiple_files).parameters
+        expected = {
+            "joint_file_name": "joint_features",
+            "folder": "features",
+            "max_files": 250,
+            "template": "*.pckl",
+            "exclude": None,
+            "read_fcn": "read_pickle",
+            "write_fcn": "to_pickle",
+            "write_extension": "pckl",
+            "delete_after": False,
+            "sentinel_field": None,
+            "sentinel_fcn": None,
+            "set_index": None,
+            "optimize": False,
+            "save_on_successful_optimization": False,
+            "min_size_improvement_percent": 0.05,
+            "min_size_improvement": 5.0,
+        }
+        for name, value in expected.items():
+            assert params[name].default == value, name
+
+    def test_a_call_with_defaults_merges_the_pickles_into_the_joint_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        features = tmp_path / "features"
+        features.mkdir()
+        pd.DataFrame({"x": [1]}).to_pickle(features / "a.pckl")
+        pd.DataFrame({"x": [2]}).to_pickle(features / "b.pckl")
+        out = io_ops.read_stats_from_multiple_files()
+        assert sorted(out["x"]) == [1, 2]
+        assert (tmp_path / "joint_features.pckl").exists()
+        assert (features / "a.pckl").exists()
+
+
+class TestReadStatsCollectCall:
+    def test_the_collection_receives_its_arguments_in_declared_order(self, monkeypatch):
+        calls: list = []
+
+        def spy(*args):
+            calls.append(args)
+            return [], []
+
+        monkeypatch.setattr(io_ops, "_collect_frames", spy)
+        io_ops.read_stats_from_multiple_files(
+            joint_file_name="j",
+            folder="f",
+            max_files=7,
+            template="*.x",
+            exclude="skip",
+            read_fcn="read_csv",
+            write_fcn="to_csv",
+            write_extension="csv",
+            sentinel_field="src",
+            sentinel_fcn=None,
+            optimize=True,
+            save_on_successful_optimization=False,
+            min_size_improvement_percent=0.2,
+            min_size_improvement=3.0,
+        )
+        assert calls == [("f", "*.x", 7, "skip", "read_csv", True, False, 0.2, 3.0, "to_csv", "csv", "src", None)]
+
+
+class TestReadStatsBranches:
+    def test_no_matching_files_returns_none_without_merging(self, tmp_path, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(io_ops, "_flush_and_cleanup", lambda *a: calls.append(a) or None)
+        assert io_ops.read_stats_from_multiple_files(folder=str(tmp_path), template="*.nothing") is None
+        assert calls == []
+
+    def test_a_single_matching_file_is_merged(self, tmp_path):
+        pd.DataFrame({"x": [5]}).to_pickle(tmp_path / "only.pckl")
+        out = io_ops.read_stats_from_multiple_files(joint_file_name=str(tmp_path / "joint"), folder=str(tmp_path))
+        assert out is not None
+        assert list(out["x"]) == [5]
+
+    def test_the_flush_receives_the_index_and_delete_flag_in_order(self, tmp_path, monkeypatch):
+        pd.DataFrame({"x": [1]}).to_pickle(tmp_path / "a.pckl")
+        seen: list = []
+
+        def spy(lst, fnames, joint, write_fcn, write_extension, set_index, delete_after):
+            seen.append((len(lst), joint, write_fcn, write_extension, set_index, delete_after))
+            return None
+
+        monkeypatch.setattr(io_ops, "_flush_and_cleanup", spy)
+        io_ops.read_stats_from_multiple_files(joint_file_name="joint", folder=str(tmp_path), set_index="key", delete_after=True)
+        assert seen == [(1, "joint", "to_pickle", "pckl", "key", True)]
