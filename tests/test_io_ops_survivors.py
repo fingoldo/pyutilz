@@ -435,3 +435,52 @@ class TestReadStatsBranches:
         monkeypatch.setattr(io_ops, "_flush_and_cleanup", spy)
         io_ops.read_stats_from_multiple_files(joint_file_name="joint", folder=str(tmp_path), set_index="key", delete_after=True)
         assert seen == [(1, "joint", "to_pickle", "pckl", "key", True)]
+
+
+class TestLoadTailAndRemoval:
+    @pytest.fixture
+    def pickled(self, tmp_path):
+        path = tmp_path / "rows.pckl"
+        pd.DataFrame({"x": [1, 2, 3]}).to_pickle(path)
+        return str(path)
+
+    def test_a_tail_of_one_keeps_only_the_last_row(self, pickled):
+        assert list(io_ops.load_df(pickled, 1)["x"]) == [3]
+
+    def test_a_tail_of_two_keeps_the_last_two_rows(self, pickled):
+        assert list(io_ops.load_df(pickled, 2)["x"]) == [2, 3]
+
+    def test_a_zero_or_missing_tail_keeps_every_row(self, pickled):
+        assert list(io_ops.load_df(pickled, 0)["x"]) == [1, 2, 3]
+        assert list(io_ops.load_df(pickled, None)["x"]) == [1, 2, 3]
+
+    def test_a_failed_removal_returns_false_and_warns_with_the_file_and_error(self, monkeypatch, recording_logger):
+        error = OSError("locked")
+
+        def refuse(path):
+            raise error
+
+        monkeypatch.setattr(io_ops.os, "remove", refuse)
+        assert io_ops._try_remove_source("x.csv") is False
+        assert recording_logger.warnings == [("Failed to remove source file %s after concat: %s", "x.csv", error)]
+
+    def test_a_successful_removal_returns_true_and_is_quiet(self, tmp_path, recording_logger):
+        path = tmp_path / "gone.csv"
+        path.write_text("x\n1\n", encoding="utf-8")
+        assert io_ops._try_remove_source(str(path)) is True
+        assert not path.exists()
+        assert recording_logger.warnings == []
+
+
+class TestParquetRowLimit:
+    def test_a_row_limit_returns_that_many_rows(self, tmp_path):
+        pytest.importorskip("pyarrow")
+        path = tmp_path / "data.parquet"
+        pd.DataFrame({"x": [1, 2, 3]}).to_parquet(path)
+        assert len(io_ops.read_parquet_with_pyarrow(str(path), 2)) == 2
+
+    def test_no_row_limit_returns_every_row(self, tmp_path):
+        pytest.importorskip("pyarrow")
+        path = tmp_path / "data.parquet"
+        pd.DataFrame({"x": [1, 2, 3]}).to_parquet(path)
+        assert len(io_ops.read_parquet_with_pyarrow(str(path), 0)) == 3

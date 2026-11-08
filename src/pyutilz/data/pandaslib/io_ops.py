@@ -282,6 +282,6 @@ def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:
     if nrows:
         df = _facade.dataset(path).scanner().head(nrows).to_pandas()
     else:
-        df = _facade.dataset(path).scanner().to_pandas()
+        df = _facade.dataset(path).scanner().to_table().to_pandas()
 
     return df

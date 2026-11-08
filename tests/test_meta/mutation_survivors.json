@@ -236,5 +236,5 @@
   "src/pyutilz/data/pandaslib/dtypes.py::684ef270364d::logic: break becomes continue": "Powers ascend, so once p >= cur_power every later power also skips the range check; continuing reaches the same None as breaking.",
   "src/pyutilz/data/pandaslib/dtypes.py::22084abbaf72::operator: > becomes >=": "With no new dtypes both branches return a copy with the same values and dtypes; len(...) >= 0 only changes which equal copy is returned.",
   "src/pyutilz/data/pandaslib/dtypes.py::d3593a66baf4::logic: or becomes and": "Changing this or to and only alters col_is_numeric when the datetime and category flags are both true, which no single dtype name can produce.",
-  "src/pyutilz/data/pandaslib/io_ops.py::ef92253d3afe::deleted a statement-level call": "gc.collect() only frees unreachable cycles and returns nothing; removing it changes no value this function returns or writes."
+  "src/pyutilz/data/pandaslib/io_ops.py::ef92253d3afe::deleted a statement-level call": "gc.collect() in concat_and_flush_df_list only frees reference cycles after lst.clear() and returns nothing; removing it cannot change the concatenated result."
 }
