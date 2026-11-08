@@ -1,11 +1,10 @@
 name: Mutation teeth
 
 # The mutation sweep only runs when PYUTILZ_RUN_MUTATION=1 (the meta-test skips otherwise, in about 3 seconds).
-# This weekly run sets it and sweeps the production lines changed in the last seven days.
+# Manual only (owner, 2026-11-08): nothing schedules it. Start it from the Actions tab; it sets the variable and sweeps
+# the production lines changed in the last seven days.
 
 on:
-  schedule:
-    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions:
