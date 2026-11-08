@@ -179,8 +179,8 @@ class _RecordingLogger:
     def info(self, *args):
         self.infos.append(args)
 
-    def warning(self, message):
-        self.warnings.append(message)
+    def warning(self, message, *args):
+        self.warnings.append(message if not args else (message, args))
 
 
 @pytest.fixture
@@ -483,3 +483,193 @@ class TestDecimalTextColumns:
         out = dt.optimize_dtypes(df, inplace=False)
         assert out["x"].dtype == "float32"
         assert list(out["x"]) == [1.5, 2.25]
+
+
+class TestClassifyColumnTypes:
+    def test_an_explicit_dtype_or_a_frame_and_column_is_required(self):
+        with pytest.raises(AssertionError):
+            dt.classify_column_types(col="x")
+
+    @pytest.mark.parametrize(
+        "series, numeric",
+        [
+            (pd.Series([1, 2], dtype="int64"), True),
+            (pd.Series([1.5], dtype="float64"), True),
+            (pd.Series([True]), False),
+            (pd.Series(["a"]), False),
+            (pd.Series(pd.to_datetime(["2020-01-01"])), False),
+            (pd.Series(["a"], dtype="category"), False),
+        ],
+    )
+    def test_only_plain_numeric_dtypes_are_numeric(self, series, numeric):
+        df = pd.DataFrame({"x": series})
+        assert dt.classify_column_types(df, "x")[4] is numeric
+
+    def test_a_boolean_column_is_flagged_boolean_and_not_numeric(self):
+        df = pd.DataFrame({"x": [True, False]})
+        assert dt.classify_column_types(df, "x") == (True, False, False, False, False)
+
+
+class TestGetDfMemoryConsumption:
+    def test_an_unsupported_type_raises_with_its_name(self):
+        with pytest.raises(TypeError, match="Unsupported dataframe type: "):
+            dt.get_df_memory_consumption([1, 2])
+
+    def test_a_pandas_frame_reports_its_bytes(self):
+        df = pd.DataFrame({"x": np.arange(10, dtype=np.int64)})
+        assert dt.get_df_memory_consumption(df, deep=False) == float(df.memory_usage(deep=False).sum())
+
+
+class TestFloat32IntegerLimit:
+    def test_the_limit_is_two_to_the_twenty_fourth(self):
+        assert dt.FLOAT32_EXACT_INT_LIMIT == 16777216
+
+
+class TestLossyIntegerColumns:
+    def test_values_above_the_limit_are_lossy(self):
+        df = pd.DataFrame({"x": [0, 2**25]})
+        assert dt._int_cols_beyond_float32_mantissa(df, ["x"]) == ["x"]
+
+    def test_values_exactly_at_the_limit_are_not_lossy(self):
+        df = pd.DataFrame({"x": [0, 2**24], "y": [-(2**24), 0]})
+        assert dt._int_cols_beyond_float32_mantissa(df, ["x", "y"]) == []
+
+    def test_a_large_negative_value_is_lossy_and_a_small_negative_is_not(self):
+        assert dt._int_cols_beyond_float32_mantissa(pd.DataFrame({"x": [-(2**25), 1]}), ["x"]) == ["x"]
+        assert dt._int_cols_beyond_float32_mantissa(pd.DataFrame({"x": [-1, 0]}), ["x"]) == []
+
+    def test_missing_values_are_ignored(self):
+        df = pd.DataFrame({"x": pd.array([pd.NA, 5], dtype="Int64")})
+        assert dt._int_cols_beyond_float32_mantissa(df, ["x"]) == []
+
+    def test_the_warning_names_the_lossy_columns(self, recording_logger):
+        dt._warn_lossy_float32_int_columns(pd.DataFrame({"id": [16777217, 1]}), ["id"])
+        assert recording_logger.warnings == [
+            (
+                "ensure_dataframe_float32_convertability: integer column(s) %s have values beyond 2**24 -- Float32 cast will lose exact-integer precision.",
+                (["id"],),
+            )
+        ]
+
+    def test_no_warning_when_every_column_is_exact(self, recording_logger):
+        dt._warn_lossy_float32_int_columns(pd.DataFrame({"id": [1, 2]}), ["id"])
+        assert recording_logger.warnings == []
+
+
+class TestArrowTypeHelpers:
+    def test_an_arrow_dtype_exposes_its_pyarrow_type(self):
+        pa = pytest.importorskip("pyarrow")
+        assert dt._arrow_type(pd.ArrowDtype(pa.int64())) == pa.int64()
+
+    def test_a_numpy_dtype_has_no_arrow_type(self):
+        assert dt._arrow_type(np.dtype("int64")) is None
+
+    def test_integer_and_float_arrow_types_are_told_apart(self):
+        pa = pytest.importorskip("pyarrow")
+        assert dt._arrow_is_integer(pd.ArrowDtype(pa.int64())) is True
+        assert dt._arrow_is_float(pd.ArrowDtype(pa.float64())) is True
+        assert dt._arrow_is_integer(pd.ArrowDtype(pa.float64())) is False
+        assert dt._arrow_is_float(pd.ArrowDtype(pa.int64())) is False
+
+    def test_numpy_dtypes_are_neither_arrow_integers_nor_arrow_floats(self):
+        assert dt._arrow_is_integer(np.dtype("int64")) is False
+        assert dt._arrow_is_float(np.dtype("float64")) is False
+
+
+class TestEnsureFloat32Convertability:
+    def test_each_numpy_numeric_dtype_is_cast_to_float32(self):
+        df = pd.DataFrame(
+            {
+                "a": np.array([1, 2], dtype=np.uint32),
+                "b": np.array([1, 2], dtype=np.int32),
+                "c": np.array([1, 2], dtype=np.int64),
+                "d": np.array([1, 2], dtype=np.uint64),
+                "e": np.array([1.5, 2.5], dtype=np.float64),
+            }
+        )
+        out = dt.ensure_dataframe_float32_convertability(df)
+        assert set(out.dtypes.astype(str)) == {"float32"}
+
+    def test_a_single_numeric_column_is_converted(self):
+        out = dt.ensure_dataframe_float32_convertability(pd.DataFrame({"x": np.array([1.5], dtype=np.float64)}))
+        assert out["x"].dtype == "float32"
+
+    def test_the_input_frame_is_left_unchanged(self):
+        df = pd.DataFrame({"x": np.array([1.5], dtype=np.float64)})
+        dt.ensure_dataframe_float32_convertability(df)
+        assert df["x"].dtype == "float64"
+
+    def test_a_frame_without_numeric_columns_is_returned_unchanged_and_quiet(self, recording_logger):
+        df = pd.DataFrame({"s": ["a"]})
+        out = dt.ensure_dataframe_float32_convertability(df, verbose=True)
+        assert list(out["s"]) == ["a"]
+        assert recording_logger.infos == []
+
+    def test_verbose_reports_the_number_of_numeric_columns(self, recording_logger):
+        df = pd.DataFrame({"a": [1.5], "b": [2.5]})
+        dt.ensure_dataframe_float32_convertability(df, verbose=True)
+        assert ("Converting %s numeric columns to float32", 2) in recording_logger.infos
+
+    def test_a_large_integer_column_warns_and_is_still_converted(self, recording_logger):
+        df = pd.DataFrame({"id": np.array([16777217], dtype=np.int64)})
+        out = dt.ensure_dataframe_float32_convertability(df)
+        assert out["id"].dtype == "float32"
+        assert recording_logger.warnings and recording_logger.warnings[0][1] == (["id"],)
+
+    def test_a_polars_frame_is_cast_through_the_polars_helper(self):
+        pl = pytest.importorskip("polars")
+        out = dt.ensure_dataframe_float32_convertability(pl.DataFrame({"x": [1.5]}))
+        assert out["x"].dtype == pl.Float32
+
+    def test_an_arrow_integer_column_becomes_float_pyarrow(self):
+        pa = pytest.importorskip("pyarrow")
+        df = pd.DataFrame({"x": pd.array([1, 2], dtype=pd.ArrowDtype(pa.int16()))})
+        out = dt.ensure_dataframe_float32_convertability(df)
+        assert out["x"].dtype == pd.ArrowDtype(pa.float32())
+
+    def test_an_arrow_string_column_is_left_alone(self):
+        pa = pytest.importorskip("pyarrow")
+        df = pd.DataFrame({"s": pd.array(["a"], dtype=pd.ArrowDtype(pa.string()))})
+        out = dt.ensure_dataframe_float32_convertability(df)
+        assert list(out["s"]) == ["a"]
+        assert out["s"].dtype == pd.ArrowDtype(pa.string())
+
+    def test_a_mixed_frame_converts_its_arrow_integer_and_warns_about_it(self, recording_logger):
+        pa = pytest.importorskip("pyarrow")
+        df = pd.DataFrame(
+            {
+                "n": np.array([1.5], dtype=np.float64),
+                "big": pd.array([16777217], dtype=pd.ArrowDtype(pa.int64())),
+            }
+        )
+        out = dt.ensure_dataframe_float32_convertability(df)
+        assert out["n"].dtype == "float32"
+        assert out["big"].dtype == "float32"
+        assert recording_logger.warnings and recording_logger.warnings[0][1] == (["big"],)
+
+    def test_verbose_logs_each_arrow_conversion(self, recording_logger):
+        pa = pytest.importorskip("pyarrow")
+        df = pd.DataFrame({"x": pd.array([1, 2], dtype=pd.ArrowDtype(pa.int16()))})
+        dt.ensure_dataframe_float32_convertability(df, verbose=True)
+        assert any(info[0] == "Converting PyArrow column '%s' (%s) -> float32[pyarrow]" and info[1] == "x" for info in recording_logger.infos)
+
+
+class TestFloat32ConversionDefaults:
+    def test_the_default_call_is_quiet(self, recording_logger):
+        df = pd.DataFrame({"a": [1.5], "b": [2.5]})
+        dt.ensure_dataframe_float32_convertability(df)
+        assert recording_logger.infos == []
+
+
+class TestMixedArrowAndNumpyFrames:
+    def test_an_arrow_int16_column_is_converted_alongside_a_numpy_float_column(self):
+        pa = pytest.importorskip("pyarrow")
+        df = pd.DataFrame(
+            {
+                "n": np.array([1.5], dtype=np.float64),
+                "s": pd.array([7], dtype=pd.ArrowDtype(pa.int16())),
+            }
+        )
+        out = dt.ensure_dataframe_float32_convertability(df)
+        assert out["n"].dtype == "float32"
+        assert out["s"].dtype == pd.ArrowDtype(pa.float32())
