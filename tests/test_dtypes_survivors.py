@@ -318,3 +318,100 @@ class TestPrecisionMantissaKillers:
 
     def test_nan_entries_do_not_fail_the_exact_round_trip(self):
         assert dt._float_precision_ok(_float_df([1.5, np.nan]), "x", 32, "float64", {}, False, True) is True
+
+
+class _Range:
+    def __init__(self, lo, hi):
+        self.min = lo
+        self.max = hi
+
+
+def _pick(values, type_name, cur_power, col="x", float_fields=(), ensure=True, exact=False, verbose=False, src="int64"):
+    df = pd.DataFrame({col: values})
+    powers = [16, 32, 64] if type_name == "float" else [8, 16, 32, 64]
+    if type_name == "float":
+        topvals = [np.finfo("float" + str(p)) for p in powers]
+    else:
+        topvals = [np.iinfo(type_name + str(p)) for p in powers]
+    return dt._select_target_power(df, col, _Range(min(values), max(values)), type_name, powers, topvals, cur_power, src, list(float_fields), {}, ensure, exact, verbose)
+
+
+class TestSelectTargetPower:
+    def test_the_smallest_fitting_power_is_chosen(self):
+        assert _pick([0, 100], "int", 64) == 8
+
+    def test_a_range_beyond_the_smaller_type_moves_up(self):
+        assert _pick([0, 200], "int", 64) == 16
+
+    def test_a_range_on_the_upper_limit_still_fits_the_power(self):
+        assert _pick([-128, 127], "int", 64) == 8
+        assert _pick([-128, 128], "int", 64) == 16
+
+    def test_a_range_below_the_lower_limit_does_not_fit(self):
+        assert _pick([-129, 0], "int", 64) == 16
+
+    def test_no_power_smaller_than_the_current_one_is_offered(self):
+        assert _pick([0, 100], "int", 8) is None
+
+    def test_negative_values_do_not_fit_an_unsigned_type(self):
+        assert _pick([-1, 100], "uint", 64) is None
+
+    def test_a_float_field_is_considered_for_an_int_conversion_at_its_own_power(self):
+        assert _pick([0, 100], "int", 8, col="x", float_fields=["x"]) == 8
+        assert _pick([0, 100], "int", 8, col="x") is None
+        assert _pick([0.0, 100.0], "int", 64, col="x", float_fields=["x"]) == 8
+
+    def test_the_float_precision_check_rejects_a_value_that_does_not_round_trip(self):
+        assert _pick([0.1], "float", 64, src="float64", exact=True) is None
+
+    def test_the_exact_flag_is_not_confused_with_verbose(self):
+        assert _pick([0.1], "float", 64, src="float64", exact=True, verbose=False) is None
+        assert _pick([0.1], "float", 64, src="float64", exact=False, verbose=True) == 16
+
+
+class TestRecordConversion:
+    def test_an_int_conversion_is_recorded_and_tracked_as_converted(self):
+        df = pd.DataFrame({"x": [1, 2]})
+        new, uint_fields = {}, []
+        dt._record_conversion(df, "x", "int", 8, {"x": "int64"}, new, uint_fields, False, False)
+        assert new == {"x": "int8"}
+        assert uint_fields == ["x"]
+
+    def test_a_uint_conversion_is_tracked_as_converted(self):
+        df = pd.DataFrame({"x": [1, 2]})
+        new, uint_fields = {}, []
+        dt._record_conversion(df, "x", "uint", 16, {"x": "int64"}, new, uint_fields, False, False)
+        assert new == {"x": "uint16"}
+        assert uint_fields == ["x"]
+
+    def test_a_float_conversion_is_not_tracked_as_converted(self):
+        df = pd.DataFrame({"x": [1.5]})
+        new, uint_fields = {}, []
+        dt._record_conversion(df, "x", "float", 32, {"x": "float64"}, new, uint_fields, False, False)
+        assert new == {"x": "float32"}
+        assert uint_fields == []
+
+    def test_inplace_casts_the_column_now(self):
+        df = pd.DataFrame({"x": [1, 2]})
+        dt._record_conversion(df, "x", "int", 8, {"x": "int64"}, {}, [], False, True)
+        assert df["x"].dtype == "int8"
+
+    def test_not_inplace_leaves_the_frame_alone(self):
+        df = pd.DataFrame({"x": [1, 2]})
+        dt._record_conversion(df, "x", "int", 8, {"x": "int64"}, {}, [], False, False)
+        assert df["x"].dtype == "int64"
+
+    def test_verbose_logs_the_column_its_source_type_the_target_and_the_power(self, recording_logger):
+        df = pd.DataFrame({"x": [1, 2]})
+        dt._record_conversion(df, "x", "int", 8, {"x": "int64"}, {}, [], True, False)
+        assert recording_logger.infos == [("%s [%s]->[%s%s]", "x", "int64", "int", 8)]
+
+    def test_quiet_by_default(self, recording_logger):
+        df = pd.DataFrame({"x": [1, 2]})
+        dt._record_conversion(df, "x", "int", 8, {"x": "int64"}, {}, [], False, False)
+        assert recording_logger.infos == []
+
+
+class TestFloatFieldStopsAtItsOwnPower:
+    def test_a_float_column_out_of_range_for_every_smaller_float_type_stops_at_its_current_power(self):
+        assert _pick([1e300], "float", 64, src="float64", float_fields=["x"], ensure=False) is None

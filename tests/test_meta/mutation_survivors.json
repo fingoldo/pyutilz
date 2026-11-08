@@ -232,5 +232,6 @@
   "src/pyutilz/data/pandaslib/dtypes.py::dc9b25946ee0::logic: any becomes all": "Column with NaNs: changing any to all lets it through the isna guard, but NaN never equals 0.0, so the fractional check (fract_part == 0.0).all() still rejects the column.",
   "src/pyutilz/data/pandaslib/dtypes.py::e0cb6ad737b1::operator: - becomes +": "Mantissa rounding to precision-1 digits changes only beyond the 16th significant digit; the later rounding to the float precision absorbs it. No value in a 600-point grid differs.",
   "src/pyutilz/data/pandaslib/dtypes.py::34c9b49ebcd1::constant: 1 becomes 2": "Same as 251:85: the second argument of the mantissa rounding only affects digits below the float precision, which the later rounding discards; no value in the grid differs.",
-  "src/pyutilz/data/pandaslib/dtypes.py::fd990b1126d5::arguments transposed: orig.astype(\"float\" + str(p)).astype(np.float64) <-> orig.astype(np.float64)": "np.array_equal is symmetric, so swapping its two arguments cannot change the result."
+  "src/pyutilz/data/pandaslib/dtypes.py::fd990b1126d5::arguments transposed: orig.astype(\"float\" + str(p)).astype(np.float64) <-> orig.astype(np.float64)": "np.array_equal is symmetric, so swapping its two arguments cannot change the result.",
+  "src/pyutilz/data/pandaslib/dtypes.py::684ef270364d::logic: break becomes continue": "Powers ascend, so once p >= cur_power every later power also skips the range check; continuing reaches the same None as breaking."
 }
