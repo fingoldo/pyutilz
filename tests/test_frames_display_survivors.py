@@ -1,9 +1,9 @@
-"""Value-count display and rare-column branches of data.pandaslib.frames.showcase_df_columns (mutation survivors)."""
+"""Exact value-count display output for data.pandaslib.frames.showcase_df_columns (mutation survivors)."""
 
 from __future__ import annotations
 
-import polars as pl
 import pandas as pd
+import polars as pl
 
 from pyutilz.data.pandaslib import frames
 
@@ -12,45 +12,58 @@ def _showcase(df, **kwargs):
     return frames.showcase_df_columns(df, use_markdown=False, **kwargs)
 
 
-class TestPolarsValueCountPrinting:
-    def test_a_zero_row_cap_prints_a_blank_line(self, capsys):
-        frames._print_polars_value_counts("v", 3, ["a", "b", "c"], [2, 1, 1], 0)
-        assert capsys.readouterr().out == "\n"
+class TestPolarsDisplay:
+    def test_a_zero_cap_prints_only_the_header_and_a_blank_line(self, capsys):
+        _showcase(pl.DataFrame({"x": ["a", "b", "a"]}), max_vars=0)
+        assert capsys.readouterr().out == "X String\n\n"
 
-    def test_a_cap_of_one_shows_only_the_first_value(self, capsys):
-        frames._print_polars_value_counts("v", 3, ["a", "b", "c"], [2, 1, 1], 1)
-        out = capsys.readouterr().out
-        assert "a" in out and "b" not in out
+    def test_a_cap_of_one_prints_only_the_most_common_value(self, capsys):
+        _showcase(pl.DataFrame({"x": ["a", "b", "a"]}), max_vars=1)
+        assert capsys.readouterr().out == "X String\nx\na    2\nName: count, dtype: int64\n"
 
-    def test_no_cap_shows_every_value(self, capsys):
-        frames._print_polars_value_counts("v", 3, ["a", "b", "c"], [2, 1, 1], None)
-        out = capsys.readouterr().out
-        assert "b" in out and "c" in out
+    def test_no_cap_prints_every_value(self, capsys):
+        _showcase(pl.DataFrame({"x": ["a", "b", "a"]}), max_vars=None)
+        assert capsys.readouterr().out == "X String\nx\na    2\nb    1\nName: count, dtype: int64\n"
+
+    def test_a_single_value_column_is_printed(self, capsys):
+        _showcase(pl.DataFrame({"x": ["a", "a", "a"]}))
+        assert capsys.readouterr().out == "X String\nx\na    3\nName: count, dtype: int64\n"
 
     def test_an_empty_column_prints_an_empty_count_series(self, capsys):
-        frames._print_polars_value_counts("v", 0, [], [], None)
-        assert "Series([]" in capsys.readouterr().out
-
-
-class TestShowcaseDisplayGates:
-    def test_a_zero_row_cap_prints_no_value_rows_for_a_populated_column(self, capsys):
-        _showcase(pl.DataFrame({"x": ["a", "b", "a"]}), max_vars=0)
-        out = capsys.readouterr().out
-        assert "count" not in out and "a" not in out
-
-    def test_a_single_value_column_is_displayed(self, capsys):
-        _showcase(pl.DataFrame({"x": ["a", "a", "a"]}), max_vars=None)
-        assert capsys.readouterr().out.strip() != ""
-
-    def test_a_cap_of_one_is_a_real_cap_and_still_displays(self, capsys):
-        _showcase(pl.DataFrame({"x": ["a", "b", "a"]}), max_vars=1)
-        assert capsys.readouterr().out.strip() != ""
-
-    def test_an_empty_polars_column_shows_an_empty_count_series(self, capsys):
         _showcase(pl.DataFrame({"e": pl.Series([], dtype=pl.Utf8)}))
-        assert "Series([]" in capsys.readouterr().out
+        assert capsys.readouterr().out == "E String\nSeries([], Name: count, dtype: int64)\n"
 
+
+class TestPandasDisplay:
+    def test_a_zero_cap_prints_only_the_header_and_a_blank_line(self, capsys):
+        _showcase(pd.DataFrame({"x": ["a", "b", "a"]}), max_vars=0)
+        assert capsys.readouterr().out == "X object\n\n"
+
+    def test_a_cap_of_one_prints_only_the_most_common_value(self, capsys):
+        _showcase(pd.DataFrame({"x": ["a", "b", "a"]}), max_vars=1)
+        assert capsys.readouterr().out == "X object\nx\na    2\nName: count, dtype: int64\n"
+
+    def test_an_empty_column_prints_an_empty_count_series(self, capsys):
+        _showcase(pd.DataFrame({"e": pd.Series([], dtype=object)}))
+        assert capsys.readouterr().out == "E object\nSeries([], Name: count, dtype: int64)\n"
+
+
+class TestRareClassification:
     def test_an_empty_pandas_column_is_not_reported_as_rare(self):
         df = pd.DataFrame({"e": pd.Series([], dtype=object)})
-        result = frames.showcase_df_columns(df, use_markdown=False, use_print=False)
-        assert "e" not in list(result[0])
+        rare, _ = frames.showcase_df_columns(df, use_markdown=False, use_print=False)
+        assert "e" not in rare
+
+
+class TestDisplayWithoutRareCategories:
+    def test_a_single_value_column_is_printed_when_no_rare_category_threshold_applies(self, capsys):
+        _showcase(pl.DataFrame({"x": ["a", "a", "a"]}), max_vars=None, max_cat_uniq_qty=0)
+        assert capsys.readouterr().out == "X String\nx\na    3\nName: count, dtype: int64\n"
+
+    def test_a_single_value_column_with_a_cap_of_one_is_printed_without_rare_threshold(self, capsys):
+        _showcase(pl.DataFrame({"x": ["a", "a", "a"]}), max_vars=1, max_cat_uniq_qty=0)
+        assert capsys.readouterr().out == "X String\nx\na    3\nName: count, dtype: int64\n"
+
+    def test_two_values_are_all_printed_without_rare_threshold(self, capsys):
+        _showcase(pl.DataFrame({"x": ["a", "b", "a"]}), max_vars=None, max_cat_uniq_qty=0)
+        assert capsys.readouterr().out == "X String\nx\na    2\nb    1\nName: count, dtype: int64\n"

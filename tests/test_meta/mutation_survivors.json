@@ -241,5 +241,9 @@
   "src/pyutilz/data/pandaslib/frames.py::a67563064bc8::constant: emptied a string": "uint16 values fit float64 exactly, so routing them through the float64 buffer gives identical values, and the final astype restores each original dtype; the output is the same either way.",
   "src/pyutilz/data/pandaslib/frames.py::eb5502fdd917::constant: emptied a string": "uint32 values fit float64 exactly, so routing them through the float64 buffer gives identical values, and the final astype restores each original dtype; the output is the same either way.",
   "src/pyutilz/data/pandaslib/frames.py::c5f85a8c9468::constant: 1 becomes 2": "numpy reshape accepts any single negative dimension as the inferred one, so reshape(-2) on a 1-D array returns the same array as reshape(-1).",
-  "src/pyutilz/data/pandaslib/frames.py::bb5bef46118a::constant: 1 becomes 2": "Same as 526:59: reshape(-2) on a 1-D array returns the same array as reshape(-1)."
+  "src/pyutilz/data/pandaslib/frames.py::bb5bef46118a::constant: 1 becomes 2": "Same as 526:59: reshape(-2) on a 1-D array returns the same array as reshape(-1).",
+  "src/pyutilz/data/pandaslib/frames.py::d08ff8c0730d::operator: > becomes >=": "A cap of zero is handled by the branch above, so changing this > to >= only affects negative caps, which the else branch already prints in full.",
+  "src/pyutilz/data/pandaslib/frames.py::78efceaaa8a9::operator: > becomes >=": "wants_display only decides whether value lists are built; with zero uniques the print path never reads them, so n_unique >= 0 changes nothing observable.",
+  "src/pyutilz/data/pandaslib/frames.py::e9a476d289a5::comparison: is not becomes is": "wants_display only decides whether value lists are built; with a zero cap the print path never reads them, so the is/is-not swap changes nothing observable.",
+  "src/pyutilz/data/pandaslib/frames.py::3c2539623bd9::operator: > becomes >=": "With zero uniques the rare analysis over an empty value count records nothing, so n_unique > 0 becoming >= 0 changes no output."
 }
