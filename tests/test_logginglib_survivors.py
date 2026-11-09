@@ -240,3 +240,131 @@ class TestInitLoggingFileHandlerDetails:
         monkeypatch.setattr(ll.sys, "stderr", _Stderr())
         ll.init_logging(forced_filename="svc.py", log_to_file=False)
         assert recorded == [{"errors": "replace"}]
+
+
+def _parent_for_log(alpha, beta=2, **kwargs):
+    return ll.initialize_function_log()
+
+
+def _parent_explicit(alpha, beta=2, **kwargs):
+    return ll.initialize_function_log(explicit_only=True)
+
+
+class TestInitializeFunctionLog:
+    def test_the_caller_name_and_module_are_recorded(self):
+        out = _parent_for_log(1)
+        assert out["function"] == "_parent_for_log"
+        assert out["module"] == "test_logginglib_survivors.py"
+
+    def test_the_parameters_of_the_caller_are_recorded(self):
+        out = _parent_for_log(1, beta=5, gamma="x")
+        assert out["parameters"]["alpha"] == 1
+        assert out["parameters"]["beta"] == 5
+
+    def test_unsupported_argument_types_are_filtered_out(self):
+        out = _parent_for_log(1, beta=[1, 2])
+        assert "beta" not in out["parameters"]
+        assert out["parameters"]["alpha"] == 1
+
+    def test_explicit_only_keeps_just_the_keyword_arguments(self):
+        out = _parent_explicit(1, beta=3, gamma="y")
+        assert "alpha" not in out["parameters"]
+        assert out["parameters"] == {"gamma": "y"}
+
+    def test_each_entry_carries_a_timestamp(self):
+        out = _parent_for_log(1)
+        import datetime as _dt
+
+        started = out["results"]["timing"]["started_at"]
+        assert isinstance(started, _dt.datetime)
+        assert started.tzinfo == _dt.timezone.utc
+
+
+def _parent_kw_for_error(alpha, **kwargs):
+    return ll.initialize_function_log()
+
+
+def _parent_p_for_error(alpha):
+    return ll.initialize_function_log()
+
+
+class _ExcLog:
+    def __init__(self):
+        self.exceptions: list = []
+
+    def exception(self, e):
+        self.exceptions.append(e)
+
+
+class TestInitializeFunctionLogErrors:
+    def _run(self, monkeypatch, fake_inspect=None, fake_filter=None):
+        log = _ExcLog()
+        monkeypatch.setattr(ll, "logger", log)
+        if fake_inspect is not None:
+            monkeypatch.setattr(ll, "inspect", fake_inspect)
+        if fake_filter is not None:
+            monkeypatch.setattr(ll, "filter_elements_by_type", fake_filter)
+        return ll.initialize_function_log(), log
+
+    def test_a_missing_current_frame_is_logged_with_its_reason(self, monkeypatch):
+        fake = types.SimpleNamespace(currentframe=lambda: None, getfile=lambda f: "x.py", getargvalues=lambda f: None)
+        out, log = self._run(monkeypatch, fake_inspect=fake)
+        assert str(log.exceptions[0]) == "no current frame available (some Python implementations don't provide one)"
+        assert isinstance(log.exceptions[0], TypeError)
+        assert out["function"] is None
+
+    def test_a_missing_caller_frame_is_logged(self, monkeypatch):
+        fake = types.SimpleNamespace(currentframe=lambda: types.SimpleNamespace(f_back=None), getfile=lambda f: "x.py", getargvalues=lambda f: None)
+        out, log = self._run(monkeypatch, fake_inspect=fake)
+        assert str(log.exceptions[0]) == "no caller frame available"
+
+    def test_a_non_dict_keyword_set_is_flagged(self, monkeypatch):
+        real = ll.filter_elements_by_type
+
+        def fake_filter(obj, allowed_types):
+            if isinstance(obj, dict) and "gamma" in obj:
+                return ["not", "a", "dict"]
+            return real(obj=obj, allowed_types=allowed_types)
+
+        monkeypatch.setattr(ll, "filter_elements_by_type", fake_filter)
+        with pytest.raises(AssertionError) as info:
+            _parent_kw_for_error(1, gamma=2)
+        assert str(info.value) == "expected dict kwargs, got list"
+
+    def test_a_non_dict_parameter_set_is_flagged(self, monkeypatch):
+        real = ll.filter_elements_by_type
+
+        def fake_filter(obj, allowed_types):
+            if "alpha" in obj:
+                return ["not", "a", "dict"]
+            return real(obj=obj, allowed_types=allowed_types)
+
+        monkeypatch.setattr(ll, "filter_elements_by_type", fake_filter)
+        with pytest.raises(AssertionError) as info:
+            _parent_p_for_error(1)
+        assert str(info.value) == "expected dict params, got list"
+
+
+class TestInitializeFunctionLogSecondStage:
+    def test_a_missing_frame_also_reports_the_missing_caller_in_the_second_stage(self, monkeypatch):
+        log = _ExcLog()
+        monkeypatch.setattr(ll, "logger", log)
+        fake = types.SimpleNamespace(currentframe=lambda: None, getfile=lambda f: "x.py", getargvalues=lambda f: None)
+        monkeypatch.setattr(ll, "inspect", fake)
+        ll.initialize_function_log()
+        assert [str(e) for e in log.exceptions] == [
+            "no current frame available (some Python implementations don't provide one)",
+            "no caller frame available",
+        ]
+
+    def test_an_unreadable_argument_frame_is_logged(self, monkeypatch):
+        log = _ExcLog()
+        monkeypatch.setattr(ll, "logger", log)
+        fake = types.SimpleNamespace(
+            currentframe=lambda: types.SimpleNamespace(f_back=types.SimpleNamespace(f_code=types.SimpleNamespace(co_name="f"))),
+            getfile=lambda f: "x.py",
+            getargvalues=lambda f: None,
+        )
+        monkeypatch.setattr(ll, "inspect", fake)
+        ll.initialize_function_log()
+        assert any(isinstance(e, AttributeError) for e in log.exceptions)
