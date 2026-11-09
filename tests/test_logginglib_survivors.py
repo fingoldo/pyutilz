@@ -1069,3 +1069,139 @@ class TestDebugged:
         with pytest.raises(ValueError):
             f()
         assert len(logged) == 1 and isinstance(logged[0], ValueError)
+
+
+class _Clock:
+    def __init__(self, now: float = 0.0):
+        self.now = now
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+class _ThrottleRecorder:
+    def __init__(self):
+        self.calls: list = []
+
+    def log(self, level, msg, *args, exc_info=False):
+        self.calls.append((level, msg, args, exc_info))
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    ll.reset_log_throttles()
+    fake = _Clock(now=1000.0)
+    monkeypatch.setattr(ll, "time", fake)
+    yield fake
+    ll.reset_log_throttles()
+
+
+class TestLogThrottleWindow:
+    def test_the_first_call_for_a_key_is_admitted(self, clock):
+        assert ll.log_throttle("k") is True
+
+    def test_a_second_call_inside_the_window_is_refused(self, clock):
+        ll.log_throttle("k")
+        clock.now += 59.0
+        assert ll.log_throttle("k") is False
+
+    def test_the_window_reopens_exactly_at_the_interval(self, clock):
+        ll.log_throttle("k", min_interval=60.0)
+        clock.now += 60.0
+        assert ll.log_throttle("k", min_interval=60.0) is True
+
+    def test_the_default_interval_is_sixty_seconds(self, clock):
+        ll.log_throttle("k")
+        clock.now += 59.9
+        assert ll.log_throttle("k") is False
+        clock.now += 0.1
+        assert ll.log_throttle("k") is True
+
+    def test_a_first_call_at_monotonic_zero_is_still_admitted(self, clock):
+        clock.now = 0.0
+        assert ll.log_throttle("fresh") is True
+
+    def test_each_key_has_its_own_window(self, clock):
+        ll.log_throttle("a")
+        assert ll.log_throttle("b") is True
+
+    def test_a_refused_call_does_not_restart_the_window(self, clock):
+        ll.log_throttle("k", min_interval=60.0)
+        clock.now += 30.0
+        ll.log_throttle("k", min_interval=60.0)
+        clock.now += 30.0
+        assert ll.log_throttle("k", min_interval=60.0) is True
+
+
+class TestLogThrottled:
+    def test_the_first_max_count_occurrences_are_logged(self, clock):
+        rec = _ThrottleRecorder()
+        for i in range(5):
+            ll.log_throttled(rec, "site", 30, "row %s", i, max_count=5)
+        assert [c[1] for c in rec.calls[:5]] == ["row %s"] * 5
+        assert [c[2] for c in rec.calls[:5]] == [(0,), (1,), (2,), (3,), (4,)]
+
+    def test_the_last_allowed_line_is_followed_by_one_suppression_notice(self, clock):
+        rec = _ThrottleRecorder()
+        for _ in range(9):
+            ll.log_throttled(rec, "site", 30, "row", max_count=5)
+        notices = [c for c in rec.calls if c[1] == "%s: further occurrences suppressed (throttled)"]
+        assert len(notices) == 1
+        assert notices[0][2] == ("site",)
+        assert len(rec.calls) == 6
+
+    def test_the_level_and_exc_info_are_passed_through(self, clock):
+        rec = _ThrottleRecorder()
+        ll.log_throttled(rec, "site", 40, "boom", exc_info=True)
+        assert rec.calls[0][0] == 40
+        assert rec.calls[0][3] is True
+
+    def test_the_count_includes_suppressed_calls(self, clock):
+        rec = _ThrottleRecorder()
+        for _ in range(7):
+            ll.log_throttled(rec, "site", 30, "row", max_count=2)
+        assert ll.log_throttle_count("site") == 7
+
+    def test_distinct_keys_are_counted_independently(self, clock):
+        rec = _ThrottleRecorder()
+        ll.log_throttled(rec, "a", 30, "x")
+        ll.log_throttled(rec, "a", 30, "x")
+        ll.log_throttled(rec, "b", 30, "x")
+        assert (ll.log_throttle_count("a"), ll.log_throttle_count("b")) == (2, 1)
+
+    def test_an_unseen_key_has_a_zero_count(self, clock):
+        assert ll.log_throttle_count("never") == 0
+
+
+class TestResetLogThrottles:
+    def test_a_named_reset_forgets_only_that_key(self, clock):
+        ll.log_throttle("a")
+        ll.log_throttle("b")
+        ll.reset_log_throttles("a")
+        assert ll.log_throttle("a") is True
+        assert ll.log_throttle("b") is False
+
+    def test_a_named_reset_clears_its_count(self, clock):
+        rec = _ThrottleRecorder()
+        ll.log_throttled(rec, "a", 30, "x")
+        ll.reset_log_throttles("a")
+        assert ll.log_throttle_count("a") == 0
+
+    def test_a_reset_with_no_key_forgets_every_key(self, clock):
+        ll.log_throttle("a")
+        ll.log_throttle("b")
+        rec = _ThrottleRecorder()
+        ll.log_throttled(rec, "c", 30, "x")
+        ll.reset_log_throttles()
+        assert ll.log_throttle("a") is True
+        assert ll.log_throttle("b") is True
+        assert ll.log_throttle_count("c") == 0
+
+
+class TestLogThrottledDefaults:
+    def test_max_count_defaults_to_five_and_exc_info_to_false(self):
+        import inspect
+
+        params = inspect.signature(ll.log_throttled).parameters
+        assert params["max_count"].default == 5
+        assert params["exc_info"].default is False
