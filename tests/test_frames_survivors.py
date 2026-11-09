@@ -34,6 +34,7 @@ class TestShareDataframeDtypes:
             }
         )
         out = frames.share_dataframe(df)
+        assert len(df.columns) == 8, "the loop below must visit every integer dtype, not pass on zero columns"
         for col in df.columns:
             assert out[col].dtype == df[col].dtype, col
             assert list(out[col]) == list(df[col]), col
