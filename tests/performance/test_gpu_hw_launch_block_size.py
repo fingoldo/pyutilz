@@ -81,3 +81,21 @@ def test_pow2_keeps_a_tree_reduction_on_a_power_of_two():
     assert hw.block_size_for(_Kernel(32), pow2=True, max_width=256) == 256
     (grid,), (block,) = hw.launch_1d(_Kernel(32), 1000, pow2=True, max_width=256)
     assert block & (block - 1) == 0
+
+
+def test_block_size_is_cached_and_equal_to_the_uncached_choice():
+    """A repeated question is answered from the cache; the cached width equals the uncached computation for several launch shapes."""
+    from pyutilz.performance import gpu_hw_launch as hw
+
+    class _K:
+        num_regs = 40
+        shared_size_bytes = 1024
+
+    k = _K()
+    hw._BLOCK_SIZE_CACHE.clear()
+    for dyn, items, cap in ((0, None, None), (4096, 100000, 512), (8192, 50, 1024), (0, 100000, 256)):
+        want = hw._block_size_for_uncached(40, 1024, dyn, 2, cap, items, False, 256, 256)
+        assert hw.block_size_for(k, dyn_smem=dyn, work_items=items, max_width=cap) == want
+        n = len(hw._BLOCK_SIZE_CACHE)
+        assert hw.block_size_for(k, dyn_smem=dyn, work_items=items, max_width=cap) == want
+        assert len(hw._BLOCK_SIZE_CACHE) == n

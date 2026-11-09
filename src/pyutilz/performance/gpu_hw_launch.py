@@ -274,8 +274,46 @@ def block_size_for(
     most that many threads; ``work_items`` stops it growing past the work (one thread per item cannot use more).
     Returns ``default`` when there is no device information, so the CPU / no-CUDA path and the old behaviour are unchanged.
     """
-    regs = _kernel_registers(kernel)
-    static = _kernel_static_shared(kernel)
+    regs, static = _kernel_resources(kernel)
+    # The answer is a function of the kernel's resources, the launch's dynamic shared memory, the limits and the work rounded up to a warp: kept (a launch-heavy fit asked the same
+    # question tens of thousands of times, and each answer is dozens of occupancy evaluations).
+    props = device_props()
+    warp_w = int((props or {}).get("warp", 32)) or 32
+    cache_key = (
+        id(props), _DEV_PROPS_ID, regs, static, int(dyn_smem), int(min_active_blocks), None if max_width is None else int(max_width),
+        None if work_items is None or int(work_items) <= 0 else ((int(work_items) + warp_w - 1) // warp_w) * warp_w, bool(pow2), int(preferred), int(default),
+    )
+    hit = _BLOCK_SIZE_CACHE.get(cache_key)
+    if hit is not None:
+        return hit
+    chosen = _block_size_for_uncached(regs, static, dyn_smem, min_active_blocks, max_width, work_items, pow2, preferred, default)
+    if len(_BLOCK_SIZE_CACHE) >= 4096:
+        _BLOCK_SIZE_CACHE.clear()
+    _BLOCK_SIZE_CACHE[cache_key] = chosen
+    return chosen
+
+
+_BLOCK_SIZE_CACHE: dict = {}
+
+
+_KERNEL_RESOURCES: dict = {}
+
+
+def _kernel_resources(kernel: object) -> "tuple[int, int]":
+    """``(registers per thread, static shared bytes)`` of a compiled kernel, read once per kernel object (each read is a driver attribute query); the entry keeps the kernel alive so its id is not reused."""
+    key = id(kernel)
+    hit = _KERNEL_RESOURCES.get(key)
+    if hit is not None and hit[0] is kernel:
+        return hit[1], hit[2]
+    regs, static = _kernel_registers(kernel), _kernel_static_shared(kernel)
+    if len(_KERNEL_RESOURCES) >= 1024:
+        _KERNEL_RESOURCES.clear()
+    _KERNEL_RESOURCES[key] = (kernel, regs, static)
+    return regs, static
+
+
+def _block_size_for_uncached(regs: int, static: int, dyn_smem: int, min_active_blocks: int, max_width: "int | None", work_items: "int | None", pow2: bool, preferred: int, default: int) -> int:
+    """The width :func:`block_size_for` picks, computed from the kernel's resources (no cache)."""
     candidates = occupancy_block_candidates(regs_per_thread=regs, static_smem=static, dyn_smem=int(dyn_smem), min_active_blocks=min_active_blocks, block_cap=max_width)
     if pow2:
         candidates = [b for b in candidates if b & (b - 1) == 0]
