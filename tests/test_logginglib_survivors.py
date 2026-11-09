@@ -368,3 +368,76 @@ class TestInitializeFunctionLogSecondStage:
         monkeypatch.setattr(ll, "inspect", fake)
         ll.initialize_function_log()
         assert any(isinstance(e, AttributeError) for e in log.exceptions)
+
+
+class _InfoLog:
+    def __init__(self):
+        self.info_calls: list = []
+
+    def info(self, *args):
+        self.info_calls.append(args)
+
+
+class TestClockAndMessage:
+    def test_stopping_the_clock_records_finish_time_and_duration(self):
+        from datetime import datetime, timedelta, timezone
+
+        started = datetime.now(timezone.utc) - timedelta(seconds=10)
+        obj = {"started_at": started}
+        duration = ll._stop_clocks(obj)
+        assert isinstance(duration, float)
+        assert 9.9 < duration < 60
+        assert obj["duration"] == duration
+        assert obj["finished_at"].tzinfo == timezone.utc
+
+    def test_a_start_in_the_future_gives_zero_duration(self):
+        from datetime import datetime, timedelta, timezone
+
+        obj = {"started_at": datetime.now(timezone.utc) + timedelta(hours=1)}
+        assert ll._stop_clocks(obj) == 0.0
+
+    def test_a_name_without_terminal_punctuation_gets_an_ellipsis(self, monkeypatch):
+        log = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log)
+        ll._message("Loading data")
+        assert log.info_calls == [("%s%s", "Loading data", "...")]
+
+    def test_a_name_already_ending_in_punctuation_gets_no_ellipsis(self, monkeypatch):
+        log = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log)
+        ll._message("Done!")
+        assert log.info_calls == [("%s%s", "Done!", "")]
+
+    def test_a_whitespace_only_name_is_not_logged(self, monkeypatch):
+        log = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log)
+        ll._message("   ")
+        assert log.info_calls == []
+
+
+class TestCloseOpenedActivities:
+    def test_open_activities_are_stopped_and_closed_ones_are_left_alone(self):
+        from datetime import datetime, timedelta, timezone
+
+        t0 = datetime.now(timezone.utc) - timedelta(seconds=5)
+        closed_at = t0 + timedelta(seconds=1)
+        acts = {"done": {"started_at": t0, "finished_at": closed_at, "duration": 1.0}, "open": {"started_at": t0}}
+        last = ll._close_opened_activities(acts)
+        assert acts["done"]["finished_at"] == closed_at
+        assert "finished_at" in acts["open"]
+        assert isinstance(last, float)
+
+    def test_no_open_activities_gives_none(self):
+        from datetime import datetime, timezone
+
+        acts = {"done": {"started_at": datetime.now(timezone.utc), "finished_at": datetime.now(timezone.utc)}}
+        assert ll._close_opened_activities(acts) is None
+
+
+class TestSubSecondDuration:
+    def test_a_sub_second_duration_is_kept_as_measured(self):
+        from datetime import datetime, timedelta, timezone
+
+        obj = {"started_at": datetime.now(timezone.utc) - timedelta(milliseconds=500)}
+        duration = ll._stop_clocks(obj)
+        assert 0.4 < duration < 5
