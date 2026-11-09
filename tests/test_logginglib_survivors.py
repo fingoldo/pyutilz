@@ -738,3 +738,47 @@ class TestRedactParametersAndCallParams:
         with pytest.raises(AssertionError) as info:
             ll._call_params((1,), {}, False, (int,))
         assert str(info.value) == "expected dict params, got list"
+
+
+class TestCallHeaderAndSession:
+    def test_the_header_names_the_module_basename_and_the_function(self, monkeypatch):
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: "10.0.0.1")
+        log = _fresh_log()
+        ll._fill_call_header(log, "/srv/app/jobs.py", "run", {"n": 1}, include_node_ip=False)
+        assert log["module"] == "jobs.py"
+        assert log["function"] == "run"
+
+    def test_session_variables_are_left_out_of_the_parameters(self, monkeypatch):
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: None)
+        log = _fresh_log()
+        ll._fill_call_header(log, "/a/b.py", "f", {"n": 1, "login": "bob", "current_proxy": "http://u:p@h:1"}, include_node_ip=False)
+        assert log["parameters"] == {"n": 1}
+
+    def test_the_node_ip_is_recorded_only_when_requested(self, monkeypatch):
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: "10.0.0.1")
+        with_ip = _fresh_log()
+        ll._fill_call_header(with_ip, "/a/b.py", "f", {}, include_node_ip=True)
+        without = _fresh_log()
+        ll._fill_call_header(without, "/a/b.py", "f", {}, include_node_ip=False)
+        assert with_ip["node"] == {"ip": "10.0.0.1"}
+        assert "node" not in without
+
+    def test_a_truthy_proxy_is_recorded_redacted_in_the_session(self):
+        log = _fresh_log()
+        ll._record_session(log, {"current_proxy": "http://u:p@h:1"})
+        assert log["session"] == {"current_proxy": "http://***@h:1"}
+
+    def test_a_truthy_login_is_recorded_masked_when_short(self):
+        log = _fresh_log()
+        ll._record_session(log, {"login": "bob"})
+        assert log["session"] == {"login": "***"}
+
+    def test_falsy_session_values_create_no_session_entry(self):
+        log = _fresh_log()
+        ll._record_session(log, {"login": "", "current_proxy": None})
+        assert "session" not in log
+
+    def test_non_session_keys_are_ignored(self):
+        log = _fresh_log()
+        ll._record_session(log, {"n": 1})
+        assert "session" not in log
