@@ -647,3 +647,50 @@ class TestLoadedRowsResultsKey:
         monkeypatch.setattr(ll, "lookup_in_stack", fake_lookup)
         ll.log_loaded_rows([1], "users", results_log={"results": {}})
         assert asked == ["reports_language"]
+
+
+class TestCredentialRedaction:
+    def test_a_non_string_value_is_fully_masked(self):
+        assert ll._redact_credential_shaped_value(5) == "***"
+        assert ll._redact_credential_shaped_value(None) == "***"
+
+    def test_a_proxy_url_loses_its_userinfo_and_keeps_scheme_and_host(self):
+        assert ll._redact_credential_shaped_value("http://u:p@h:1") == "http://***@h:1"
+
+    def test_a_scheme_url_with_only_a_userinfo_marker_is_kept_in_shape(self):
+        assert ll._redact_credential_shaped_value("x://noauth@") == "x://***@"
+
+    def test_an_at_sign_without_a_scheme_still_keeps_only_the_host(self):
+        assert ll._redact_credential_shaped_value("ab@cd") == "***@cd"
+
+    def test_a_long_plain_value_keeps_its_first_and_last_two_characters(self):
+        assert ll._redact_credential_shaped_value("abcdefgh") == "ab***gh"
+        assert ll._redact_credential_shaped_value("plain") == "pl***in"
+
+    def test_a_value_of_four_characters_is_fully_masked(self):
+        assert ll._redact_credential_shaped_value("abcd") == "***"
+
+    def test_a_short_value_is_fully_masked(self):
+        assert ll._redact_credential_shaped_value("ab") == "***"
+
+    def test_a_scheme_without_userinfo_is_masked_as_a_plain_value(self):
+        assert ll._redact_credential_shaped_value("http://h") == "ht***/h"
+
+
+class TestLoadedRowsMessagesExact:
+    def test_english_database_message_is_exact(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows([1, 2, 3], "users", source_type="db_table", results_log={"results": {}}, lang="en", verbose=True)
+        assert log_.info_calls == [("%s%s", "Loaded 3 rows from users DB table.", "")]
+
+    def test_russian_message_uses_the_thousands_separator_in_the_count(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows(list(range(12000)), "users", source_type="file", results_log={"results": {}}, lang="ru", verbose=True)
+        assert log_.info_calls == [("%s%s", "Загружено 12_000 строк из файла users.", "")]
+
+
+class TestRedactionRestAfterScheme:
+    def test_an_at_sign_before_the_scheme_is_not_taken_for_userinfo(self):
+        assert ll._redact_credential_shaped_value("a@b://c") == "a@***/c"
