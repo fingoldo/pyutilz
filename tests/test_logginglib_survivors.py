@@ -782,3 +782,58 @@ class TestCallHeaderAndSession:
         log = _fresh_log()
         ll._record_session(log, {"n": 1})
         assert "session" not in log
+
+
+class TestDecoratedCallWritesTheHeader:
+    """The ``logged`` wrapper itself writes the call header; the helper tests above do not reach that call."""
+
+    def _capture(self, monkeypatch):
+        captured: list = []
+        monkeypatch.setattr(ll, "finalize_function_log", lambda log, **kwargs: captured.append(log) or log)
+        return captured
+
+    def test_a_decorated_call_records_its_module_function_and_parameters(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(n, label="x", **_):
+            return n
+
+        load(3, label="abc")
+        assert captured[0]["module"] == "test_logginglib_survivors.py"
+        assert captured[0]["function"] == "load"
+        assert captured[0]["parameters"] == {0: 3, "label": "abc"}
+
+    def test_a_caller_supplied_results_log_is_the_one_finalized(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(n, **_):
+            return n
+
+        log: dict = {}
+        assert load(1, results_log=log) == 1
+        assert captured[0] is log
+        assert log["function"] == "load"
+
+    def test_no_node_ip_is_written_when_the_decorator_disables_it(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: "10.0.0.1")
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 1
+
+        load()
+        assert "node" not in captured[0]
+
+    def test_the_node_ip_is_written_when_the_decorator_enables_it(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: "10.0.0.1")
+
+        @ll.logged(include_node_ip=True)
+        def load(**_):
+            return 1
+
+        load()
+        assert captured[0]["node"] == {"ip": "10.0.0.1"}
