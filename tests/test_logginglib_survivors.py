@@ -694,3 +694,47 @@ class TestLoadedRowsMessagesExact:
 class TestRedactionRestAfterScheme:
     def test_an_at_sign_before_the_scheme_is_not_taken_for_userinfo(self):
         assert ll._redact_credential_shaped_value("a@b://c") == "a@***/c"
+
+
+class TestRedactParametersAndCallParams:
+    def test_the_session_variable_names_are_pinned(self):
+        assert ll._SESSION_VARS == ("current_proxy", "current_proxy_resolved", "login")
+
+    def test_a_credential_named_parameter_is_masked_by_value_shape(self):
+        out = ll._redact_parameters({"password": "hunter2"})  # pragma: allowlist secret -- test fixture, not a credential
+        assert out["password"] == "hu***r2"  # pragma: allowlist secret -- masked fixture, not a credential
+
+    def test_a_dsn_inside_an_ordinary_argument_is_scrubbed(self):
+        out = ll._redact_parameters({"url": "postgresql://u:pw@h/db"})
+        assert out["url"] == "<dsn-redacted>"
+
+    def test_numbers_and_ordinary_strings_pass_through(self):
+        out = ll._redact_parameters({"n": 5, "name": "bob"})
+        assert out == {"n": 5, "name": "bob"}
+
+    def test_explicit_mode_keeps_only_the_keyword_arguments(self):
+        assert ll._call_params((1, "x"), {"k": 2}, True, (int, str)) == {"k": 2}
+
+    def test_default_mode_adds_positional_arguments_by_index(self):
+        assert ll._call_params((1, "x"), {"k": 2}, False, (int, str)) == {0: 1, 1: "x", "k": 2}
+
+    def test_unsupported_positional_types_are_dropped(self):
+        assert ll._call_params(([1],), {}, False, (int, str)) == {}
+
+    def test_a_non_dict_keyword_filter_result_is_refused(self, monkeypatch):
+        monkeypatch.setattr(ll, "filter_elements_by_type", lambda obj, allowed_types: ["x"])
+        with pytest.raises(AssertionError) as info:
+            ll._call_params((), {"k": 1}, False, (int,))
+        assert str(info.value) == "expected dict kwargs, got list"
+
+    def test_a_non_dict_positional_filter_result_is_refused(self, monkeypatch):
+        calls: list = []
+
+        def fake(obj, allowed_types):
+            calls.append(1)
+            return {} if len(calls) == 1 else ["x"]
+
+        monkeypatch.setattr(ll, "filter_elements_by_type", fake)
+        with pytest.raises(AssertionError) as info:
+            ll._call_params((1,), {}, False, (int,))
+        assert str(info.value) == "expected dict params, got list"
