@@ -139,3 +139,77 @@ class TestBuildTabEntries:
         monkeypatch.setattr(dl, "logger", log)
         self._build([("A", "a", ["admin"])], user=_User("admin"))
         assert log.debug_calls == [("tabLabel=%s, tabId=%s, tabUsers=%s", "A", "a", ["admin"])]
+
+
+class TestAssembleTabs:
+    def _assemble(self, **kwargs):
+        calls: list = []
+
+        def draw(active):
+            calls.append(active)
+            return "BODY"
+
+        params = dict(
+            tabsName="g",
+            tabs=["T1"],
+            tooltips=["TIP"],
+            draw_tab_content_function=draw,
+            active_tab="pre-a",
+            prefix="pre-",
+            tabsClassName="tc",
+            contentClassName="cc",
+            use_cardstyle=False,
+            show_loading=False,
+        )
+        params.update(kwargs)
+        return dl._assemble_tabs(**params), calls
+
+    def test_the_header_and_content_carry_the_prefixed_group_ids(self):
+        container, _ = self._assemble()
+        header, content = container.children[0], container.children[1]
+        assert header.id == "pre-sg"
+        assert content.id == "pre-sgContent"
+
+    def test_the_content_function_is_called_with_the_active_tab(self):
+        _, calls = self._assemble(active_tab="pre-z")
+        assert calls == ["pre-z"]
+
+    def test_the_header_is_marked_with_the_active_tab_and_class(self):
+        container, _ = self._assemble()
+        header = container.children[0]
+        assert header.active_tab == "pre-a"
+        assert header.className == "tc"
+
+    def test_tooltips_follow_the_header_and_body(self):
+        container, _ = self._assemble(tooltips=["TIP1", "TIP2"])
+        assert container.children[-2:] == ["TIP1", "TIP2"]
+
+    def test_the_container_is_fluid_with_the_content_class(self):
+        container, _ = self._assemble(contentClassName="wrap")
+        assert container.fluid is True
+        assert container.className == "wrap"
+
+    def test_a_loading_overlay_wraps_the_body_with_its_delay_and_style(self):
+        from dash import dcc
+
+        container, _ = self._assemble(show_loading=True)
+        loading = container.children[1]
+        assert isinstance(loading, dcc.Loading)
+        assert loading.delay_show == 250
+        assert loading.overlay_style == {"visibility": "visible", "opacity": 0.45}
+
+    def test_without_loading_the_body_is_the_bare_div(self):
+        from dash import html
+
+        container, _ = self._assemble(show_loading=False)
+        assert isinstance(container.children[1], html.Div)
+
+    def test_the_card_style_wraps_header_and_body_in_a_card(self):
+        import dash_bootstrap_components as dbc
+
+        container, _ = self._assemble(use_cardstyle=True)
+        card = container.children[0]
+        assert isinstance(card, dbc.Card)
+        assert card.className == "p-0"
+        assert card.children[0].className == "pt-0"
+        assert card.children[1].className == "px-2 py-0"
