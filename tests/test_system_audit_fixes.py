@@ -385,6 +385,7 @@ def prefect_helpers():
     helper_name = "pyutilz.system.scheduling.prefect"
     installed_stub = False
     helper_was_imported = helper_name in sys.modules
+    saved = {name: mod for name, mod in sys.modules.items() if name in ("prefect", helper_name)}
 
     if "prefect" not in sys.modules:
         try:
@@ -404,6 +405,7 @@ def prefect_helpers():
                 sys.modules.pop(helper_name, None)
                 if getattr(scheduling_pkg, "prefect", None) is not None:
                     delattr(scheduling_pkg, "prefect")
+        sys.modules.update(saved)
 
 
 def test_get_running_flows_applies_both_label_filters(prefect_helpers, monkeypatch):

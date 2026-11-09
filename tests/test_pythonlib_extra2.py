@@ -535,7 +535,12 @@ def test_get_attr_survives_reload_of_its_own_module():
     from pyutilz.core import pythonlib as pythonlib_module
     from pyutilz.core.pythonlib import get_attr as get_attr_before_reload
 
-    importlib.reload(pythonlib_module)
+    saved = dict(pythonlib_module.__dict__)
+    try:
+        importlib.reload(pythonlib_module)
+        assert get_attr_before_reload({"a": 1}, "b") == []
+    finally:
+        pythonlib_module.__dict__.update(saved)
 
     assert get_attr_before_reload({"a": 1}, "b") == []
 

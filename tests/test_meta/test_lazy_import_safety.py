@@ -91,7 +91,7 @@ def test_proxy_resolves_to_same_object_as_direct_import():
         pytest.fail(f"{len(failures)} proxy-vs-direct mismatch(es) — proxy is " f"silently wrapping objects:\n  " + "\n  ".join(failures))
 
 
-def test_proxy_resolves_consistently_after_first_access():
+def test_proxy_resolves_consistently_after_first_access(monkeypatch):
     """After the FIRST public-attribute access, repeated accesses must
     return the same object (no per-call recomputation that would yield
     a fresh wrapper).
@@ -111,9 +111,9 @@ def test_proxy_resolves_consistently_after_first_access():
     real_path = pyutilz._MODULE_ALIASES[alias]
     full_alias = f"pyutilz.{alias}"
 
-    sys.modules.pop(full_alias, None)
+    monkeypatch.delitem(sys.modules, full_alias, raising=False)
     proxy = pyutilz._create_lazy_module(real_path, full_alias)
-    sys.modules[full_alias] = proxy
+    monkeypatch.setitem(sys.modules, full_alias, proxy)
 
     real_mod = importlib.import_module(real_path)
     public = next((n for n in dir(real_mod) if not n.startswith("_")), None)
@@ -132,7 +132,11 @@ def test_module_aliases_dict_is_immutable_at_callsites():
     """Sanity — ``_MODULE_ALIASES`` should be the same object across
     multiple ``import pyutilz`` calls (no rebuild on re-import that
     would invalidate downstream pickling / caching that key off ``id()``)."""
-    importlib.reload(pyutilz)
+    saved = dict(pyutilz.__dict__)
+    try:
+        importlib.reload(pyutilz)
+    finally:
+        pyutilz.__dict__.update(saved)
     # A reload typically rebuilds module-level dicts, BUT we only care
     # that the *contents* match — id() of the dict is allowed to change.
     assert pyutilz._MODULE_ALIASES, "alias dict empty after reload?"

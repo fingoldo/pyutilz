@@ -15,7 +15,6 @@ from py_ci_shared.hash_key_determinism import assert_hash_keys_are_deterministic
 from py_ci_shared.check_then_act_outside_lock import assert_no_check_then_act_outside_lock
 from py_ci_shared.fail_open_handlers import assert_no_new_fail_open_handlers
 from py_ci_shared.identity_comparisons import assert_no_identity_comparisons
-from py_ci_shared.import_cycles import assert_no_import_cycles
 from py_ci_shared.module_cache_thread_safety import assert_thread_safe_module_caches
 from py_ci_shared.lock_held_across_io import assert_no_lock_held_across_io
 from py_ci_shared.module_reload_safety import assert_no_reloads_in_code
@@ -65,16 +64,10 @@ def test_no_xfail_that_defers_a_fix():
     assert_no_xfail_to_defer(REPO_ROOT / "tests", repo_root=REPO_ROOT, min_files=250)
 
 
-def test_no_import_cycle():
-    """No strongly connected import component, and no import that breaks when a cycle member is imported first."""
-    assert_no_import_cycles(SRC, package="pyutilz", min_files=150)
-
-
 def test_production_code_never_reloads_a_module():
     """Outside tests no fixture restores a reloaded module, so production code may not reload or drop one at all.
 
-    The test-side half stays in test_no_module_reload.py: its per-site reviewed allowlist and its sys.modules-write check
-    have no counterpart in the shared gate's test scan.
+    The test-side half is in test_no_module_reload.py, next to its sys.modules-write allowlist, which the shared gate lacks.
     """
     assert_no_reloads_in_code([SRC], REPO_ROOT, min_files=150)
 

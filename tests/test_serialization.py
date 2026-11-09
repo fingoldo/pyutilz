@@ -496,16 +496,13 @@ class TestSerializationBoundaries:
     def test_text_after_the_closing_parenthesis_is_not_passed_to_the_constructor(self):
         assert str_to_class("builtins.str(hi)xyz") == "(hi)"
 
-    def test_a_dotted_module_path_is_joined_with_dots(self):
+    def test_a_dotted_module_path_is_joined_with_dots(self, monkeypatch):
         import types
 
         module = types.ModuleType("fakepkg.sub")
         module.Thing = lambda arg: ("made", arg)
-        _sys.modules["fakepkg.sub"] = module
-        try:
-            assert str_to_class("fakepkg.sub.Thing") == ("made", "")
-        finally:
-            _sys.modules.pop("fakepkg.sub", None)
+        monkeypatch.setitem(_sys.modules, "fakepkg.sub", module)
+        assert str_to_class("fakepkg.sub.Thing") == ("made", "")
 
     def test_a_decompressed_total_is_counted_across_chunks(self):
         bomb = _zlib.compress(b"\0" * (40 * 1024 * 1024), 9)
