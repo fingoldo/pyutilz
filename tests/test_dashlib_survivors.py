@@ -192,6 +192,7 @@ class TestAssembleTabs:
         assert container.className == "wrap"
 
     def test_a_loading_overlay_wraps_the_body_with_its_delay_and_style(self):
+        pytest.importorskip("dash")
         from dash import dcc
 
         container, _ = self._assemble(show_loading=True)
@@ -201,12 +202,14 @@ class TestAssembleTabs:
         assert loading.overlay_style == {"visibility": "visible", "opacity": 0.45}
 
     def test_without_loading_the_body_is_the_bare_div(self):
+        pytest.importorskip("dash")
         from dash import html
 
         container, _ = self._assemble(show_loading=False)
         assert isinstance(container.children[1], html.Div)
 
     def test_the_card_style_wraps_header_and_body_in_a_card(self):
+        pytest.importorskip("dash_bootstrap_components")
         import dash_bootstrap_components as dbc
 
         container, _ = self._assemble(use_cardstyle=True)
@@ -270,6 +273,7 @@ class TestCreateTabsFlow:
         assert log.debug_calls == [("create_tabs(%s): no tab passed the role filter for the current user, nothing to render", "g")]
 
     def test_a_visible_tab_renders_the_container(self, monkeypatch):
+        pytest.importorskip("dash_bootstrap_components")
         import dash_bootstrap_components as dbc
 
         monkeypatch.setattr(dl, "session", {})
