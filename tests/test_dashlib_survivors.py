@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pyutilz.dev import dashlib as dl
 
 
@@ -213,3 +215,97 @@ class TestAssembleTabs:
         assert card.className == "p-0"
         assert card.children[0].className == "pt-0"
         assert card.children[1].className == "px-2 py-0"
+
+
+class TestCreateTabsFlow:
+    def _draw(self, active):
+        return "BODY:" + active
+
+    def test_without_flask_the_call_refuses_with_the_dash_extra_hint(self, monkeypatch):
+        monkeypatch.setattr(dl, "session", None)
+        with pytest.raises(ImportError) as info:
+            dl.create_tabs("g", [("A", "a", None)], self._draw)
+        assert str(info.value) == "create_tabs needs flask; install the dash extra"
+
+    def test_an_empty_tab_list_renders_nothing_and_logs_it(self, monkeypatch):
+        monkeypatch.setattr(dl, "session", {})
+        log = _Log()
+        monkeypatch.setattr(dl, "logger", log)
+        assert dl.create_tabs("g", [], self._draw) is None
+        assert log.debug_calls == [("create_tabs(%s): empty tabsList, nothing to render", "g")]
+
+    def test_an_unauthenticated_user_renders_nothing(self, monkeypatch):
+        monkeypatch.setattr(dl, "session", {})
+        monkeypatch.setattr(dl, "_resolve_current_user", lambda name: (False, None))
+        assert dl.create_tabs("g", [("A", "a", None)], self._draw) is None
+
+    def test_the_session_is_seeded_with_the_first_tab_id(self, monkeypatch):
+        store: dict = {}
+        monkeypatch.setattr(dl, "session", store)
+        monkeypatch.setattr(dl, "_resolve_current_user", lambda name: (True, None))
+        dl.create_tabs("g", [("A", "b", None), ("C", "c", None)], self._draw)
+        assert store[dl.get_active_tab_var_name("g")] == "tabb"
+
+    def test_a_missing_tab_id_seeds_the_session_from_the_label(self, monkeypatch):
+        store: dict = {}
+        monkeypatch.setattr(dl, "session", store)
+        monkeypatch.setattr(dl, "_resolve_current_user", lambda name: (True, None))
+        dl.create_tabs("g", [("Lbl", None, None)], self._draw)
+        assert store[dl.get_active_tab_var_name("g")] == "tabLbl"
+
+    def test_an_existing_session_entry_is_kept(self, monkeypatch):
+        store = {dl.get_active_tab_var_name("g"): "tabc"}
+        monkeypatch.setattr(dl, "session", store)
+        monkeypatch.setattr(dl, "_resolve_current_user", lambda name: (True, None))
+        container = dl.create_tabs("g", [("A", "b", None), ("C", "c", None)], self._draw)
+        assert store[dl.get_active_tab_var_name("g")] == "tabc"
+        assert container.children[0].active_tab == "tabc"
+
+    def test_no_tab_surviving_the_role_filter_renders_nothing_and_logs(self, monkeypatch):
+        monkeypatch.setattr(dl, "session", {})
+        monkeypatch.setattr(dl, "_resolve_current_user", lambda name: (True, None))
+        log = _Log()
+        monkeypatch.setattr(dl, "logger", log)
+        assert dl.create_tabs("g", [("A", "a", ["admin"])], self._draw) is None
+        assert log.debug_calls == [("create_tabs(%s): no tab passed the role filter for the current user, nothing to render", "g")]
+
+    def test_a_visible_tab_renders_the_container(self, monkeypatch):
+        import dash_bootstrap_components as dbc
+
+        monkeypatch.setattr(dl, "session", {})
+        monkeypatch.setattr(dl, "_resolve_current_user", lambda name: (True, None))
+        container = dl.create_tabs("g", [("A", "a", None)], self._draw)
+        assert isinstance(container, dbc.Container)
+
+
+class TestCreateTabsOptions:
+    def _draw(self, active):
+        return "BODY:" + active
+
+    def _run(self, monkeypatch, tabs, user_role=None, **kwargs):
+        monkeypatch.setattr(dl, "session", {})
+        monkeypatch.setattr(dl, "_resolve_current_user", lambda name: (True, _User(user_role) if user_role else None))
+        return dl.create_tabs("g", tabs, self._draw, **kwargs)
+
+    def test_a_comma_string_of_roles_is_split_by_default(self, monkeypatch):
+        container = self._run(monkeypatch, [("A", "a", "admin,user")], user_role="user")
+        assert container is not None
+        assert len(container.children[0].children) == 1
+
+    def test_a_string_of_roles_hides_the_tab_from_other_roles(self, monkeypatch):
+        assert self._run(monkeypatch, [("A", "a", "admin,user")], user_role="guest") is None
+
+    def test_the_active_label_class_is_applied_to_the_active_tab(self, monkeypatch):
+        container = self._run(monkeypatch, [("A", "a", None, "tc", "base", None)], activeLabelClassName="act")
+        tab = container.children[0].children[0]
+        assert tab.labelClassName == "base act"
+
+    def test_the_tab_bar_and_content_container_keep_their_own_classes(self, monkeypatch):
+        container = self._run(monkeypatch, [("A", "a", None)], tabsClassName="bar", contentClassName="wrap")
+        assert container.className == "wrap"
+        assert container.children[0].className == "bar"
+
+    def test_the_card_style_flag_is_not_taken_for_the_content_class(self, monkeypatch):
+        container = self._run(monkeypatch, [("A", "a", None)], contentClassName="wrap", use_cardstyle=True)
+        assert container.className == "wrap"
+        assert container.children[0].className == "p-0"
