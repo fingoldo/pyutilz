@@ -1205,3 +1205,32 @@ class TestLogThrottledDefaults:
         params = inspect.signature(ll.log_throttled).parameters
         assert params["max_count"].default == 5
         assert params["exc_info"].default is False
+
+
+class TestRedisTrimAnnouncementAndDebuggedForwarding:
+    """The stdout notice on a trim, the debugged retry default, and keyword forwarding through debugged (logginglib 539-566)."""
+
+    def test_a_trim_announces_itself_on_stdout(self, monkeypatch, capsys):
+        monkeypatch.setattr(ll, "random", lambda: 0.0)
+        ll.RedisHandler(_FakeRedis(), LOG_DEST="jobs", LOG_SIZE=7).emit(_record())
+        assert capsys.readouterr().out == "logging list trimmed!\n"
+
+    def test_no_announcement_when_nothing_is_trimmed(self, monkeypatch, capsys):
+        monkeypatch.setattr(ll, "random", lambda: 0.5)
+        ll.RedisHandler(_FakeRedis()).emit(_record())
+        assert capsys.readouterr().out == ""
+
+    def test_the_debugged_retry_cap_defaults_to_three(self):
+        import inspect
+
+        assert inspect.signature(ll.debugged).parameters["max_retries"].default == 3
+
+    def test_keyword_arguments_reach_the_wrapped_function(self, monkeypatch):
+        monkeypatch.setattr(ll.sys, "stdin", None)
+
+        @ll.debugged()
+        def add(a, b=2):
+            return a + b
+
+        assert add(1, b=5) == 6
+        assert add(1) == 3
