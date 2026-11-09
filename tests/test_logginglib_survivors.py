@@ -441,3 +441,116 @@ class TestSubSecondDuration:
         obj = {"started_at": datetime.now(timezone.utc) - timedelta(milliseconds=500)}
         duration = ll._stop_clocks(obj)
         assert 0.4 < duration < 5
+
+
+def _fresh_log(function="f"):
+    from datetime import datetime, timezone
+
+    return {
+        "module": "m.py",
+        "function": function,
+        "parameters": {"a": 1},
+        "results": {"timing": {"started_at": datetime.now(timezone.utc)}},
+    }
+
+
+class TestFinalizeFunctionLog:
+    def test_finalizing_stamps_the_timing_and_returns_the_log(self):
+        out = ll.finalize_function_log(_fresh_log())
+        assert "finished_at" in out["results"]["timing"]
+        assert out["results"]["timing"]["duration"] >= 0
+
+    def test_verbose_without_a_database_prints_the_log(self, capsys):
+        log = _fresh_log()
+        ll.finalize_function_log(log, verbose=True)
+        assert "'function': 'f'" in capsys.readouterr().out
+
+    def test_quiet_by_default_prints_nothing(self, capsys):
+        ll.finalize_function_log(_fresh_log())
+        assert capsys.readouterr().out == ""
+
+    def test_a_database_path_inserts_the_fields_in_order(self, monkeypatch):
+        import pyutilz.database.db as dbpkg
+
+        calls: list = []
+
+        def fake_execute(query, rows):
+            calls.append((query, rows))
+
+        monkeypatch.setattr(dbpkg, "safe_execute_values", fake_execute, raising=False)
+        ll.finalize_function_log(_fresh_log(), db_path="logging.api_calls")
+        query, rows = calls[0]
+        assert query == "insert into logging.api_calls (module,function,parameters,results,node,session) values %s"
+        assert rows[0][0:2] == ["m.py", "f"]
+        from pyutilz.text.strings.jsonutils import json_pg_dumps
+
+        assert str(rows[0][2]) == str(json_pg_dumps({"a": 1}))
+
+
+class TestLogResultAndResults:
+    def test_log_result_stores_the_value_under_its_key(self):
+        log = _fresh_log()
+        ll.log_result(log, "rows", 3, verbose=False)
+        assert log["results"]["rows"] == 3
+
+    def test_log_result_announces_the_key_and_value(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_result(_fresh_log(), "rows", 3, verbose=True)
+        assert log_.info_calls == [("%s%s", "rows: 3", "...")]
+
+    def test_log_results_merges_every_key(self):
+        log = _fresh_log()
+        ll.log_results(log, {"a": 1, "b": 2}, verbose=False)
+        assert log["results"]["a"] == 1 and log["results"]["b"] == 2
+
+    def test_log_results_announces_the_merged_dict(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_results(_fresh_log(), {"a": 1}, verbose=True)
+        assert log_.info_calls == [("%s%s", "{'a': 1}", "...")]
+
+
+class TestFinalizeActivitiesAndDefaults:
+    def test_finalizing_closes_the_activities_still_open(self):
+        from datetime import datetime, timedelta, timezone
+
+        log = _fresh_log()
+        started = datetime.now(timezone.utc) - timedelta(seconds=2)
+        log["results"]["activities"] = {"open": {"started_at": started}}
+        ll.finalize_function_log(log)
+        assert "finished_at" in log["results"]["activities"]["open"]
+
+    def test_an_invalid_table_path_raises_the_sql_validation_error(self):
+        from pyutilz.database.exceptions import SQLValidationError
+
+        with pytest.raises(SQLValidationError):
+            ll.finalize_function_log(_fresh_log(), db_path="bad table; drop")
+
+    def test_log_result_announces_by_default(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_result(_fresh_log(), "rows", 3)
+        assert log_.info_calls == [("%s%s", "rows: 3", "...")]
+
+    def test_log_results_announces_by_default(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_results(_fresh_log(), {"a": 1})
+        assert log_.info_calls == [("%s%s", "{'a': 1}", "...")]
+
+
+class TestLogActivityDefaults:
+    def test_starting_an_activity_announces_it_by_default(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_activity(_fresh_log(), "load")
+        assert log_.info_calls == [("%s%s", "load", "...")]
+
+    def test_starting_the_next_activity_returns_the_previous_duration(self, monkeypatch):
+        monkeypatch.setattr(ll, "logger", _InfoLog())
+        log = _fresh_log()
+        assert ll.log_activity(log, "first", verbose=False) is None
+        duration = ll.log_activity(log, "second", verbose=False)
+        assert isinstance(duration, float)
+        assert duration >= 0
