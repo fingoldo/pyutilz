@@ -658,7 +658,7 @@ class TestCredentialRedaction:
         assert ll._redact_credential_shaped_value("http://u:p@h:1") == "http://***@h:1"
 
     def test_a_scheme_url_with_only_a_userinfo_marker_is_kept_in_shape(self):
-        assert ll._redact_credential_shaped_value("x://noauth@") == "x://***@"
+        assert ll._redact_credential_shaped_value("ab://noauth@") == "ab://***@"
 
     def test_an_at_sign_without_a_scheme_still_keeps_only_the_host(self):
         assert ll._redact_credential_shaped_value("ab@cd") == "***@cd"
