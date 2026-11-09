@@ -837,3 +837,90 @@ class TestDecoratedCallWritesTheHeader:
 
         load()
         assert captured[0]["node"] == {"ip": "10.0.0.1"}
+
+
+class TestWrapperSessionClocksAndErrors:
+    """The wrapper's session record, start stamp, error record and finalize-failure path (logginglib 486-508)."""
+
+    def _capture(self, monkeypatch):
+        captured: list = []
+        monkeypatch.setattr(ll, "finalize_function_log", lambda log, **kwargs: captured.append(log) or log)
+        return captured
+
+    def test_a_truthy_session_variable_is_recorded_on_the_log(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 1
+
+        load(login="alice_user_01")
+        assert "session" in captured[0]
+        assert "login" in captured[0]["session"]
+
+    def test_no_session_is_recorded_without_a_truthy_session_variable(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 1
+
+        load(login="")
+        assert "session" not in captured[0]
+
+    def test_the_start_stamp_is_written_before_the_call(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+        seen: list = []
+
+        @ll.logged(include_node_ip=False)
+        def load(**kwargs):
+            seen.append(kwargs["results_log"]["results"]["timing"].get("started_at"))
+            return 1
+
+        load()
+        assert seen[0] is not None
+        assert captured[0]["results"]["timing"]["started_at"] is seen[0]
+
+    def test_an_exception_is_recorded_on_the_log_and_reraised(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            load()
+        assert captured[0]["results"]["error"] == "RuntimeError: boom"
+
+    def test_a_successful_call_records_no_error(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 1
+
+        load()
+        assert "error" not in captured[0]["results"]
+
+    def test_a_finalize_failure_keeps_the_wrapped_result(self, monkeypatch):
+        class _Recorder:
+            def __init__(self):
+                self.messages: list = []
+
+            def exception(self, msg, *args, **kwargs):
+                self.messages.append(msg)
+
+        recorder = _Recorder()
+        monkeypatch.setattr(ll, "logger", recorder)
+
+        def broken_finalize(log, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(ll, "finalize_function_log", broken_finalize)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 42
+
+        assert load() == 42
+        assert recorder.messages == ["finalize_function_log failed; the wrapped function's own result/exception is preserved"]
