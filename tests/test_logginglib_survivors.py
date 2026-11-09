@@ -924,3 +924,148 @@ class TestWrapperSessionClocksAndErrors:
 
         assert load() == 42
         assert recorder.messages == ["finalize_function_log failed; the wrapped function's own result/exception is preserved"]
+
+
+class _FakeRedis:
+    def __init__(self, fail: bool = False):
+        self.pushed: list = []
+        self.trimmed: list = []
+        self.fail = fail
+
+    def lpush(self, key, msg):
+        if self.fail:
+            raise ConnectionError("redis down")
+        self.pushed.append((key, msg))
+
+    def ltrim(self, key, start, stop):
+        self.trimmed.append((key, start, stop))
+
+
+def _record(msg="hello"):
+    import logging
+
+    return logging.LogRecord("t", logging.INFO, __file__, 1, msg, None, None)
+
+
+class TestRedisHandler:
+    def test_the_defaults_are_the_logs_list_and_a_thousand_entries(self):
+        h = ll.RedisHandler(_FakeRedis())
+        assert (h.LOG_DEST, h.LOG_SIZE) == ("Logs", 1000)
+
+    def test_the_constructor_arguments_are_kept(self):
+        h = ll.RedisHandler(_FakeRedis(), LOG_DEST="jobs", LOG_SIZE=7)
+        assert (h.LOG_DEST, h.LOG_SIZE) == ("jobs", 7)
+
+    def test_each_record_is_pushed_onto_the_destination_list(self, monkeypatch):
+        rc = _FakeRedis()
+        monkeypatch.setattr(ll, "random", lambda: 0.5)
+        h = ll.RedisHandler(rc, LOG_DEST="jobs")
+        h.setFormatter(__import__("logging").Formatter("%(message)s"))
+        h.emit(_record("hi"))
+        assert rc.pushed == [("jobs", "hi")]
+
+    def test_the_list_is_trimmed_to_the_size_limit_on_the_sampled_path(self, monkeypatch):
+        rc = _FakeRedis()
+        monkeypatch.setattr(ll, "random", lambda: 0.0)
+        h = ll.RedisHandler(rc, LOG_DEST="jobs", LOG_SIZE=7)
+        h.emit(_record())
+        assert rc.trimmed == [("jobs", 0, 7)]
+
+    def test_no_trim_happens_off_the_sampled_path(self, monkeypatch):
+        rc = _FakeRedis()
+        monkeypatch.setattr(ll, "random", lambda: 0.1)
+        ll.RedisHandler(rc).emit(_record())
+        assert rc.trimmed == []
+
+    def test_a_redis_failure_goes_to_handle_error_and_is_not_raised(self, monkeypatch):
+        handled: list = []
+        monkeypatch.setattr(ll, "random", lambda: 0.5)
+        h = ll.RedisHandler(_FakeRedis(fail=True))
+        monkeypatch.setattr(h, "handleError", lambda record: handled.append(record.getMessage()))
+        h.emit(_record("oops"))
+        assert handled == ["oops"]
+
+
+class TestDebugged:
+    def test_a_successful_call_returns_its_value(self):
+        @ll.debugged()
+        def f(x):
+            return x + 1
+
+        assert f(1) == 2
+
+    def test_a_failure_is_reraised_when_not_interactive(self, monkeypatch):
+        calls: list = []
+        monkeypatch.setattr(ll.sys, "stdin", None)
+
+        @ll.debugged(max_retries=3)
+        def f():
+            calls.append(1)
+            raise ValueError("bad")
+
+        with pytest.raises(ValueError, match="bad"):
+            f()
+        assert len(calls) == 1
+
+    def test_an_interactive_failure_retries_up_to_the_cap(self, monkeypatch):
+        calls: list = []
+        breakpoints: list = []
+
+        class _Tty:
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(ll.sys, "stdin", _Tty())
+        import pdb
+
+        monkeypatch.setattr(pdb, "set_trace", lambda: breakpoints.append(1))
+
+        @ll.debugged(max_retries=3)
+        def f():
+            calls.append(1)
+            raise ValueError("bad")
+
+        with pytest.raises(ValueError):
+            f()
+        assert len(calls) == 3
+        assert len(breakpoints) == 2
+
+    def test_an_interactive_failure_that_recovers_returns_the_value(self, monkeypatch):
+        attempts: list = []
+
+        class _Tty:
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(ll.sys, "stdin", _Tty())
+        import pdb
+
+        monkeypatch.setattr(pdb, "set_trace", lambda: None)
+
+        @ll.debugged(max_retries=3)
+        def f():
+            attempts.append(1)
+            if len(attempts) < 2:
+                raise ValueError("first try")
+            return "ok"
+
+        assert f() == "ok"
+        assert len(attempts) == 2
+
+    def test_each_failure_is_logged_with_the_logger(self, monkeypatch):
+        logged: list = []
+
+        class _Recorder:
+            def exception(self, e):
+                logged.append(e)
+
+        monkeypatch.setattr(ll, "logger", _Recorder())
+        monkeypatch.setattr(ll.sys, "stdin", None)
+
+        @ll.debugged()
+        def f():
+            raise ValueError("bad")
+
+        with pytest.raises(ValueError):
+            f()
+        assert len(logged) == 1 and isinstance(logged[0], ValueError)
