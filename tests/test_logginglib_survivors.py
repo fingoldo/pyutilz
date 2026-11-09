@@ -554,3 +554,96 @@ class TestLogActivityDefaults:
         duration = ll.log_activity(log, "second", verbose=False)
         assert isinstance(duration, float)
         assert duration >= 0
+
+
+class TestLogActivityAndLoadedRows:
+    def test_an_activity_records_its_start_time(self, monkeypatch):
+        import datetime as _dt
+
+        monkeypatch.setattr(ll, "logger", _InfoLog())
+        log = _fresh_log()
+        ll.log_activity(log, "load", verbose=False)
+        assert isinstance(log["results"]["activities"]["load"]["started_at"], _dt.datetime)
+
+    def test_a_quiet_activity_is_not_announced(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_activity(_fresh_log(), "load", verbose=False)
+        assert log_.info_calls == []
+
+    def test_an_unknown_source_type_is_refused(self):
+        with pytest.raises(AssertionError) as info:
+            ll.log_loaded_rows([1], "users", source_type="sql")
+        assert str(info.value) == "source_type must be 'db_table' or 'file', got 'sql'"
+
+    def test_the_loaded_row_count_is_recorded_per_source(self):
+        log = {"results": {}}
+        ll.log_loaded_rows([1, 2, 3], "users", results_log=log, lang="en")
+        assert log["results"]["loaded"]["db_table"]["users"] == {"rows": 3}
+
+    def test_a_missing_results_log_is_created_and_nothing_is_announced(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        assert ll.log_loaded_rows([1], "users") is None
+        assert log_.info_calls == []
+
+    def test_english_database_message(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows([1, 2, 3], "users", source_type="db_table", results_log={"results": {}}, lang="en", verbose=True)
+        assert log_.info_calls == [("%s%s", "Loaded 3 rows from users DB table.", "")]
+
+    def test_english_file_message(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows([1, 2, 3], "users", source_type="file", results_log={"results": {}}, lang="en", verbose=True)
+        assert log_.info_calls == [("%s%s", "Loaded 3 rows from users file.", "")]
+
+    def test_russian_database_message(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows([1, 2, 3], "users", source_type="db_table", results_log={"results": {}}, lang="ru", verbose=True)
+        assert log_.info_calls == [("%s%s", "Загружено 3 строк из таблицы БД users.", "")]
+
+    def test_russian_file_message(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows([1, 2, 3], "users", source_type="file", results_log={"results": {}}, lang="ru", verbose=True)
+        assert log_.info_calls == [("%s%s", "Загружено 3 строк из файла users.", "")]
+
+    def test_an_unsupported_language_falls_back_to_english(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows([1, 2, 3], "users", source_type="file", results_log={"results": {}}, lang="fr", verbose=True)
+        assert log_.info_calls == [("%s%s", "Loaded 3 rows from users file.", "")]
+
+    def test_the_language_is_taken_from_the_callers_setting_when_unspecified(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        monkeypatch.setattr(ll, "lookup_in_stack", lambda name: "ru")
+        ll.log_loaded_rows([1, 2, 3], "users", source_type="file", results_log={"results": {}}, verbose=True)
+        assert log_.info_calls == [("%s%s", "Загружено 3 строк из файла users.", "")]
+
+    def test_quiet_loads_are_not_announced(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows([1, 2, 3], "users", results_log={"results": {}}, lang="en", verbose=False)
+        assert log_.info_calls == []
+
+
+class TestLoadedRowsResultsKey:
+    def test_a_log_without_results_gets_the_results_and_loaded_entries(self):
+        log: dict = {}
+        ll.log_loaded_rows([1, 2], "users", results_log=log, lang="en")
+        assert log["results"]["loaded"]["db_table"]["users"] == {"rows": 2}
+
+    def test_the_language_lookup_asks_for_the_reports_language_setting(self, monkeypatch):
+        asked: list = []
+
+        def fake_lookup(name):
+            asked.append(name)
+            return None
+
+        monkeypatch.setattr(ll, "lookup_in_stack", fake_lookup)
+        ll.log_loaded_rows([1], "users", results_log={"results": {}})
+        assert asked == ["reports_language"]
