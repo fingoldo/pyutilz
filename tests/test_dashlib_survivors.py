@@ -84,3 +84,58 @@ class TestResolveCurrentUser:
         assert dl._resolve_current_user("tabsA") == (True, None)
         assert len(log.debug_calls) == 1
         assert log.debug_calls[0][0] == "create_tabs: flask_login current_user check skipped (%s)"
+
+
+class _User:
+    def __init__(self, role):
+        self.role = role
+
+
+class TestBuildTabEntries:
+    def _build(self, tabs, user=None, active="pre-b", active_label="act", sep=","):
+        return dl._build_tab_entries(tabs, user, "content", "pre-", sep, active_label, active)
+
+    def test_a_missing_id_takes_the_label_and_a_missing_label_takes_the_id(self):
+        tabs, _ = self._build([("Lbl", None, None), (None, "bid", None)])
+        assert [t.tab_id for t in tabs] == ["pre-Lbl", "pre-bid"]
+        assert [t.label for t in tabs] == ["Lbl", "bid"]
+
+    def test_an_unrestricted_tab_is_shown_to_everyone(self):
+        tabs, _ = self._build([("A", "a", None)])
+        assert len(tabs) == 1
+
+    def test_a_role_list_string_is_split_on_the_separator(self):
+        tabs, _ = self._build([("A", "a", "admin;user")], user=_User("user"), sep=";")
+        assert len(tabs) == 1
+
+    def test_a_role_list_hides_the_tab_from_other_roles(self):
+        tabs, _ = self._build([("A", "a", ["admin"])], user=_User("user"))
+        assert tabs == []
+
+    def test_a_restricted_tab_is_hidden_from_an_anonymous_user(self):
+        tabs, _ = self._build([("A", "a", ["admin"])], user=None)
+        assert tabs == []
+
+    def test_the_active_tab_gets_the_active_label_class_and_others_do_not(self):
+        tabs, _ = self._build([("A", "a", None, "tc", "base", None), ("B", "b", None, "tc", "base", None)], active="pre-b", active_label="act")
+        by_id = {t.tab_id: t.labelClassName for t in tabs}
+        assert by_id == {"pre-a": "base", "pre-b": "base act"}
+
+    def test_a_missing_label_class_leaves_no_stray_text(self):
+        tabs, _ = self._build([("A", "a", None)], active="none")
+        assert tabs[0].labelClassName == ""
+
+    def test_a_tooltip_is_created_for_each_tab_that_has_one(self):
+        _, tooltips = self._build([("A", "a", None, "base", None, "tip")])
+        assert len(tooltips) == 1
+        assert tooltips[0].target == "pre-a"
+
+    def test_no_tooltip_without_text(self):
+        _, tooltips = self._build([("A", "a", None)])
+        assert tooltips == []
+
+    def test_each_visible_tab_is_logged_with_its_label_id_and_users(self, monkeypatch):
+        log = _Log()
+        monkeypatch.setattr(dl, "logger", log)
+        self._build([("A", "a", ["admin"])], user=_User("admin"))
+        assert log.debug_calls == [("tabLabel=%s, tabId=%s, tabUsers=%s", "A", "a", ["admin"])]
