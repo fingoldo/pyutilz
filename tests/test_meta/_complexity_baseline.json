@@ -1,1 +1,4 @@
-{}
+{
+  "src/pyutilz/text/similarity/_numba_kernels.py::_compare_one_candidate": 24,
+  "src/pyutilz/text/similarity/_numba_kernels.py::_sentences_similarity_core": 25
+}
