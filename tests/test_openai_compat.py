@@ -1911,3 +1911,120 @@ class TestGenerateStartsWithAFreshCallStateAndPrepares:
         with pytest.raises(_PreparationOrderError):
             asyncio.run(provider.generate("hi"))
         assert order == ["reset", "prepare"]
+
+
+class _WarnRecorder:
+    def __init__(self):
+        self.warnings: list = []
+
+    def warning(self, fmt, *args, **kwargs):
+        self.warnings.append((fmt, args))
+
+
+class TestGenerateBudgetArgumentsAndReissue:
+    """The token budget, the order of the request arguments, and the one re-issue without response_format (openai_compat 696-744)."""
+
+    def _spy_budget(self, monkeypatch, provider):
+        seen: list = []
+        monkeypatch.setattr(provider, "fit_max_tokens_to_context", lambda budget, prompt, system: seen.append(budget) or budget)
+
+        async def post(body, repairing=False):
+            return "ok"
+
+        monkeypatch.setattr(provider, "_post_and_unwrap", post)
+        return seen
+
+    def test_no_max_tokens_means_no_budget_ceiling(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        seen = self._spy_budget(monkeypatch, provider)
+        asyncio.run(provider.generate("hi", max_tokens=0))
+        assert seen == [None]
+
+    def test_a_positive_max_tokens_is_the_budget(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        seen = self._spy_budget(monkeypatch, provider)
+        asyncio.run(provider.generate("hi", max_tokens=1))
+        assert seen == [1]
+
+    def test_the_request_arguments_are_passed_in_their_declared_order(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "fit_max_tokens_to_context", lambda budget, prompt, system: budget)
+        seen: list = []
+
+        def spy_body(*args):
+            seen.append(args)
+            return {"model": "test-model"}
+
+        monkeypatch.setattr(provider, "_request_body", spy_body)
+
+        async def post(body, repairing=False):
+            return "ok"
+
+        monkeypatch.setattr(provider, "_post_and_unwrap", post)
+        asyncio.run(
+            provider.generate(
+                "P", system="S", temperature=0.3, max_tokens=5, thinking="low", images=["img"], tools=[{"t": 1}], tool_choice="auto", extra_body={"seed": 1}
+            )
+        )
+        prompt, system, temperature, budget, rf, thinking, images, tools, tool_choice, extra_body = seen[0]
+        assert (prompt, system, temperature, budget) == ("P", "S", 0.3, 5)
+        assert (thinking, images, tools, tool_choice, extra_body) == ("low", ["img"], [{"t": 1}], "auto", {"seed": 1})
+
+    def test_an_empty_truncated_answer_under_json_mode_is_re_issued_once_without_the_format(self, monkeypatch):
+        import asyncio
+
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "fit_max_tokens_to_context", lambda budget, prompt, system: budget)
+        recorder = _WarnRecorder()
+        import pyutilz.llm.openai_compat as oc_module
+
+        monkeypatch.setattr(oc_module, "logger", recorder)
+        bodies: list = []
+
+        async def post(body, repairing=False):
+            bodies.append(body)
+            if len(bodies) == 1:
+                raise LLMTruncationError("cut", finish_reason="length", partial_text="")
+            return "fallback answer"
+
+        monkeypatch.setattr(provider, "_post_and_unwrap", post)
+        async def run_and_read_flag():
+            answer = await provider.generate("hi", json_mode=True)
+            return answer, provider.last_json_mode_fallback
+
+        answer, flag = asyncio.run(run_and_read_flag())
+        assert answer == "fallback answer"
+        assert flag is True
+        assert "response_format" in bodies[0]
+        assert "response_format" not in bodies[1]
+        fmt, args = recorder.warnings[0]
+        assert fmt == (
+            "%s/%s returned an EMPTY completion cut off by max_tokens under response_format " "- re-issuing once without it before reporting truncation"
+        )
+        assert args == ("TestProvider", "test-model")
+
+    def test_a_truncation_with_partial_text_is_not_re_issued(self, monkeypatch):
+        import asyncio
+
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "fit_max_tokens_to_context", lambda budget, prompt, system: budget)
+        calls: list = []
+
+        async def post(body, repairing=False):
+            calls.append(body)
+            raise LLMTruncationError("cut", finish_reason="length", partial_text="half")
+
+        monkeypatch.setattr(provider, "_post_and_unwrap", post)
+        with pytest.raises(LLMTruncationError):
+            asyncio.run(provider.generate("hi", json_mode=True))
+        assert len(calls) == 1
