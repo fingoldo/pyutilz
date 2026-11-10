@@ -1275,3 +1275,110 @@ class TestDefaultContextWindow:
 
     def test_the_default_constant_is_128k(self):
         assert OpenAICompatibleProvider._default_context_window == 128_000
+
+
+class _FakeStreamResponse:
+    def __init__(self, status: int = 200, lines: tuple = (), headers: dict | None = None):
+        self.status_code = status
+        self.headers = headers or {}
+        self._lines = lines
+        self.aread_calls = 0
+
+    async def aread(self):
+        self.aread_calls += 1
+        return b""
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+
+class _FakeStreamContext:
+    def __init__(self, owner, response):
+        self._owner = owner
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeStreamingHttpClient:
+    def __init__(self, response):
+        self._response = response
+        self.calls: list = []
+
+    def stream(self, method, url, json=None, timeout=None):
+        self.calls.append((method, url, json, timeout))
+        return _FakeStreamContext(self, self._response)
+
+
+async def _drain_stream(provider, body=None, state=None):
+    box = {"streamed_text": []}
+    attempt_state = state if state is not None else {}
+    async for _ in provider._stream_attempt(body or {"model": "test-model"}, attempt_state, box):
+        pass
+    return attempt_state
+
+
+class TestStreamAttemptOpensAndChecks:
+    """The request posted, the error-body read on a failed status, the special-status hook, and the response-started flag (openai_compat 344-354)."""
+
+    def test_the_stream_posts_to_the_chat_completions_path(self):
+        import asyncio
+
+        response = _FakeStreamResponse(lines=())
+        provider = _make_provider()
+        client = _FakeStreamingHttpClient(response)
+        provider._client = client
+        asyncio.run(_drain_stream(provider, body={"model": "test-model", "stream": True}))
+        method, url, json_body, _timeout = client.calls[0]
+        assert (method, url) == ("POST", "/chat/completions")
+        assert json_body == {"model": "test-model", "stream": True}
+
+    def test_an_error_status_body_is_read_before_it_is_judged(self, monkeypatch):
+        import asyncio
+
+        response = _FakeStreamResponse(status=400, lines=())
+        provider = _make_provider()
+        provider._client = _FakeStreamingHttpClient(response)
+        monkeypatch.setattr(provider, "_handle_special_status", lambda resp: None)
+        with pytest.raises(RuntimeError):
+            asyncio.run(_drain_stream(provider))
+        assert response.aread_calls == 1
+
+    def test_a_status_just_below_four_hundred_is_not_read_as_an_error(self, monkeypatch):
+        import asyncio
+
+        response = _FakeStreamResponse(status=399, lines=())
+        provider = _make_provider()
+        provider._client = _FakeStreamingHttpClient(response)
+        monkeypatch.setattr(provider, "_handle_special_status", lambda resp: None)
+        asyncio.run(_drain_stream(provider))
+        assert response.aread_calls == 0
+
+    def test_the_special_status_hook_is_consulted_on_every_response(self, monkeypatch):
+        import asyncio
+
+        response = _FakeStreamResponse(status=200, lines=())
+        provider = _make_provider()
+        provider._client = _FakeStreamingHttpClient(response)
+        seen: list = []
+        monkeypatch.setattr(provider, "_handle_special_status", lambda resp: seen.append(resp.status_code))
+        asyncio.run(_drain_stream(provider))
+        assert seen == [200]
+
+    def test_a_started_response_sets_the_response_started_flag(self):
+        import asyncio
+
+        response = _FakeStreamResponse(status=200, lines=())
+        provider = _make_provider()
+        provider._client = _FakeStreamingHttpClient(response)
+        state = asyncio.run(_drain_stream(provider))
+        assert state["response_started"] is True
