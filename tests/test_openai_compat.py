@@ -2161,3 +2161,149 @@ class TestPostAndUnwrap:
         monkeypatch.setattr(provider, "_track_provider_specific_response", lambda data: tracked.append(data))
         asyncio.run(provider._post_and_unwrap({"model": "test-model"}))
         assert tracked == [self._PAYLOAD]
+
+
+class _StatusBodyResponse:
+    def __init__(self, status: int, payload=None, text: str = ""):
+        self.status_code = status
+        self._payload = payload
+        self.text = text
+        self.headers: dict = {}
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not json")
+        return self._payload
+
+
+class TestParameterRejectionAndUnwrap:
+    """The rejection detail, the one repair with its warning, the final error text, the message extras and the completion's finish handling (openai_compat 803-869)."""
+
+    def _recording_repair(self, monkeypatch, provider, repaired=None):
+        seen: list = []
+
+        def hook(body, status, detail):
+            seen.append((body, status, detail))
+            return repaired
+
+        monkeypatch.setattr(provider, "_body_after_rejected_request", hook)
+        return seen
+
+    def test_the_rejection_detail_is_the_error_message(self, monkeypatch):
+        provider = _make_provider()
+        seen = self._recording_repair(monkeypatch, provider)
+        with pytest.raises(LLMProviderError):
+            provider._repaired_body_or_raise(_StatusBodyResponse(400, {"error": {"message": "bad param"}}), {"m": 1}, True)
+        assert seen == [({"m": 1}, 400, "bad param")]
+
+    def test_without_an_error_message_the_raw_text_is_the_detail(self, monkeypatch):
+        provider = _make_provider()
+        seen = self._recording_repair(monkeypatch, provider)
+        with pytest.raises(LLMProviderError):
+            provider._repaired_body_or_raise(_StatusBodyResponse(400, {"other": 1}, text="raw body"), {}, True)
+        assert seen[0][2] == "raw body"
+
+    def test_a_non_json_body_gives_the_raw_text_as_detail(self, monkeypatch):
+        provider = _make_provider()
+        seen = self._recording_repair(monkeypatch, provider)
+        with pytest.raises(LLMProviderError):
+            provider._repaired_body_or_raise(_StatusBodyResponse(400, None, text="<html>"), {}, True)
+        assert seen[0][2] == "<html>"
+
+    def test_a_repair_is_returned_and_warned_once(self, monkeypatch, caplog):
+        import pyutilz.llm.openai_compat as oc_module
+
+        provider = _make_provider()
+        logged: list = []
+
+        class _WarnLog:
+            def warning(self, fmt, *args, **kwargs):
+                logged.append((fmt, args))
+
+        monkeypatch.setattr(oc_module, "logger", _WarnLog())
+        self._recording_repair(monkeypatch, provider, repaired={"fixed": True})
+        out = provider._repaired_body_or_raise(_StatusBodyResponse(400, {"error": {"message": "bad param"}}), {}, False)
+        assert out == {"fixed": True}
+        fmt, args = logged[0]
+        assert fmt == "%s/%s rejected a request parameter (HTTP %s) - re-issuing once with it adjusted: %s"
+        assert args == ("TestProvider", "test-model", 400, "bad param")
+
+    def test_a_long_detail_is_cut_to_one_hundred_and_sixty_characters_in_the_warning(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        provider = _make_provider()
+        logged: list = []
+
+        class _WarnLog:
+            def warning(self, fmt, *args, **kwargs):
+                logged.append(args)
+
+        monkeypatch.setattr(oc_module, "logger", _WarnLog())
+        self._recording_repair(monkeypatch, provider, repaired={"fixed": True})
+        provider._repaired_body_or_raise(_StatusBodyResponse(400, {"error": {"message": "x" * 300}}), {}, False)
+        assert len(logged[0][-1]) == 160
+
+    def test_a_repaired_body_that_is_refused_again_raises_with_the_exact_message(self, monkeypatch):
+        provider = _make_provider()
+        self._recording_repair(monkeypatch, provider, repaired={"fixed": True})
+        with pytest.raises(LLMProviderError) as info:
+            provider._repaired_body_or_raise(_StatusBodyResponse(400, {"error": {"message": "bad param"}}), {}, True)
+        assert str(info.value) == "TestProvider API error 400: bad param"
+
+    def test_message_extras_keep_tool_calls_and_citations_only_when_they_are_lists(self):
+        provider = _make_provider()
+        provider._capture_message_extras({"tool_calls": [{"id": "t"}], "citations": ["u"]})
+        assert provider.last_tool_calls == [{"id": "t"}]
+        assert provider.last_citations == ["u"]
+        provider._capture_message_extras({"tool_calls": "no", "citations": "no"})
+        assert provider.last_tool_calls == []
+        assert provider.last_citations == []
+
+    def test_message_reasoning_is_folded_into_the_collected_fragments(self):
+        import pyutilz.llm.openai_compat as oc_module
+
+        message = {"reasoning_content": "think"}
+        provider = _make_provider()
+        before = provider._reasoning_fragments
+        provider._capture_message_extras(message)
+        assert provider._reasoning_fragments == oc_module._reasoning.collect(before, oc_module._reasoning.from_message(message))
+
+    def test_a_completion_without_choices_is_refused(self):
+        provider = _make_provider()
+        with pytest.raises(LLMProviderError) as info:
+            provider._unwrap_completion({"choices": []}, _StatusBodyResponse(200))
+        assert str(info.value) == "TestProvider returned no choices"
+
+    def test_a_missing_finish_reason_is_unknown(self):
+        provider = _make_provider()
+        provider._unwrap_completion({"choices": [{"message": {"content": "ok"}}]}, _StatusBodyResponse(200))
+        assert provider._last_finish_reason == "unknown"
+
+    def test_an_error_finish_carries_the_partial_text_and_the_exact_message(self):
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        provider = _make_provider()
+        data = {"choices": [{"message": {"content": "cut"}, "finish_reason": "error"}]}
+        with pytest.raises(LLMStreamInterruptedError) as info:
+            provider._unwrap_completion(data, _StatusBodyResponse(200))
+        assert str(info.value) == "TestProvider response ended with finish_reason='error'"
+        assert info.value.partial_text == "cut"
+
+    def test_a_length_finish_is_refused_with_the_exact_truncation_message(self):
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        provider = _make_provider()
+        data = {"choices": [{"message": {"content": "part"}, "finish_reason": "length"}]}
+        with pytest.raises(LLMTruncationError) as info:
+            provider._unwrap_completion(data, _StatusBodyResponse(200))
+        assert str(info.value) == "TestProvider response truncated by max_tokens (finish_reason='length')"
+
+    def test_a_completion_returns_its_content(self):
+        provider = _make_provider()
+        assert provider._unwrap_completion({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}, _StatusBodyResponse(200)) == "ok"
+
+    def test_a_tool_call_only_reply_returns_the_empty_string(self):
+        provider = _make_provider()
+        data = {"choices": [{"message": {"tool_calls": [{"id": "t"}]}, "finish_reason": "tool_calls"}]}
+        assert provider._unwrap_completion(data, _StatusBodyResponse(200)) == ""
+        assert provider.last_tool_calls == [{"id": "t"}]
