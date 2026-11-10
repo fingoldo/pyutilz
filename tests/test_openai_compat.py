@@ -1016,3 +1016,90 @@ class TestFreshProviderDefaults:
 
         assert inspect.signature(OpenAICompatibleProvider.__init__).parameters["max_concurrent"].default == 10
         assert _make_provider()._max_concurrent == 10
+
+
+class _WarnLog:
+    def __init__(self):
+        self.calls: list = []
+
+    def warning(self, msg, *args, **kwargs):
+        self.calls.append((msg, args))
+
+
+class TestRateLimitCaptureAndAccountLimits:
+    """Header capture, the no-snapshot refusal and the summary of a snapshot (openai_compat 216-242)."""
+
+    def test_unparseable_headers_are_warned_and_no_snapshot_is_made(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        log = _WarnLog()
+        monkeypatch.setattr(oc_module, "logger", log)
+        provider = _make_provider()
+        provider._capture_rate_limit_headers(5)
+        assert len(log.calls) == 1
+        msg, args = log.calls[0]
+        assert msg == "Could not parse response headers for rate-limit capture: %s"
+        assert isinstance(args[0], TypeError)
+        assert provider.last_rate_limits == {}
+
+    def test_only_rate_limit_headers_are_kept_and_lowercased(self):
+        provider = _make_provider()
+        provider._capture_rate_limit_headers({"X-RateLimit-Limit-Requests": "5", "RateLimit-Remaining": "3", "Content-Type": "json"})
+        assert provider.last_rate_limits == {"x-ratelimit-limit-requests": "5", "ratelimit-remaining": "3"}
+
+    def test_a_response_without_rate_limit_headers_clears_the_snapshot(self):
+        provider = _make_provider()
+        provider._capture_rate_limit_headers({"X-RateLimit-Remaining": "3"})
+        provider._capture_rate_limit_headers({"Content-Type": "json"})
+        assert provider.last_rate_limits == {}
+
+    def test_no_snapshot_refuses_with_the_exact_message(self):
+        import asyncio
+
+        provider = _make_provider()
+        with pytest.raises(NotImplementedError) as info:
+            asyncio.run(provider.check_account_limits())
+        assert str(info.value) == (
+            "TestProvider: no rate-limit snapshot captured yet -- issue at least one generate() call first; the headers are "
+            "captured automatically. Standalone introspection endpoints are not exposed for regular keys on this provider."
+        )
+
+    def test_a_snapshot_is_summarised_under_short_keys_with_the_raw_copy(self):
+        import asyncio
+
+        provider = _make_provider()
+        provider.last_rate_limits = {"x-ratelimit-limit-requests": "5", "ratelimit-remaining": "3"}
+        out = asyncio.run(provider.check_account_limits())
+        assert out == {"raw": {"x-ratelimit-limit-requests": "5", "ratelimit-remaining": "3"}, "limit_requests": "5", "remaining": "3"}
+
+
+class TestPricingResolution:
+    """The base pricing record and the cached-input and cache-write fallbacks (openai_compat 256-273)."""
+
+    def test_the_default_pricing_record_carries_input_then_output(self):
+        from pyutilz.llm._pricing import Pricing
+
+        priced = _make_provider()._resolve_pricing("test-model")
+        assert priced == Pricing(input=1.0, output=2.0)
+
+    def test_an_absent_cache_hit_rate_falls_back_to_the_input_rate(self):
+        provider = _make_provider()
+        assert OpenAICompatibleProvider._cache_hit_cost_per_1m(provider, "test-model") == 1.0
+
+    def test_a_published_cache_hit_rate_is_used(self, monkeypatch):
+        from pyutilz.llm._pricing import Pricing
+
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "_resolve_pricing", lambda model: Pricing(input=1.0, output=2.0, cache_hit=0.25))
+        assert OpenAICompatibleProvider._cache_hit_cost_per_1m(provider, "test-model") == 0.25
+
+    def test_an_absent_cache_write_rate_falls_back_to_the_input_rate(self):
+        provider = _make_provider()
+        assert OpenAICompatibleProvider._cache_write_cost_per_1m(provider, "test-model") == 1.0
+
+    def test_a_published_cache_write_rate_is_used(self, monkeypatch):
+        from pyutilz.llm._pricing import Pricing
+
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "_resolve_pricing", lambda model: Pricing(input=1.0, output=2.0, cache_write=1.25))
+        assert OpenAICompatibleProvider._cache_write_cost_per_1m(provider, "test-model") == 1.25
