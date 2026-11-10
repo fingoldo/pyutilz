@@ -1672,3 +1672,101 @@ class TestGenerateStreamRetryAndFinish:
         assert temperature == 0.7
         assert max_tokens == 0
         assert (json_mode, thinking, json_schema, images) == (False, None, None, None)
+
+
+class TestApplyStreamChunkAndUsage:
+    """Per-chunk finish reason, citations, tool-call fragments, reasoning and progress, and the usage fields (openai_compat 537-600)."""
+
+    def test_a_finish_reason_is_recorded_when_present(self):
+        provider = _make_provider()
+        provider._apply_stream_chunk({"choices": [{"delta": {}, "finish_reason": "stop"}]}, {})
+        assert provider._last_finish_reason == "stop"
+
+    def test_a_chunk_without_a_finish_reason_leaves_it_alone(self):
+        provider = _make_provider()
+        provider._apply_stream_chunk({"choices": [{"delta": {"content": "x"}}]}, {})
+        assert provider._last_finish_reason is None
+
+    def test_citations_on_the_chunk_are_kept_as_a_list(self):
+        provider = _make_provider()
+        provider._apply_stream_chunk({"choices": [{"delta": {}}], "citations": ["https://a.example"]}, {})
+        assert provider.last_citations == ["https://a.example"]
+
+    def test_tool_call_deltas_are_accumulated_into_the_fragments(self):
+        import pyutilz.llm.openai_compat as oc_module
+
+        delta = {"tool_calls": [{"index": 0, "id": "c1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]}
+        expected: dict = {}
+        oc_module._accumulate_stream_tool_calls(expected, delta["tool_calls"])
+        provider = _make_provider()
+        fragments: dict = {}
+        provider._apply_stream_chunk({"choices": [{"delta": delta}]}, fragments)
+        assert fragments == expected
+        assert fragments != {}
+
+    def test_reasoning_is_folded_into_the_collected_fragments(self):
+        import pyutilz.llm.openai_compat as oc_module
+
+        delta = {"reasoning_content": "think"}
+        piece = oc_module._reasoning.from_payload(delta)
+        provider = _make_provider()
+        before = provider._reasoning_fragments
+        provider._apply_stream_chunk({"choices": [{"delta": delta}]}, {})
+        assert provider._reasoning_fragments == oc_module._reasoning.collect(before, piece)
+
+    def test_progress_is_noted_with_the_reasoning_piece_then_the_content(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        noted: list = []
+        monkeypatch.setattr(oc_module, "note_stream_progress", lambda piece, content: noted.append((piece, content)))
+        provider = _make_provider()
+        delta = {"reasoning_content": "think", "content": "answer"}
+        piece = oc_module._reasoning.from_payload(delta)
+        provider._apply_stream_chunk({"choices": [{"delta": delta}]}, {})
+        assert noted == [(piece, "answer")]
+
+    def test_only_a_string_content_is_returned(self):
+        provider = _make_provider()
+        assert provider._apply_stream_chunk({"choices": [{"delta": {"content": "hi"}}]}, {}) == "hi"
+        assert provider._apply_stream_chunk({"choices": [{"delta": {"content": 5}}]}, {}) is None
+
+    def test_an_empty_usage_block_adds_nothing(self):
+        provider = _make_provider()
+        provider._record_usage({})
+        assert (provider.total_prompt_tokens, provider.total_completion_tokens) == (0, 0)
+        assert (provider.total_cache_hit_tokens, provider.total_reasoning_tokens, provider.total_cache_write_tokens) == (0, 0, 0)
+
+    def test_the_prompt_and_completion_counts_are_summed(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens": 11, "completion_tokens": 4})
+        assert (provider.total_prompt_tokens, provider.total_completion_tokens) == (11, 4)
+
+    def test_a_null_count_is_taken_as_zero(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens": None, "completion_tokens": None})
+        assert (provider.total_prompt_tokens, provider.total_completion_tokens) == (0, 0)
+
+    def test_the_legacy_cache_hit_key_is_read(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_cache_hit_tokens": 5})
+        assert provider.total_cache_hit_tokens == 5
+
+    def test_the_nested_cached_tokens_key_is_read_when_the_legacy_one_is_absent(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens_details": {"cached_tokens": 7}})
+        assert provider.total_cache_hit_tokens == 7
+
+    def test_reasoning_tokens_are_read_from_the_completion_details(self):
+        provider = _make_provider()
+        provider._record_usage({"completion_tokens_details": {"reasoning_tokens": 3}})
+        assert provider.total_reasoning_tokens == 3
+
+    def test_cache_writes_are_read_from_the_chat_details(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens_details": {"cache_write_tokens": 4}})
+        assert provider.total_cache_write_tokens == 4
+
+    def test_cache_writes_are_read_from_the_responses_details_when_the_chat_one_is_absent(self):
+        provider = _make_provider()
+        provider._record_usage({"input_tokens_details": {"cache_write_tokens": 6}})
+        assert provider.total_cache_write_tokens == 6
