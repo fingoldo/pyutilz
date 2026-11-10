@@ -1283,6 +1283,7 @@ class _FakeStreamResponse:
         self.headers = headers or {}
         self._lines = lines
         self.aread_calls = 0
+        self.request = httpx.Request("POST", "https://test.example.com/chat/completions")
 
     async def aread(self):
         self.aread_calls += 1
@@ -1382,3 +1383,109 @@ class TestStreamAttemptOpensAndChecks:
         provider._client = _FakeStreamingHttpClient(response)
         state = asyncio.run(_drain_stream(provider))
         assert state["response_started"] is True
+
+
+def _content_line(text: str) -> str:
+    return "data: " + jsonlib.dumps({"choices": [{"delta": {"content": text}}]})
+
+
+async def _drain_with_box(provider, lines: tuple):
+    provider._client = _FakeStreamingHttpClient(_FakeStreamResponse(status=200, lines=lines))
+    box: dict = {"streamed_text": []}
+    attempt_state: dict = {}
+    yielded = [piece async for piece in provider._stream_attempt({"model": "test-model"}, attempt_state, box)]
+    return yielded, box, attempt_state
+
+
+class TestStreamLineHandling:
+    """Which SSE lines are read, where the stream stops, what is skipped, and what metadata is kept (openai_compat 366-407)."""
+
+    def test_only_data_lines_are_read(self):
+        import asyncio
+
+        lines = ('hello{"choices":[{"delta":{"content":"BAD"}}]}', "", ": keepalive", _content_line("good"), "data: [DONE]")
+        yielded, _box, _state = asyncio.run(_drain_with_box(_make_provider(), lines))
+        assert yielded == ["good"]
+
+    def test_the_done_marker_ends_the_stream(self):
+        import asyncio
+
+        lines = (_content_line("one"), "data: [DONE]", _content_line("two"))
+        yielded, _box, _state = asyncio.run(_drain_with_box(_make_provider(), lines))
+        assert yielded == ["one"]
+
+    def test_an_unparseable_data_line_is_skipped_and_reading_goes_on(self):
+        import asyncio
+
+        lines = ("data: {not json", _content_line("after"), "data: [DONE]")
+        yielded, _box, _state = asyncio.run(_drain_with_box(_make_provider(), lines))
+        assert yielded == ["after"]
+
+    def test_each_yielded_piece_is_also_kept_in_the_streamed_text(self):
+        import asyncio
+
+        lines = (_content_line("a"), _content_line("b"), "data: [DONE]")
+        _yielded, box, _state = asyncio.run(_drain_with_box(_make_provider(), lines))
+        assert box["streamed_text"] == ["a", "b"]
+
+    def test_the_stream_started_flag_is_set_for_a_stream_with_chunks(self):
+        import asyncio
+
+        _yielded, _box, state = asyncio.run(_drain_with_box(_make_provider(), (_content_line("a"), "data: [DONE]")))
+        assert state["response_started"] is True
+
+    def test_the_first_chunk_is_tracked_as_it_arrives(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        tracked: list = []
+        monkeypatch.setattr(provider, "_track_provider_specific_response", lambda chunk: tracked.append(chunk))
+        lines = (_content_line("a"), _content_line("b"), "data: [DONE]")
+        asyncio.run(_drain_with_box(provider, lines))
+        assert tracked[0] == {"choices": [{"delta": {"content": "a"}}]}
+
+    def test_the_first_flag_is_true_only_for_the_first_chunk(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        firsts: list = []
+        monkeypatch.setattr(provider, "_note_stream_chunk", lambda state, chunk, first: firsts.append(first))
+        asyncio.run(_drain_with_box(provider, (_content_line("a"), _content_line("b"), "data: [DONE]")))
+        assert firsts == [True, False]
+
+    def test_the_metadata_finish_receives_the_first_and_last_chunks(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        seen: list = []
+        monkeypatch.setattr(provider, "_finish_stream_metadata", lambda first, last, fragments: seen.append((first, last, fragments)))
+        asyncio.run(_drain_with_box(provider, (_content_line("a"), _content_line("b"), "data: [DONE]")))
+        first, last, fragments = seen[0]
+        assert first == {"choices": [{"delta": {"content": "a"}}]}
+        assert last == {"choices": [{"delta": {"content": "b"}}]}
+        assert fragments == {}
+
+    def test_every_chunk_seen_is_tracked_at_the_end_when_no_metadata_arrives(self, monkeypatch):
+        provider = _make_provider()
+        tracked: list = []
+        monkeypatch.setattr(provider, "_track_provider_specific_response", lambda chunk: tracked.append(chunk))
+        provider._finish_stream_metadata({"id": "x"}, {"id": "y"}, {})
+        assert tracked == [{"id": "x"}, {"id": "y"}]
+
+    def test_an_empty_stream_tracks_no_metadata(self, monkeypatch):
+        provider = _make_provider()
+        tracked: list = []
+        monkeypatch.setattr(provider, "_track_provider_specific_response", lambda chunk: tracked.append(chunk))
+        provider._finish_stream_metadata(None, None, {})
+        assert tracked == []
+
+    def test_assembled_tool_calls_are_kept_in_index_order(self):
+        provider = _make_provider()
+        provider._finish_stream_metadata(None, None, {1: {"name": "second"}, 0: {"name": "first"}})
+        assert provider.last_tool_calls == [{"name": "first"}, {"name": "second"}]
+
+    def test_no_tool_calls_leaves_the_last_tool_calls_alone(self):
+        provider = _make_provider()
+        provider.last_tool_calls = [{"name": "kept"}]
+        provider._finish_stream_metadata(None, None, {})
+        assert provider.last_tool_calls == [{"name": "kept"}]
