@@ -1234,3 +1234,56 @@ class TestRedisTrimAnnouncementAndDebuggedForwarding:
 
         assert add(1, b=5) == 6
         assert add(1) == 3
+
+
+class TestInitLoggingUnrotatedAndDefaults:
+    """The fallback file mode with rotation off, the stderr-reconfigure debug line, the thousands separator, and signature defaults (logginglib 86-459)."""
+
+    @pytest.fixture
+    def captured(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        calls: list = []
+        monkeypatch.setattr(ll.logging, "basicConfig", lambda **kw: calls.append(kw))
+        monkeypatch.setattr(ll, "logger", logging.getLogger("initial_probe"))
+        yield calls
+        for c in calls:
+            for h in c.get("handlers", []):
+                if isinstance(h, logging.FileHandler):
+                    h.close()
+
+    def test_the_fallback_file_mode_is_append_without_rotation(self, captured, monkeypatch):
+        monkeypatch.setitem(__import__("sys").modules, "concurrent_log_handler", None)
+        ll.init_logging(forced_filename="svc.py", maxBytes=0)
+        handler = next(h for h in captured[0]["handlers"] if isinstance(h, logging.FileHandler))
+        assert handler.mode == "a"
+
+    def test_a_stderr_that_refuses_reconfigure_is_reported_at_debug(self, captured, monkeypatch, caplog):
+        monkeypatch.setitem(__import__("sys").modules, "concurrent_log_handler", None)
+
+        class _Stderr:
+            def reconfigure(self, **kwargs):
+                raise ValueError("nope")
+
+        monkeypatch.setattr(ll.sys, "stderr", _Stderr())
+        with caplog.at_level(logging.DEBUG, logger="pyutilz.dev.logginglib"):
+            ll.init_logging(forced_filename="svc.py", log_to_file=False)
+        assert "Could not set errors='replace' on sys.stderr: nope" in caplog.text
+
+    def test_the_default_format_is_pinned(self):
+        import inspect
+
+        assert inspect.signature(ll.init_logging).parameters["format"].default == (
+            "%(asctime)s - %(levelname)s - %(processName)s[%(process)d]-%(threadName)s[%(thread)d]"
+            "-%(filename)s-%(name)s - %(funcName)s-line:%(lineno)d - %(message)s"
+        )
+
+    def test_logged_includes_the_node_ip_by_default(self):
+        import inspect
+
+        assert inspect.signature(ll.logged).parameters["include_node_ip"].default is True
+
+    def test_a_large_load_count_uses_underscore_thousands_separators(self, monkeypatch):
+        log_ = _InfoLog()
+        monkeypatch.setattr(ll, "logger", log_)
+        ll.log_loaded_rows(list(range(1234)), "users", results_log={"results": {}}, lang="en", verbose=True)
+        assert log_.info_calls == [("%s%s", "Loaded 1_234 rows from users DB table.", "")]
