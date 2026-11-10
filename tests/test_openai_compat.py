@@ -1770,3 +1770,114 @@ class TestApplyStreamChunkAndUsage:
         provider = _make_provider()
         provider._record_usage({"input_tokens_details": {"cache_write_tokens": 6}})
         assert provider.total_cache_write_tokens == 6
+
+
+class TestUsageAccumulationAndLog:
+    """Per-call sums, the cache-write total, the surcharge arguments, the cumulative log line (openai_compat 604-635)."""
+
+    def test_the_per_call_usage_sums_every_post_within_one_call(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens": 10, "completion_tokens": 2, "prompt_tokens_details": {"cached_tokens": 3}})
+        provider._record_usage({"prompt_tokens": 5, "completion_tokens": 1, "prompt_tokens_details": {"cached_tokens": 2}})
+        assert provider._last_usage["input_tokens"] == 15
+        assert provider._last_usage["cached_tokens"] == 5
+
+    def test_the_per_call_usage_has_the_four_documented_keys(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens": 7, "completion_tokens": 4, "completion_tokens_details": {"reasoning_tokens": 3}, "prompt_cache_hit_tokens": 2})
+        assert set(provider._last_usage) == {"input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens"}
+        assert provider._last_usage["input_tokens"] == 7
+        assert provider._last_usage["reasoning_tokens"] == 3
+        assert provider._last_usage["cached_tokens"] == 2
+        assert provider._last_usage["output_tokens"] == provider._compute_billed_output(4, 3)
+
+    def test_the_last_post_reasoning_count_is_that_of_the_latest_post_alone(self):
+        provider = _make_provider()
+        provider._record_usage({"completion_tokens_details": {"reasoning_tokens": 9}})
+        provider._record_usage({"completion_tokens_details": {"reasoning_tokens": 2}})
+        assert provider._last_post_reasoning_tokens == 2
+
+    def test_the_cache_write_total_accumulates_across_calls(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens_details": {"cache_write_tokens": 4}})
+        provider._record_usage({"prompt_tokens_details": {"cache_write_tokens": 6}})
+        assert provider.total_cache_write_tokens == 10
+
+    def test_the_call_count_advances_once_per_usage_record(self):
+        provider = _make_provider()
+        provider._record_usage({})
+        provider._record_usage({})
+        assert provider._call_count == 2
+
+    def test_the_provider_specific_usage_hook_sees_the_usage_block(self, monkeypatch):
+        provider = _make_provider()
+        seen: list = []
+        monkeypatch.setattr(provider, "_track_provider_specific_usage", lambda usage: seen.append(usage))
+        provider._record_usage({"prompt_tokens": 1})
+        assert seen == [{"prompt_tokens": 1}]
+
+    def test_the_surcharge_receives_its_four_values_in_order(self, monkeypatch):
+        provider = _make_provider()
+        calls: list = []
+        monkeypatch.setattr(provider, "_add_long_context_surcharge", lambda *args: calls.append(args))
+        provider._record_usage(
+            {
+                "prompt_tokens": 11,
+                "completion_tokens": 4,
+                "completion_tokens_details": {"reasoning_tokens": 3},
+                "prompt_cache_hit_tokens": 5,
+                "prompt_tokens_details": {"cache_write_tokens": 2},
+            }
+        )
+        assert calls == [(11, provider._compute_billed_output(4, 3), 5, 2)]
+
+    def test_the_log_line_names_the_reasoning_tokens_when_there_are_some(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        logged: list = []
+
+        class _InfoLog:
+            def info(self, fmt, *args):
+                logged.append((fmt, args))
+
+        monkeypatch.setattr(oc_module, "logger", _InfoLog())
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens": 11, "completion_tokens": 4, "completion_tokens_details": {"reasoning_tokens": 3}, "prompt_cache_hit_tokens": 5})
+        fmt, args = logged[0]
+        assert fmt == "%s [call #%d] %d prompt (%d cached) + %d completion%s | cumulative: %d in, %d out"
+        assert args == ("TestProvider", 1, 11, 5, 4, " (3 reasoning)", 11, 4)
+
+    def test_the_log_line_has_no_reasoning_suffix_without_reasoning(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        logged: list = []
+
+        class _InfoLog:
+            def info(self, fmt, *args):
+                logged.append((fmt, args))
+
+        monkeypatch.setattr(oc_module, "logger", _InfoLog())
+        provider = _make_provider()
+        provider._record_usage({"prompt_tokens": 2, "completion_tokens": 1})
+        assert logged[0][1][5] == ""
+
+    def test_the_default_generation_temperature_is_point_seven(self):
+        import inspect
+
+        assert inspect.signature(OpenAICompatibleProvider.generate).parameters["temperature"].default == 0.7
+
+
+class TestCumulativeCacheAndReasoningTotals:
+    """The session totals for cache hits and reasoning tokens add up across calls (openai_compat 604-605)."""
+
+    def test_the_cache_hit_total_adds_up_across_calls(self):
+        provider = _make_provider()
+        provider._record_usage({"prompt_cache_hit_tokens": 3})
+        provider._record_usage({"prompt_cache_hit_tokens": 2})
+        assert provider.total_cache_hit_tokens == 5
+
+    def test_the_reasoning_total_adds_up_across_calls(self):
+        provider = _make_provider()
+        provider._record_usage({"completion_tokens_details": {"reasoning_tokens": 4}})
+        provider._record_usage({"completion_tokens_details": {"reasoning_tokens": 6}})
+        assert provider.total_reasoning_tokens == 10
