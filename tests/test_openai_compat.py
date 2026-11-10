@@ -1163,3 +1163,105 @@ class TestStreamRetryBackoff:
 
         response = httpx.Response(429, headers={"retry-after": "2"})
         assert self._wait(4, _StatusError(response)) == 16.0
+
+
+class _FakeHttpClient:
+    def __init__(self, closed: bool = False, fail: bool = False):
+        self.is_closed = closed
+        self.fail = fail
+        self.close_calls = 0
+
+    async def aclose(self):
+        if self.fail:
+            raise RuntimeError("socket already gone")
+        self.close_calls += 1
+        self.is_closed = True
+
+
+class TestCloseClosesEveryPerLoopClient:
+    """_close closes the current client and each live per-loop copy, skipping closed ones, and logs a failed copy (openai_compat 325-335)."""
+
+    @pytest.fixture
+    def recorder(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        class _DebugLog:
+            def __init__(self):
+                self.calls: list = []
+
+            def debug(self, msg, *args, **kwargs):
+                self.calls.append((msg, args))
+
+        log = _DebugLog()
+        monkeypatch.setattr(oc_module, "logger", log)
+        return log
+
+    def _with_clones(self, provider, *clones):
+        import asyncio
+        import weakref
+
+        loops = [asyncio.new_event_loop() for _ in clones]
+        per_loop = weakref.WeakKeyDictionary()
+        for loop, client in zip(loops, clones):
+            per_loop[loop] = client
+        provider.__dict__["__client_per_loop"] = per_loop
+        return loops
+
+    def test_an_open_current_client_is_closed(self):
+        import asyncio
+
+        provider = _make_provider()
+        current = _FakeHttpClient()
+        provider._client = current
+        asyncio.run(provider._close())
+        assert current.close_calls == 1
+
+    def test_a_closed_current_client_is_not_closed_again(self):
+        import asyncio
+
+        provider = _make_provider()
+        current = _FakeHttpClient(closed=True)
+        provider._client = current
+        asyncio.run(provider._close())
+        assert current.close_calls == 0
+
+    def test_an_open_per_loop_copy_is_closed_too(self):
+        import asyncio
+
+        provider = _make_provider()
+        provider._client = _FakeHttpClient()
+        copy = _FakeHttpClient()
+        loops = self._with_clones(provider, copy)
+        asyncio.run(provider._close())
+        assert copy.close_calls == 1
+        for loop in loops:
+            loop.close()
+
+    def test_a_closed_per_loop_copy_is_skipped(self):
+        import asyncio
+
+        provider = _make_provider()
+        provider._client = _FakeHttpClient()
+        copy = _FakeHttpClient(closed=True)
+        loops = self._with_clones(provider, copy)
+        asyncio.run(provider._close())
+        assert copy.close_calls == 0
+        for loop in loops:
+            loop.close()
+
+    def test_a_failing_copy_is_logged_and_the_rest_are_still_closed(self, recorder):
+        import asyncio
+
+        provider = _make_provider()
+        provider._client = _FakeHttpClient()
+        broken = _FakeHttpClient(fail=True)
+        healthy = _FakeHttpClient()
+        loops = self._with_clones(provider, broken, healthy)
+        asyncio.run(provider._close())
+        assert healthy.close_calls == 1
+        assert len(recorder.calls) == 1
+        msg, args = recorder.calls[0]
+        assert msg == "Closing a per-loop HTTP client failed: %s"
+        assert isinstance(args[0], RuntimeError)
+        for loop in loops:
+            loop.close()
