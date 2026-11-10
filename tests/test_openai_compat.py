@@ -1881,3 +1881,33 @@ class TestCumulativeCacheAndReasoningTotals:
         provider._record_usage({"completion_tokens_details": {"reasoning_tokens": 4}})
         provider._record_usage({"completion_tokens_details": {"reasoning_tokens": 6}})
         assert provider.total_reasoning_tokens == 10
+
+
+class _PreparationOrderError(Exception):
+    pass
+
+
+class TestGenerateStartsWithAFreshCallStateAndPrepares:
+    """generate resets the per-call state, then awaits the provider preparation before it builds a request (openai_compat 692-695)."""
+
+    def test_the_per_call_state_is_reset_and_then_the_provider_is_prepared(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        order: list = []
+        monkeypatch.setattr(provider, "_reset_per_call_state", lambda: order.append("reset"))
+
+        async def prepare():
+            order.append("prepare")
+            raise _PreparationOrderError()
+
+        monkeypatch.setattr(provider, "_async_prepare", prepare)
+
+        class _TouchedClient:
+            def __getattr__(self, name):
+                raise _PreparationOrderError("the request was built before the provider was prepared")
+
+        provider._client = _TouchedClient()
+        with pytest.raises(_PreparationOrderError):
+            asyncio.run(provider.generate("hi"))
+        assert order == ["reset", "prepare"]
