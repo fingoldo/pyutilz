@@ -2307,3 +2307,136 @@ class TestParameterRejectionAndUnwrap:
         data = {"choices": [{"message": {"tool_calls": [{"id": "t"}]}, "finish_reason": "tool_calls"}]}
         assert provider._unwrap_completion(data, _StatusBodyResponse(200)) == ""
         assert provider.last_tool_calls == [{"id": "t"}]
+
+
+class _Tier:
+    def __init__(self, applies: bool):
+        self._applies = applies
+
+    def applies(self, tokens):
+        return self._applies
+
+
+class TestCostAccountingAndGenerateJsonDefaults:
+    """Per-call cost, the session cost summary, the long-context surcharge tally, and generate_json's defaults (openai_compat 871-961)."""
+
+    def test_the_estimate_is_the_input_rate_plus_the_output_rate_per_million_tokens(self):
+        provider = _make_provider()
+        assert provider.estimate_cost(1_000_000, 1_000_000) == pytest.approx(3.0, abs=1e-12)
+        assert provider.estimate_cost(500_000, 250_000) == pytest.approx(0.5 + 0.5, abs=1e-12)
+
+    def test_the_session_summary_separates_cache_misses_and_prices_each_part(self):
+        provider = _make_provider()
+        provider.total_prompt_tokens = 1_000_000
+        provider.total_cache_hit_tokens = 100_000
+        provider.total_completion_tokens = 500_000
+        summary = provider.get_session_cost()
+        assert summary["cache_miss_tokens"] == 900_000
+        assert summary["input_cost_usd"] == pytest.approx(0.9 + 0.01, abs=1e-12)
+        assert summary["output_cost_usd"] == pytest.approx(1.0, abs=1e-12)
+        assert summary["total_cost_usd"] == pytest.approx(0.9 + 0.01 + 1.0, abs=1e-12)
+
+    def test_the_session_summary_has_the_documented_keys(self):
+        summary = _make_provider().get_session_cost()
+        assert set(summary) == {
+            "calls",
+            "prompt_tokens",
+            "cache_hit_tokens",
+            "cache_miss_tokens",
+            "completion_tokens",
+            "reasoning_tokens",
+            "input_cost_usd",
+            "output_cost_usd",
+            "long_context_surcharge_usd",
+            "long_context_calls",
+            "total_cost_usd",
+        }
+
+    def test_cache_writes_are_taken_out_of_the_miss_count_and_priced_at_their_own_rate(self, monkeypatch):
+        provider = _make_provider()
+        provider.total_prompt_tokens = 1_000_000
+        provider.total_cache_hit_tokens = 100_000
+        provider.total_cache_write_tokens = 200_000
+        monkeypatch.setattr(provider, "_cache_write_cost_per_1m", lambda model: 1.25)
+        summary = provider.get_session_cost()
+        assert summary["cache_miss_tokens"] == 700_000
+        assert summary["input_cost_usd"] == pytest.approx(0.7 + 0.01 + 0.25, abs=1e-12)
+
+    def test_a_surcharge_is_tallied_for_each_call_that_crosses_the_tier(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "_long_context_tier", lambda model: _Tier(True))
+        seen: list = []
+
+        def fake_surcharge(pricing, prompt, billed, cache_hit, cache_write):
+            seen.append((prompt, billed, cache_hit, cache_write))
+            return (1.0, 2.0)
+
+        monkeypatch.setattr(oc_module, "long_context_surcharge", fake_surcharge)
+        provider._add_long_context_surcharge(300_000, 40, 5, 6)
+        provider._add_long_context_surcharge(300_000, 40, 5, 6)
+        assert seen == [(300_000, 40, 5, 6), (300_000, 40, 5, 6)]
+        assert provider._long_context_surcharge_usd == pytest.approx(6.0)
+        assert provider._long_context_calls == 2
+
+    def test_a_call_below_the_tier_adds_no_surcharge(self, monkeypatch):
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "_long_context_tier", lambda model: _Tier(False))
+        provider._add_long_context_surcharge(10, 1, 0, 0)
+        assert provider._long_context_calls == 0
+        assert provider._long_context_surcharge_usd == 0.0
+
+    def test_a_model_without_a_tier_adds_no_surcharge(self):
+        provider = _make_provider()
+        provider._add_long_context_surcharge(10**9, 1, 0, 0)
+        assert provider._long_context_calls == 0
+
+    def test_generate_json_defaults_are_point_three_and_no_token_ceiling(self):
+        import inspect
+
+        params = inspect.signature(OpenAICompatibleProvider.generate_json).parameters
+        assert params["temperature"].default == 0.3
+        assert params["max_tokens"].default == 0
+        assert params["force_json_mode"].default is True
+
+    def test_generate_json_without_thinking_omits_the_field(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        calls: list = []
+
+        async def spy(prompt, system, temperature, max_tokens, **kwargs):
+            calls.append((prompt, system, temperature, max_tokens, kwargs))
+            return {}
+
+        monkeypatch.setattr(provider, "_generate_json_via", spy)
+        asyncio.run(provider.generate_json("p"))
+        prompt, system, temperature, max_tokens, kwargs = calls[0]
+        assert (prompt, system, temperature, max_tokens) == ("p", None, 0.3, 0)
+        assert kwargs["json_mode"] is True
+        assert "thinking" not in kwargs
+
+    def test_generate_json_with_thinking_passes_it_through(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        calls: list = []
+
+        async def spy(prompt, system, temperature, max_tokens, **kwargs):
+            calls.append(kwargs)
+            return {}
+
+        monkeypatch.setattr(provider, "_generate_json_via", spy)
+        asyncio.run(provider.generate_json("p", thinking="low", force_json_mode=False))
+        assert calls[0]["thinking"] == "low"
+        assert calls[0]["json_mode"] is False
+
+
+class TestInputRateIsMultipliedNotDivided:
+    """The input rate scales the token count: the test provider's rate of 1.0 cannot tell multiplication from division (openai_compat 931)."""
+
+    def test_the_input_cost_is_the_rate_times_the_millions_of_tokens(self, monkeypatch):
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "_input_cost_per_1m", lambda model: 2.5)
+        assert provider.estimate_cost(2_000_000, 0) == pytest.approx(5.0, abs=1e-12)
