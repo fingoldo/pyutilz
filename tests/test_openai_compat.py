@@ -1489,3 +1489,186 @@ class TestStreamLineHandling:
         provider.last_tool_calls = [{"name": "kept"}]
         provider._finish_stream_metadata(None, None, {})
         assert provider.last_tool_calls == [{"name": "kept"}]
+
+
+class _StatusStreamResponse(_FakeStreamResponse):
+    """A failed stream open: raise_for_status raises the httpx error the retry predicate classifies."""
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://test.example.com/chat/completions")
+            raise httpx.HTTPStatusError("boom", request=request, response=httpx.Response(self.status_code, request=request))
+
+
+class _SequenceStreamClient:
+    """Hands out one scripted response per stream() call; the last one repeats."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls: list = []
+
+    def stream(self, method, url, json=None, timeout=None):
+        self.calls.append(json)
+        response = self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
+        return _FakeStreamContext(self, response)
+
+
+def _no_sleep(monkeypatch, provider, wait: float = 7.0):
+    import asyncio
+
+    waits: list = []
+
+    async def fake_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(provider, "_stream_retry_backoff", lambda exc, attempt: wait)
+    return waits
+
+
+async def _collect_stream(provider, **kwargs):
+    return [piece async for piece in provider.generate_stream("hi", **kwargs)]
+
+
+class TestGenerateStreamRetryAndFinish:
+    """Retry of a failed stream open, the once-only body repair, the attempt cap, the finish-reason refusals and the request defaults (openai_compat 428-536)."""
+
+    def test_a_retryable_failure_before_any_token_is_retried_after_the_backoff(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        waits = _no_sleep(monkeypatch, provider, wait=7.0)
+        ok = _FakeStreamResponse(status=200, lines=(_content_line("hello"), "data: [DONE]"))
+        provider._client = _SequenceStreamClient([_StatusStreamResponse(status=503), ok])
+        assert asyncio.run(_collect_stream(provider)) == ["hello"]
+        assert waits == [7.0]
+
+    def test_a_non_retryable_failure_is_raised_without_a_retry(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        waits = _no_sleep(monkeypatch, provider)
+        provider._client = _SequenceStreamClient([_StatusStreamResponse(status=401)])
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(_collect_stream(provider))
+        assert waits == []
+
+    def test_the_attempt_cap_stops_retrying(self, monkeypatch):
+        import asyncio
+
+        import pyutilz.llm.openai_compat as oc_module
+
+        provider = _make_provider()
+        waits = _no_sleep(monkeypatch, provider)
+        monkeypatch.setattr(oc_module, "MAX_RETRY_ATTEMPTS", 2)
+        client = _SequenceStreamClient([_StatusStreamResponse(status=503)])
+        provider._client = client
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(_collect_stream(provider))
+        assert len(client.calls) == 2
+        assert waits == [7.0]
+
+    def test_a_zero_cap_retries_without_limit(self, monkeypatch):
+        import asyncio
+
+        import pyutilz.llm.openai_compat as oc_module
+
+        provider = _make_provider()
+        _no_sleep(monkeypatch, provider)
+        monkeypatch.setattr(oc_module, "MAX_RETRY_ATTEMPTS", 0)
+        ok = _FakeStreamResponse(status=200, lines=(_content_line("late"), "data: [DONE]"))
+        provider._client = _SequenceStreamClient([_StatusStreamResponse(status=503), _StatusStreamResponse(status=503), ok])
+        assert asyncio.run(_collect_stream(provider)) == ["late"]
+
+    def test_an_aborted_attempt_is_noted_once_per_failure(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        _no_sleep(monkeypatch, provider)
+        noted: list = []
+        monkeypatch.setattr(provider, "_note_aborted_stream_attempt", lambda attempt, state, exc: noted.append(attempt))
+        ok = _FakeStreamResponse(status=200, lines=(_content_line("x"), "data: [DONE]"))
+        provider._client = _SequenceStreamClient([_StatusStreamResponse(status=503), ok])
+        asyncio.run(_collect_stream(provider))
+        assert noted == [1]
+
+    def test_a_request_is_repaired_once_and_the_repair_is_logged(self, monkeypatch, caplog):
+        import asyncio
+
+        provider = _make_provider()
+        _no_sleep(monkeypatch, provider)
+
+        async def fake_repair(exc, body):
+            return {**body, "reasoning": {"enabled": True}}
+
+        monkeypatch.setattr(provider, "_repaired_stream_body", fake_repair)
+        ok = _FakeStreamResponse(status=200, lines=(_content_line("fixed"), "data: [DONE]"))
+        client = _SequenceStreamClient([_StatusStreamResponse(status=400), ok])
+        provider._client = client
+        with caplog.at_level(logging.WARNING, logger="pyutilz.llm.openai_compat"):
+            assert asyncio.run(_collect_stream(provider)) == ["fixed"]
+        assert client.calls[1]["reasoning"] == {"enabled": True}
+        assert any("rejected a streaming request parameter - re-opening the stream once with it adjusted." in r.getMessage() for r in caplog.records)
+
+    def test_a_second_refusal_after_the_repair_is_raised(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        _no_sleep(monkeypatch, provider)
+        repairs: list = []
+
+        async def fake_repair(exc, body):
+            repairs.append(1)
+            return {**body, "reasoning": {"enabled": True}}
+
+        monkeypatch.setattr(provider, "_repaired_stream_body", fake_repair)
+        provider._client = _SequenceStreamClient([_StatusStreamResponse(status=400)])
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(_collect_stream(provider))
+        assert repairs == [1]
+
+    def test_a_length_finish_is_refused_with_the_truncation_message(self):
+        import asyncio
+
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        provider = _make_provider()
+        line = "data: " + jsonlib.dumps({"choices": [{"delta": {"content": "ab"}, "finish_reason": "length"}]})
+        provider._client = _SequenceStreamClient([_FakeStreamResponse(status=200, lines=(line, "data: [DONE]"))])
+        with pytest.raises(LLMTruncationError) as info:
+            asyncio.run(_collect_stream(provider))
+        assert str(info.value) == "TestProvider streamed response truncated by max_tokens (finish_reason='length')"
+        assert info.value.partial_text == "ab"
+
+    def test_an_error_finish_is_refused_with_the_interrupted_message(self):
+        import asyncio
+
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        provider = _make_provider()
+        line = "data: " + jsonlib.dumps({"choices": [{"delta": {"content": "cut"}, "finish_reason": "error"}]})
+        provider._client = _SequenceStreamClient([_FakeStreamResponse(status=200, lines=(line, "data: [DONE]"))])
+        with pytest.raises(LLMStreamInterruptedError) as info:
+            asyncio.run(_collect_stream(provider))
+        assert str(info.value) == "TestProvider stream ended with finish_reason='error'"
+        assert info.value.partial_text == "cut"
+
+    def test_the_stream_request_defaults_are_pinned(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        seen: list = []
+        original = provider._build_stream_body
+
+        def spy(*args, **kwargs):
+            seen.append(args)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(provider, "_build_stream_body", spy)
+        ok = _FakeStreamResponse(status=200, lines=("data: [DONE]",))
+        provider._client = _SequenceStreamClient([ok])
+        asyncio.run(_collect_stream(provider))
+        _prompt, _system, temperature, max_tokens, json_mode, thinking, json_schema, images = seen[0]
+        assert temperature == 0.7
+        assert max_tokens == 0
+        assert (json_mode, thinking, json_schema, images) == (False, None, None, None)
