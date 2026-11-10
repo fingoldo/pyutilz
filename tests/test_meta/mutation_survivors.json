@@ -253,5 +253,6 @@
   "src/pyutilz/dev/logginglib.py::3260869acdef::operator: < becomes <=": "At an exact zero duration, setting the value to int 0 instead of keeping float 0.0 compares equal and the function returns float(duration) either way, so the <= form changes no output.",
   "src/pyutilz/dev/logginglib.py::bcbea3c7a8b4::constant: emptied a string": "An empty default language fails the supported-language check and is replaced by the literal en, so the value is en either way.",
   "src/pyutilz/dev/logginglib.py::0004e2b78aa7::constant: emptied a string": "The supported-language check falls back by assigning the literal en, so dropping en from the tuple still ends at en for every input.",
-  "src/pyutilz/dev/logginglib.py::cba9281eba8f::constant: emptied a string": "The substituted default is immediately followed by ensure_dict_elem for the results key, which recreates it, so the key name in the default changes nothing."
+  "src/pyutilz/dev/logginglib.py::cba9281eba8f::constant: emptied a string": "The substituted default is immediately followed by ensure_dict_elem for the results key, which recreates it, so the key name in the default changes nothing.",
+  "src/pyutilz/dev/logginglib.py::684ef270364d::logic: break becomes continue": "equivalent: the first loop of _record_session only assigns results_log[\"session\"] = {} before the second loop fills it. Repeating that assignment (continue instead of break) leaves the same final value, so no observable behaviour changes."
 }
