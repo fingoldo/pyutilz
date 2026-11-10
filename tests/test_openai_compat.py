@@ -2028,3 +2028,75 @@ class TestGenerateBudgetArgumentsAndReissue:
         with pytest.raises(LLMTruncationError):
             asyncio.run(provider.generate("hi", json_mode=True))
         assert len(calls) == 1
+
+
+class TestGenerateEmptyCompletion:
+    """An empty completion under response_format is re-issued once, and an empty answer that stays empty is refused with its diagnosis (openai_compat 742-753)."""
+
+    def _posts(self, monkeypatch, provider, answers):
+        bodies: list = []
+        queue = list(answers)
+
+        async def post(body, repairing=False):
+            bodies.append(body)
+            return queue.pop(0)
+
+        monkeypatch.setattr(provider, "fit_max_tokens_to_context", lambda budget, prompt, system: budget)
+        monkeypatch.setattr(provider, "_post_and_unwrap", post)
+        return bodies
+
+    def test_an_empty_answer_under_response_format_is_re_issued_and_the_second_answer_is_returned(self, monkeypatch):
+        import asyncio
+
+        import pyutilz.llm.openai_compat as oc_module
+
+        provider = _make_provider()
+        recorder = _WarnRecorder()
+        monkeypatch.setattr(oc_module, "logger", recorder)
+        bodies = self._posts(monkeypatch, provider, [None, "second"])
+
+        async def run_and_read_flag():
+            answer = await provider.generate("hi", json_mode=True)
+            return answer, provider.last_json_mode_fallback
+
+        answer, flag = asyncio.run(run_and_read_flag())
+        assert answer == "second"
+        assert flag is True
+        assert "response_format" in bodies[0] and "response_format" not in bodies[1]
+        fmt, args = recorder.warnings[0]
+        assert fmt == "%s/%s returned an empty completion under response_format - re-issuing once without it"
+        assert args == ("TestProvider", "test-model")
+
+    def test_an_answer_that_stays_empty_is_refused_with_its_diagnosis(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        self._posts(monkeypatch, provider, [None, None])
+        with pytest.raises(LLMProviderError) as info:
+            asyncio.run(provider.generate("hi", json_mode=True))
+        assert str(info.value) == "TestProvider/test-model returned an empty completion (finish_reason=None, reasoning_tokens=0, response_format=dropped)"
+
+    def test_an_empty_answer_without_a_response_format_is_refused_as_not_sent(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        self._posts(monkeypatch, provider, [None])
+        with pytest.raises(LLMProviderError) as info:
+            asyncio.run(provider.generate("hi", json_mode=False))
+        assert str(info.value) == "TestProvider/test-model returned an empty completion (finish_reason=None, reasoning_tokens=0, response_format=not sent)"
+
+    def test_a_refusal_names_the_finish_reason_the_stream_reported(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        provider._last_finish_reason = "stop"
+
+        async def post(body, repairing=False):
+            provider._last_finish_reason = "stop"
+            return None
+
+        monkeypatch.setattr(provider, "fit_max_tokens_to_context", lambda budget, prompt, system: budget)
+        monkeypatch.setattr(provider, "_post_and_unwrap", post)
+        with pytest.raises(LLMProviderError) as info:
+            asyncio.run(provider.generate("hi", json_mode=False))
+        assert "(finish_reason='stop', " in str(info.value)
