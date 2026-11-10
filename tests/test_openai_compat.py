@@ -974,3 +974,45 @@ class TestAnErrorChunkInAStreamIsNotSkipped:
                 received.append(chunk)
 
         assert received == ["partial answer text"]
+
+
+class TestFreshProviderDefaults:
+    """Per-call and cumulative state start at their documented zero values (openai_compat 84-135)."""
+
+    def test_the_per_call_usage_starts_with_zero_token_counts(self):
+        provider = _make_provider()
+        assert provider._last_usage == {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+
+    def test_the_per_call_post_reasoning_count_starts_at_zero(self):
+        assert _make_provider()._last_post_reasoning_tokens == 0
+
+    def test_the_per_call_finish_reason_starts_as_none(self):
+        assert _make_provider()._last_finish_reason is None
+
+    def test_the_per_call_collections_start_empty(self):
+        provider = _make_provider()
+        assert provider.last_tool_calls == []
+        assert provider.last_citations == []
+        assert provider.last_rate_limits == {}
+
+    def test_the_per_call_flags_start_false(self):
+        provider = _make_provider()
+        assert provider._last_json_schema_applied is False
+        assert provider.last_json_mode_fallback is False
+
+    def test_the_cumulative_counters_start_at_zero(self):
+        provider = _make_provider()
+        assert (provider.total_prompt_tokens, provider.total_completion_tokens) == (0, 0)
+        assert (provider.total_cache_hit_tokens, provider.total_reasoning_tokens, provider.total_cache_write_tokens) == (0, 0, 0)
+        assert provider._call_count == 0
+
+    def test_the_long_context_tally_starts_at_zero(self):
+        provider = _make_provider()
+        assert provider._long_context_surcharge_usd == 0.0
+        assert provider._long_context_calls == 0
+
+    def test_the_concurrency_limit_defaults_to_ten(self):
+        import inspect
+
+        assert inspect.signature(OpenAICompatibleProvider.__init__).parameters["max_concurrent"].default == 10
+        assert _make_provider()._max_concurrent == 10
