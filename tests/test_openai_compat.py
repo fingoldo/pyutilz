@@ -2100,3 +2100,64 @@ class TestGenerateEmptyCompletion:
         with pytest.raises(LLMProviderError) as info:
             asyncio.run(provider.generate("hi", json_mode=False))
         assert "(finish_reason='stop', " in str(info.value)
+
+
+class _JsonPostResponse:
+    def __init__(self, payload: dict, status: int = 200):
+        self._payload = payload
+        self.status_code = status
+        self.headers: dict = {}
+        self.text = jsonlib.dumps(payload)
+        self.content = self.text.encode()
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+class _PostClient:
+    def __init__(self, response):
+        self._response = response
+        self.calls: list = []
+
+    async def post(self, url, json=None, timeout=None):
+        self.calls.append((url, json))
+        return self._response
+
+
+class TestPostAndUnwrap:
+    """One POST to the chat path, the special-status hook, the response-metadata hook, and the unwrapped completion (openai_compat 773-790)."""
+
+    _PAYLOAD = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+
+    def test_the_post_goes_to_the_chat_completions_path_with_the_body(self):
+        import asyncio
+
+        provider = _make_provider()
+        client = _PostClient(_JsonPostResponse(self._PAYLOAD))
+        provider._client = client
+        assert asyncio.run(provider._post_and_unwrap({"model": "test-model"})) == "ok"
+        assert client.calls[0][0] == "/chat/completions"
+        assert client.calls[0][1] == {"model": "test-model"}
+
+    def test_the_special_status_hook_sees_every_response(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        provider._client = _PostClient(_JsonPostResponse(self._PAYLOAD))
+        seen: list = []
+        monkeypatch.setattr(provider, "_handle_special_status", lambda resp: seen.append(resp.status_code))
+        asyncio.run(provider._post_and_unwrap({"model": "test-model"}))
+        assert seen == [200]
+
+    def test_the_response_metadata_hook_gets_the_envelope(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        provider._client = _PostClient(_JsonPostResponse(self._PAYLOAD))
+        tracked: list = []
+        monkeypatch.setattr(provider, "_track_provider_specific_response", lambda data: tracked.append(data))
+        asyncio.run(provider._post_and_unwrap({"model": "test-model"}))
+        assert tracked == [self._PAYLOAD]
