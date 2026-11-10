@@ -1103,3 +1103,63 @@ class TestPricingResolution:
         provider = _make_provider()
         monkeypatch.setattr(provider, "_resolve_pricing", lambda model: Pricing(input=1.0, output=2.0, cache_write=1.25))
         assert OpenAICompatibleProvider._cache_write_cost_per_1m(provider, "test-model") == 1.25
+
+
+class _StatusError(Exception):
+    def __init__(self, response=None):
+        super().__init__("status")
+        self.response = response
+
+
+class TestStreamRetryBackoff:
+    """The exponential floor, the jitter draw and the Retry-After floor of a stream re-open (openai_compat 415)."""
+
+    @pytest.fixture
+    def no_jitter(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        draws: list = []
+
+        def fake_uniform(low, high):
+            draws.append((low, high))
+            return 0.0
+
+        monkeypatch.setattr(oc_module.random, "uniform", fake_uniform)
+        return draws
+
+    def _wait(self, attempt, exc=None):
+        return OpenAICompatibleProvider._stream_retry_backoff(exc if exc is not None else _StatusError(), attempt)
+
+    def test_the_first_attempt_waits_the_five_second_floor(self, no_jitter):
+        assert self._wait(1) == 5.0
+
+    def test_the_wait_doubles_per_attempt_once_above_the_floor(self, no_jitter):
+        assert self._wait(4) == 16.0
+        assert self._wait(8) == 256.0
+
+    def test_the_wait_is_capped_at_three_hundred_seconds(self, no_jitter):
+        assert self._wait(9) == 300.0
+        assert self._wait(20) == 300.0
+
+    def test_the_jitter_is_drawn_from_zero_to_five_and_added(self, no_jitter, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        monkeypatch.setattr(oc_module.random, "uniform", lambda low, high: 2.5)
+        assert self._wait(4) == 18.5
+        assert no_jitter == []
+
+    def test_the_jitter_range_is_zero_to_five(self, no_jitter):
+        self._wait(1)
+        assert no_jitter == [(0, 5)]
+
+    def test_a_longer_retry_after_hint_lengthens_the_wait(self, no_jitter):
+        import httpx
+
+        response = httpx.Response(429, headers={"retry-after": "120"})
+        assert self._wait(1, _StatusError(response)) == 120.0
+
+    def test_a_shorter_retry_after_hint_never_shortens_the_wait(self, no_jitter):
+        import httpx
+
+        response = httpx.Response(429, headers={"retry-after": "2"})
+        assert self._wait(4, _StatusError(response)) == 16.0
