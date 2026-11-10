@@ -1265,3 +1265,13 @@ class TestCloseClosesEveryPerLoopClient:
         assert isinstance(args[0], RuntimeError)
         for loop in loops:
             loop.close()
+
+
+class TestDefaultContextWindow:
+    """A model missing from the per-model map gets the 128 000-token default (openai_compat 305)."""
+
+    def test_an_unlisted_model_gets_the_128k_default(self):
+        assert _make_provider("unlisted-model").context_window == 128_000
+
+    def test_the_default_constant_is_128k(self):
+        assert OpenAICompatibleProvider._default_context_window == 128_000
