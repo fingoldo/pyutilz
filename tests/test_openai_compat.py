@@ -2440,3 +2440,34 @@ class TestInputRateIsMultipliedNotDivided:
         provider = _make_provider()
         monkeypatch.setattr(provider, "_input_cost_per_1m", lambda model: 2.5)
         assert provider.estimate_cost(2_000_000, 0) == pytest.approx(5.0, abs=1e-12)
+
+
+class TestClientSetupAndAccumulatedUsage:
+    """The client headers and timeout, the per-call metadata names, the per-call sums across calls, and a data line with no space (openai_compat 103-122, 618-619, 368)."""
+
+    def test_the_metadata_names_include_the_json_schema_and_fallback_flags(self):
+        names = _make_provider()._PERCALL_METADATA_ATTRS
+        assert "_last_json_schema_applied" in names
+        assert "last_json_mode_fallback" in names
+
+    def test_the_client_sends_the_bearer_key_and_the_json_content_type(self):
+        provider = _make_provider()
+        assert provider._client.headers["Authorization"] == "Bearer test-key"
+        assert provider._client.headers["Content-Type"] == "application/json"
+
+    def test_the_connect_timeout_is_ten_seconds(self):
+        assert _make_provider()._client.timeout.connect == 10.0
+
+    def test_the_per_call_output_and_reasoning_sums_add_up_across_posts(self):
+        provider = _make_provider()
+        provider._record_usage({"completion_tokens": 4, "completion_tokens_details": {"reasoning_tokens": 3}})
+        provider._record_usage({"completion_tokens": 6, "completion_tokens_details": {"reasoning_tokens": 5}})
+        assert provider._last_usage["reasoning_tokens"] == 8
+        assert provider._last_usage["output_tokens"] == provider._compute_billed_output(4, 3) + provider._compute_billed_output(6, 5)
+
+    def test_a_data_line_with_no_space_after_the_colon_is_read(self):
+        import asyncio
+
+        lines = (_content_line("tight").replace("data: ", "data:"), "data: [DONE]")
+        yielded, _box, _state = asyncio.run(_drain_with_box(_make_provider(), lines))
+        assert yielded == ["tight"]
