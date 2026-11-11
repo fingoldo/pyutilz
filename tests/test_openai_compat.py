@@ -2761,3 +2761,19 @@ class TestSummaryAndTieredEstimateArithmetic:
         pricing, input_tokens, output_tokens = calls[0]
         assert (input_tokens, output_tokens) == (300_000, 40)
         assert pricing == provider._resolve_pricing("test-model")
+
+
+class TestSurchargeTallyWithoutItsAttributes:
+    """Adding a surcharge to a provider without the tally attributes starts both tallies from zero (openai_compat 924)."""
+
+    def test_the_first_surcharge_on_a_provider_without_the_tally_counts_one_call(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "_long_context_tier", lambda model: _Tier(True))
+        monkeypatch.setattr(oc_module, "long_context_surcharge", lambda pricing, prompt, billed, cache_hit, cache_write: (1.0, 0.5))
+        del provider._long_context_surcharge_usd
+        del provider._long_context_calls
+        provider._add_long_context_surcharge(300_000, 10, 0, 0)
+        assert provider._long_context_calls == 1
+        assert provider._long_context_surcharge_usd == pytest.approx(1.5)
