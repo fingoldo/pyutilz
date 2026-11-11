@@ -2727,3 +2727,37 @@ class TestSessionSummaryWithoutTheSurchargeTally:
         assert summary["long_context_surcharge_usd"] == 0.0
         assert summary["long_context_calls"] == 0
         assert summary["total_cost_usd"] == summary["input_cost_usd"] + summary["output_cost_usd"]
+
+
+class TestSummaryAndTieredEstimateArithmetic:
+    """The summary's tally and total with non-unit rates, and the tiered estimate's pricing call (openai_compat 930-961)."""
+
+    def test_the_summary_adds_a_nonzero_tally_and_prices_with_a_non_unit_rate(self, monkeypatch):
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "_input_cost_per_1m", lambda model: 2.5)
+        provider.total_prompt_tokens = 2_000_000
+        provider.total_cache_hit_tokens = 0
+        provider._long_context_surcharge_usd = 2.0
+        provider._long_context_calls = 3
+        summary = provider.get_session_cost()
+        assert summary["input_cost_usd"] == pytest.approx(5.0, abs=1e-12)
+        assert summary["long_context_surcharge_usd"] == 2.0
+        assert summary["long_context_calls"] == 3
+        assert summary["total_cost_usd"] == pytest.approx(5.0 + summary["output_cost_usd"] + 2.0, abs=1e-12)
+
+    def test_a_tiered_estimate_prices_the_input_and_output_in_order(self, monkeypatch):
+        import pyutilz.llm.openai_compat as oc_module
+
+        provider = _make_provider()
+        monkeypatch.setattr(provider, "_long_context_tier", lambda model: _Tier(True))
+        calls: list = []
+
+        def fake_price_call(pricing, input_tokens, output_tokens):
+            calls.append((pricing, input_tokens, output_tokens))
+            return (1.5, 0.25)
+
+        monkeypatch.setattr(oc_module, "price_call", fake_price_call)
+        assert provider.estimate_cost(300_000, 40) == pytest.approx(1.75)
+        pricing, input_tokens, output_tokens = calls[0]
+        assert (input_tokens, output_tokens) == (300_000, 40)
+        assert pricing == provider._resolve_pricing("test-model")
