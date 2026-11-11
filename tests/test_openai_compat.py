@@ -2471,3 +2471,65 @@ class TestClientSetupAndAccumulatedUsage:
         lines = (_content_line("tight").replace("data: ", "data:"), "data: [DONE]")
         yielded, _box, _state = asyncio.run(_drain_with_box(_make_provider(), lines))
         assert yielded == ["tight"]
+
+
+class _BareCloseClient:
+    """A client with aclose but no is_closed flag: it must still be closed."""
+
+    def __init__(self):
+        self.close_calls = 0
+
+    async def aclose(self):
+        self.close_calls += 1
+
+
+class TestCloseWithoutAnOpenFlag:
+    """A client that does not report is_closed counts as open for both the current client and the per-loop copies (openai_compat 325, 330)."""
+
+    def test_a_current_client_without_the_flag_is_closed(self):
+        import asyncio
+
+        provider = _make_provider()
+        current = _BareCloseClient()
+        provider._client = current
+        asyncio.run(provider._close())
+        assert current.close_calls == 1
+
+    def test_a_per_loop_copy_without_the_flag_is_closed(self):
+        import asyncio
+        import weakref
+
+        provider = _make_provider()
+        provider._client = _BareCloseClient()
+        copy = _BareCloseClient()
+        loop = asyncio.new_event_loop()
+        per_loop = weakref.WeakKeyDictionary()
+        per_loop[loop] = copy
+        provider.__dict__["__client_per_loop"] = per_loop
+        asyncio.run(provider._close())
+        loop.close()
+        assert copy.close_calls == 1
+
+
+class _DyingStreamResponse(_FakeStreamResponse):
+    """Yields its lines, then the connection drops before the stream finishes."""
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+        raise RuntimeError("connection dropped mid-answer")
+
+
+class TestFirstChunkTrackedBeforeAnInterruption:
+    """The first chunk's response metadata is recorded as it arrives, so a stream that dies mid-answer keeps its id (openai_compat 378)."""
+
+    def test_a_stream_that_dies_after_its_first_chunk_still_tracks_that_chunk(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        tracked: list = []
+        monkeypatch.setattr(provider, "_track_provider_specific_response", lambda chunk: tracked.append(chunk))
+        provider._client = _SequenceStreamClient([_DyingStreamResponse(status=200, lines=(_content_line("half"),))])
+        with pytest.raises(RuntimeError):
+            asyncio.run(_collect_stream(provider))
+        assert tracked == [{"choices": [{"delta": {"content": "half"}}]}]
