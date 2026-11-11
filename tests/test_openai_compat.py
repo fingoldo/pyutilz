@@ -2714,3 +2714,16 @@ class TestErrorLabelsTheRequest:
             provider._unwrap_completion({"error": {"code": 429, "message": "rate limited"}}, _RequestlessBodyResponse())
         assert info.value.request.method == "POST"
         assert info.value.request.url.path == "/chat/completions"
+
+
+class TestSessionSummaryWithoutTheSurchargeTally:
+    """A provider whose surcharge tally attributes are absent reports zero surcharge and zero tiered calls (openai_compat 923-924)."""
+
+    def test_a_missing_surcharge_tally_reads_as_zero(self):
+        provider = _make_provider()
+        del provider._long_context_surcharge_usd
+        del provider._long_context_calls
+        summary = provider.get_session_cost()
+        assert summary["long_context_surcharge_usd"] == 0.0
+        assert summary["long_context_calls"] == 0
+        assert summary["total_cost_usd"] == summary["input_cost_usd"] + summary["output_cost_usd"]
