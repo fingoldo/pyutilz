@@ -2533,3 +2533,99 @@ class TestFirstChunkTrackedBeforeAnInterruption:
         with pytest.raises(RuntimeError):
             asyncio.run(_collect_stream(provider))
         assert tracked == [{"choices": [{"delta": {"content": "half"}}]}]
+
+
+class _ExitRecordingContext(_FakeStreamContext):
+    def __init__(self, owner, response):
+        super().__init__(owner, response)
+        self.exited = False
+
+    async def __aexit__(self, *exc):
+        self.exited = True
+        return False
+
+
+class _ExitRecordingClient(_SequenceStreamClient):
+    def __init__(self, responses):
+        super().__init__(responses)
+        self.contexts: list = []
+
+    def stream(self, method, url, json=None, timeout=None):
+        self.calls.append(json)
+        response = self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
+        context = _ExitRecordingContext(self, response)
+        self.contexts.append(context)
+        return context
+
+
+class _MidStreamFailure(_FakeStreamResponse):
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+        raise httpx.HTTPStatusError(
+            "upstream fell over",
+            request=httpx.Request("POST", "https://test.example.com/chat/completions"),
+            response=httpx.Response(503, request=httpx.Request("POST", "https://test.example.com/chat/completions")),
+        )
+
+
+class TestGenerateStreamArgumentOrderAndTeardown:
+    """The stream body arguments in their order, the attempt state at the start, closing the stream on an early stop, and no retry after content has been yielded (openai_compat 463, 482, 490, 503)."""
+
+    def test_the_stream_body_gets_each_optional_argument_in_its_place(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        seen: list = []
+        original = provider._build_stream_body
+
+        def spy(*args, **kwargs):
+            seen.append(args)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(provider, "_build_stream_body", spy)
+        provider._client = _SequenceStreamClient([_FakeStreamResponse(status=200, lines=("data: [DONE]",))])
+        asyncio.run(_collect_stream(provider, json_mode=True, thinking="low", json_schema={"name": "x"}, images=["img"]))
+        _prompt, _system, _temp, _max, json_mode, thinking, json_schema, images = seen[0]
+        assert (json_mode, thinking, json_schema, images) == (True, "low", {"name": "x"}, ["img"])
+
+    def test_the_attempt_state_starts_with_no_response_and_no_generation_id(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        _no_sleep(monkeypatch, provider)
+        states: list = []
+        monkeypatch.setattr(provider, "_note_aborted_stream_attempt", lambda attempt, state, exc: states.append(dict(state)))
+        ok = _FakeStreamResponse(status=200, lines=(_content_line("x"), "data: [DONE]"))
+        provider._client = _SequenceStreamClient([_StatusStreamResponse(status=503), ok])
+        asyncio.run(_collect_stream(provider))
+        assert states[0] == {"generation_id": None, "response_started": False, "generated_chunks": 0}
+
+    def test_closing_the_stream_early_closes_the_upstream_response(self):
+        import asyncio
+
+        provider = _make_provider()
+        client = _ExitRecordingClient([_FakeStreamResponse(status=200, lines=(_content_line("a"), _content_line("b"), "data: [DONE]"))])
+        provider._client = client
+
+        async def take_one_then_close():
+            gen = provider.generate_stream("hi")
+            first = await gen.__anext__()
+            await gen.aclose()
+            return first, client.contexts[0].exited
+
+        first, exited_at_once = asyncio.run(take_one_then_close())
+        assert first == "a"
+        assert exited_at_once is True
+
+    def test_a_failure_after_content_is_raised_and_not_retried(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        waits = _no_sleep(monkeypatch, provider)
+        client = _SequenceStreamClient([_MidStreamFailure(status=200, lines=(_content_line("partial"),)), _FakeStreamResponse(status=200, lines=(_content_line("again"), "data: [DONE]"))])
+        provider._client = client
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(_collect_stream(provider))
+        assert waits == []
+        assert len(client.calls) == 1
