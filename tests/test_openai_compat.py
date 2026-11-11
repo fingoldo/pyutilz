@@ -2629,3 +2629,59 @@ class TestGenerateStreamArgumentOrderAndTeardown:
             asyncio.run(_collect_stream(provider))
         assert waits == []
         assert len(client.calls) == 1
+
+
+class TestStreamRetryWarningAndTruncationFinish:
+    """The retry warning's arguments and its cut-off reason, and the finish reason a truncation carries (openai_compat 522-524, 537)."""
+
+    def test_a_retried_stream_open_is_warned_with_attempt_error_and_wait(self, monkeypatch):
+        import asyncio
+
+        import pyutilz.llm.openai_compat as oc_module
+
+        recorder = _WarnRecorder()
+        monkeypatch.setattr(oc_module, "logger", recorder)
+        provider = _make_provider()
+        _no_sleep(monkeypatch, provider, wait=7.0)
+        ok = _FakeStreamResponse(status=200, lines=(_content_line("hi"), "data: [DONE]"))
+        provider._client = _SequenceStreamClient([_StatusStreamResponse(status=503), ok])
+        asyncio.run(_collect_stream(provider))
+        assert len(recorder.warnings) == 1
+        fmt, args = recorder.warnings[0]
+        assert fmt == "Streaming attempt %d failed (%s: %s), retrying in %.0fs..."
+        assert args[0] == 1
+        assert args[1] == "HTTPStatusError"
+        assert args[3] == 7.0
+
+    def test_the_reason_in_the_retry_warning_is_cut_to_two_hundred_characters(self, monkeypatch):
+        import asyncio
+
+        import pyutilz.llm.openai_compat as oc_module
+
+        recorder = _WarnRecorder()
+        monkeypatch.setattr(oc_module, "logger", recorder)
+        provider = _make_provider()
+        _no_sleep(monkeypatch, provider)
+        long_failure = _StatusStreamResponse(status=503)
+
+        def loud():
+            request = httpx.Request("POST", "https://test.example.com/chat/completions")
+            raise httpx.HTTPStatusError("y" * 250, request=request, response=httpx.Response(503, request=request))
+
+        long_failure.raise_for_status = loud
+        ok = _FakeStreamResponse(status=200, lines=(_content_line("hi"), "data: [DONE]"))
+        provider._client = _SequenceStreamClient([long_failure, ok])
+        asyncio.run(_collect_stream(provider))
+        assert len(recorder.warnings[0][1][2]) == 200
+
+    def test_a_length_truncation_carries_its_finish_reason(self):
+        import asyncio
+
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        provider = _make_provider()
+        line = "data: " + jsonlib.dumps({"choices": [{"delta": {"content": "ab"}, "finish_reason": "length"}]})
+        provider._client = _SequenceStreamClient([_FakeStreamResponse(status=200, lines=(line, "data: [DONE]"))])
+        with pytest.raises(LLMTruncationError) as info:
+            asyncio.run(_collect_stream(provider))
+        assert info.value.finish_reason == "length"
