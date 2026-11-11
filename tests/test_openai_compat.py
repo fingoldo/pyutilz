@@ -2685,3 +2685,32 @@ class TestStreamRetryWarningAndTruncationFinish:
         with pytest.raises(LLMTruncationError) as info:
             asyncio.run(_collect_stream(provider))
         assert info.value.finish_reason == "length"
+
+
+class _RequestedBodyResponse(_StatusBodyResponse):
+    def __init__(self, request):
+        super().__init__(200, {"error": {"code": 429, "message": "rate limited"}})
+        self.request = request
+
+
+class _RequestlessBodyResponse(_StatusBodyResponse):
+    def __init__(self):
+        super().__init__(200, {"error": {"code": 429, "message": "rate limited"}})
+
+
+class TestErrorLabelsTheRequest:
+    """An error carried by a 200 body is labelled with the request that produced it, or with the chat path when there is none (openai_compat 837-839)."""
+
+    def test_the_error_carries_the_response_request_when_there_is_one(self):
+        provider = _make_provider()
+        request = httpx.Request("POST", "https://custom.example/v1/chat")
+        with pytest.raises(httpx.HTTPStatusError) as info:
+            provider._unwrap_completion({"error": {"code": 429, "message": "rate limited"}}, _RequestedBodyResponse(request))
+        assert str(info.value.request.url) == "https://custom.example/v1/chat"
+
+    def test_without_a_response_request_the_chat_path_labels_the_error(self):
+        provider = _make_provider()
+        with pytest.raises(httpx.HTTPStatusError) as info:
+            provider._unwrap_completion({"error": {"code": 429, "message": "rate limited"}}, _RequestlessBodyResponse())
+        assert info.value.request.method == "POST"
+        assert info.value.request.url.path == "/chat/completions"
