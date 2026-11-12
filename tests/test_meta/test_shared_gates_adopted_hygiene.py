@@ -219,7 +219,10 @@ def test_vacuous_loop_baseline_is_empty():
 
 def test_installed_py_ci_shared_matches_the_ci_pin():
     """The version the workflows pin (the trailing `# vX.Y.Z`) is the version this interpreter runs."""
-    assert_installed_matches_ci_pin(REPO_ROOT, min_files=1)
+    # The pin is deliberately ahead of its label: 89c04e6 (the reason-per-entry complexity baseline, commit cfd5f14) is
+    # py-ci-shared 1.23.10 and no v1.23.10 tag exists yet, so the workflows still say v1.23.9. Tolerated until that
+    # release is tagged and the labels are moved to it.
+    assert_installed_matches_ci_pin(REPO_ROOT, min_files=1, tolerate_ahead=True)
 
 
 def test_ci_install_covers_the_imports_of_the_entry_points():
