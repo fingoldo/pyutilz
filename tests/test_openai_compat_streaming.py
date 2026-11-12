@@ -894,3 +894,79 @@ class TestGenerateBudgetArgumentsAndReissue:
         with pytest.raises(LLMTruncationError):
             asyncio.run(provider.generate("hi", json_mode=True))
         assert len(calls) == 1
+
+
+class TestGenerateStreamStartsWithAFreshCallState:
+    """generate_stream resets the per-call state, then awaits the provider preparation before building the request (openai_compat 457, 461)."""
+
+    def test_the_stream_resets_the_call_state_and_then_prepares_the_provider(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        order: list = []
+        monkeypatch.setattr(provider, "_reset_per_call_state", lambda: order.append("reset"))
+
+        async def prepare():
+            order.append("prepare")
+            raise _PreparationOrderError()
+
+        monkeypatch.setattr(provider, "_async_prepare", prepare)
+
+        class _TouchedClient:
+            def __getattr__(self, name):
+                raise _PreparationOrderError("the stream request was built before preparation")
+
+        provider._client = _TouchedClient()
+        with pytest.raises(_PreparationOrderError):
+            asyncio.run(_collect_stream(provider))
+        assert order == ["reset", "prepare"]
+
+
+class _AbortSignal(BaseException):
+    pass
+
+
+class _AbortingStreamResponse(_FakeStreamResponse):
+    async def aiter_lines(self):
+        raise _AbortSignal()
+        yield  # pragma: no cover - makes this an async generator
+
+
+class TestStreamFailureRouting:
+    """A non-Exception abort is never offered to the body repair, and the repair warning names the provider and model in order (openai_compat 503, 514)."""
+
+    def test_a_base_exception_abort_is_not_offered_to_the_body_repair(self, monkeypatch):
+        import asyncio
+
+        provider = _make_provider()
+        offered: list = []
+
+        async def repair(exc, body):
+            offered.append(exc)
+            return None
+
+        monkeypatch.setattr(provider, "_repaired_stream_body", repair)
+        provider._client = _SequenceStreamClient([_AbortingStreamResponse(status=200, lines=())])
+        with pytest.raises(_AbortSignal):
+            asyncio.run(_collect_stream(provider))
+        assert offered == []
+
+    def test_the_repair_warning_names_the_provider_then_the_model(self, monkeypatch):
+        import asyncio
+
+        import pyutilz.llm.openai_compat as oc_module
+
+        recorder = _WarnRecorder()
+        monkeypatch.setattr(oc_module, "logger", recorder)
+        provider = _make_provider()
+        _no_sleep(monkeypatch, provider)
+
+        async def repair(exc, body):
+            return {**body, "reasoning": {"enabled": True}}
+
+        monkeypatch.setattr(provider, "_repaired_stream_body", repair)
+        ok = _FakeStreamResponse(status=200, lines=(_content_line("fixed"), "data: [DONE]"))
+        provider._client = _SequenceStreamClient([_StatusStreamResponse(status=400), ok])
+        asyncio.run(_collect_stream(provider))
+        fmt, args = recorder.warnings[0]
+        assert args == ("TestProvider", "test-model")

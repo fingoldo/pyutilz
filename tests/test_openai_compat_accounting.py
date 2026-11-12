@@ -399,9 +399,12 @@ class TestClientSetupAndAccumulatedUsage:
     """The client headers and timeout, the per-call metadata names, the per-call sums across calls, and a data line with no space (openai_compat 103-122, 618-619, 368)."""
 
     def test_the_metadata_names_include_the_json_schema_and_fallback_flags(self):
+        from pyutilz.llm.base import LLMProvider
+
         names = _make_provider()._PERCALL_METADATA_ATTRS
-        assert "_last_json_schema_applied" in names
-        assert "last_json_mode_fallback" in names
+        base = LLMProvider._PERCALL_METADATA_ATTRS
+        assert names[: len(base)] == base
+        assert names[len(base) : len(base) + 2] == ("_last_json_schema_applied", "last_json_mode_fallback")
 
     def test_the_client_sends_the_bearer_key_and_the_json_content_type(self):
         provider = _make_provider()
@@ -666,3 +669,20 @@ class TestSurchargeTallyWithoutItsAttributes:
         provider._add_long_context_surcharge(300_000, 10, 0, 0)
         assert provider._long_context_calls == 1
         assert provider._long_context_surcharge_usd == pytest.approx(1.5)
+
+
+class TestCacheWriteAttributeAbsent:
+    """A provider without the cache-write tally reads it as zero, in both the usage record and the session summary (openai_compat 606, 939)."""
+
+    def test_a_missing_cache_write_tally_starts_from_zero_on_the_next_record(self):
+        provider = _make_provider()
+        del provider.total_cache_write_tokens
+        provider._record_usage({"prompt_tokens_details": {"cache_write_tokens": 4}})
+        assert provider.total_cache_write_tokens == 4
+
+    def test_a_missing_cache_write_tally_is_zero_in_the_session_summary(self):
+        provider = _make_provider()
+        provider.total_prompt_tokens = 1_000
+        provider.total_cache_hit_tokens = 100
+        del provider.total_cache_write_tokens
+        assert provider.get_session_cost()["cache_miss_tokens"] == 900
