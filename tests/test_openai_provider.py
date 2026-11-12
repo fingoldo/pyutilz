@@ -616,3 +616,26 @@ class TestUnknownModelWarningPerPath:
         provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
         provider._cache_hit_cost_per_1m("gpt-5.5-typo")
         assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("gpt-5.5-typo", "its family's"))]
+
+
+class TestRemainingRepairAndCachePaths:
+    """A reasoning-effort mention in the error text repairs only a body that carries the field; repairing defaults to False; a model with a cache-write rate keeps it, and the cache-hit path names gpt-5-mini for a model with no family (openai_provider 343, 359, 432, 471)."""
+
+    def test_an_error_that_names_reasoning_effort_repairs_nothing_when_the_body_lacks_it(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        assert provider._body_after_rejected_request({"model": "gpt-5.5"}, 400, "reasoning_effort is not supported") is None
+
+    def test_the_repairing_flag_defaults_to_false(self):
+        import inspect
+
+        assert inspect.signature(op.OpenAIProvider._post_and_unwrap).parameters["repairing"].default is False
+
+    def test_a_listed_row_with_a_cache_write_rate_keeps_it(self):
+        provider = op.OpenAIProvider(api_key="sk-test", model="gpt-6-astra")  # pragma: allowlist secret
+        assert provider._resolve_pricing("gpt-6-astra").cache_write == 12.50
+        assert op.OpenAIProvider(api_key="sk-test", model="gpt-5.5")._resolve_pricing("gpt-5.5").cache_write is None  # pragma: allowlist secret
+
+    def test_the_cache_hit_path_names_gpt_five_mini_for_a_model_with_no_family(self, price_log):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        assert provider._cache_hit_cost_per_1m("zzz-unknown") == op._CACHE_HIT_COST["gpt-5-mini"]
+        assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("zzz-unknown", "gpt-5-mini"))]
