@@ -543,3 +543,39 @@ class TestOutputAndContextLimits:
 
     def test_an_unlisted_model_gets_the_class_default_context_window(self):
         assert self._provider("zzz-unknown").context_window == op.OpenAIProvider._default_context_window == 128_000
+
+
+class TestOpenAIBodyShaping:
+    """The chat body renames max_tokens, drops temperature for reasoning models and for models that refused it, keeps it otherwise; the streaming builder passes its keywords through; an unlisted family's reasoning effort is low (openai_provider 343-377)."""
+
+    def _provider(self, model):
+        return op.OpenAIProvider(api_key="sk-test", model=model)  # pragma: allowlist secret
+
+    def test_max_tokens_is_renamed_to_max_completion_tokens(self):
+        out = self._provider("gpt-4.1")._openai_body({"max_tokens": 50, "model": "gpt-4.1"})
+        assert out == {"max_completion_tokens": 50, "model": "gpt-4.1"}
+
+    def test_temperature_is_kept_for_a_non_reasoning_model_that_accepts_it(self):
+        op._MODELS_REJECTING_TEMPERATURE.discard("gpt-4.1")
+        assert self._provider("gpt-4.1")._openai_body({"temperature": 0.7})["temperature"] == 0.7
+
+    def test_temperature_is_dropped_for_a_reasoning_model(self):
+        assert "temperature" not in self._provider("gpt-5.5")._openai_body({"temperature": 0.7})
+
+    def test_temperature_is_dropped_for_a_model_that_refused_it_before(self):
+        op._MODELS_REJECTING_TEMPERATURE.add("gpt-4.1")
+        try:
+            assert "temperature" not in self._provider("gpt-4.1")._openai_body({"temperature": 0.7})
+        finally:
+            op._MODELS_REJECTING_TEMPERATURE.discard("gpt-4.1")
+
+    def test_the_streaming_builder_passes_its_keywords_to_the_shared_builder(self):
+        out = self._provider("gpt-4.1")._build_stream_body(
+            prompt="hi", system=None, temperature=0.7, max_tokens=50, json_mode=False, thinking=None, json_schema=None, images=None
+        )
+        assert out["max_completion_tokens"] == 50
+        assert "max_tokens" not in out
+
+    def test_a_family_without_a_lowest_effort_row_asks_for_low(self, monkeypatch):
+        monkeypatch.setattr(op, "_LOWEST_EFFORT", {})
+        assert self._provider("gpt-5.5")._thinking_request_field(False) == {"reasoning_effort": "low"}
