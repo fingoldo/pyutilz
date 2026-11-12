@@ -361,3 +361,37 @@ class TestErrorBodiesAndEndpoint:
         assert op._SNAPSHOT_SUFFIX.search("gpt-5-20260115")
         assert op._SNAPSHOT_SUFFIX.search("gpt-5-latest")
         assert op._SNAPSHOT_SUFFIX.search("gpt-5-mini") is None
+
+
+class TestQuotaRefusalDetails:
+    """The quota refusal carries its status and error type and code, and an ordinary 429 is only logged (openai_provider 309-312)."""
+
+    def _resp(self, status, body):
+        import httpx
+
+        request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+        return httpx.Response(status, json=body, request=request)
+
+    def test_the_quota_refusal_details_carry_the_status_type_and_code(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        with pytest.raises(LLMProviderError) as info:
+            provider._handle_special_status(self._resp(429, {"error": {"type": "insufficient_quota", "code": "credit_balance_exhausted", "message": "m"}}))
+        assert info.value.details == {"status_code": 429, "type": "insufficient_quota", "code": "credit_balance_exhausted"}
+
+    def test_the_quota_refusal_details_hold_none_for_absent_fields(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        with pytest.raises(LLMProviderError) as info:
+            provider._handle_special_status(self._resp(429, {"error": {"code": "credit_balance_exhausted"}}))
+        assert info.value.details == {"status_code": 429, "type": None, "code": "credit_balance_exhausted"}
+
+    def test_an_ordinary_429_logs_the_retry_warning(self, monkeypatch):
+        recorded: list = []
+
+        class _WarnLog:
+            def warning(self, msg, *args, **kwargs):
+                recorded.append(msg)
+
+        monkeypatch.setattr(op, "logger", _WarnLog())
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        provider._handle_special_status(self._resp(429, {"error": {"type": "rate_limit_exceeded"}}))
+        assert recorded == ["OpenAI rate limit hit (HTTP 429). Retrying via tenacity loop."]
