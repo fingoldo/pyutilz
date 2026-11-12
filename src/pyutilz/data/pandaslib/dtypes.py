@@ -78,7 +78,8 @@ def get_columns_of_type(df: pd.DataFrame, type_names: Sequence) -> list:
     for col, type_name in df.dtypes.to_dict().items():
         # str(type_name) is loop-invariant across type_names; hoisting it avoids recomputing the dtype repr once per probed type.
         type_name_str = str(type_name)
-        if any(the_type in type_name_str for the_type in type_names):
+        # pandas>=3 reports text columns as 'str'/'string' rather than 'object'; a request for 'object' must still find them.
+        if any(the_type in type_name_str for the_type in type_names) or ("object" in type_names and type_name_str in ("str", "string")):
             res.append(col)
     return res
 

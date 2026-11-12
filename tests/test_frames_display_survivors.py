@@ -36,11 +36,11 @@ class TestPolarsDisplay:
 
 class TestPandasDisplay:
     def test_a_zero_cap_prints_only_the_header_and_a_blank_line(self, capsys):
-        _showcase(pd.DataFrame({"x": ["a", "b", "a"]}), max_vars=0)
+        _showcase(pd.DataFrame({"x": pd.Series(["a", "b", "a"], dtype=object)}), max_vars=0)
         assert capsys.readouterr().out == "X object\n\n"
 
     def test_a_cap_of_one_prints_only_the_most_common_value(self, capsys):
-        _showcase(pd.DataFrame({"x": ["a", "b", "a"]}), max_vars=1)
+        _showcase(pd.DataFrame({"x": pd.Series(["a", "b", "a"], dtype=object)}), max_vars=1)
         assert capsys.readouterr().out == "X object\nx\na    2\nName: count, dtype: int64\n"
 
     def test_an_empty_column_prints_an_empty_count_series(self, capsys):
