@@ -287,16 +287,18 @@ def block_size_for(
     if hit is not None:
         return int(hit)
     chosen = _block_size_for_uncached(regs, static, dyn_smem, min_active_blocks, max_width, work_items, pow2, preferred, default)
-    if len(_BLOCK_SIZE_CACHE) >= 4096:
+    if len(_BLOCK_SIZE_CACHE) >= _BLOCK_SIZE_CACHE_MAX_SIZE:
         _BLOCK_SIZE_CACHE.clear()
     _BLOCK_SIZE_CACHE[cache_key] = chosen
     return chosen
 
 
 _BLOCK_SIZE_CACHE: dict = {}
+_BLOCK_SIZE_CACHE_MAX_SIZE = 4096  # the cache is cleared once it holds this many answers
 
 
 _KERNEL_RESOURCES: dict = {}
+_KERNEL_RESOURCES_MAX_SIZE = 1024  # the cache is cleared once it holds this many kernels
 
 
 def _kernel_resources(kernel: object) -> "tuple[int, int]":
@@ -306,7 +308,7 @@ def _kernel_resources(kernel: object) -> "tuple[int, int]":
     if hit is not None and hit[0] is kernel:
         return hit[1], hit[2]
     regs, static = _kernel_registers(kernel), _kernel_static_shared(kernel)
-    if len(_KERNEL_RESOURCES) >= 1024:
+    if len(_KERNEL_RESOURCES) >= _KERNEL_RESOURCES_MAX_SIZE:
         _KERNEL_RESOURCES.clear()
     _KERNEL_RESOURCES[key] = (kernel, regs, static)
     return regs, static
