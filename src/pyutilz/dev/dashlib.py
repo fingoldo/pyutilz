@@ -449,7 +449,6 @@ def create_tabs(
         # simply rendering nothing.
         logger.debug("create_tabs(%s): empty tabsList, nothing to render", tabsName)
         return None
-    # print('In create_tabs of %s' % tabsName)
     authenticated, user = _resolve_current_user(tabsName)
     if not authenticated:
         return None
