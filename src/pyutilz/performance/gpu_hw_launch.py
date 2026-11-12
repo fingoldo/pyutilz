@@ -285,7 +285,7 @@ def block_size_for(
     )
     hit = _BLOCK_SIZE_CACHE.get(cache_key)
     if hit is not None:
-        return hit
+        return int(hit)
     chosen = _block_size_for_uncached(regs, static, dyn_smem, min_active_blocks, max_width, work_items, pow2, preferred, default)
     if len(_BLOCK_SIZE_CACHE) >= 4096:
         _BLOCK_SIZE_CACHE.clear()
