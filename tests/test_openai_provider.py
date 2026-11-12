@@ -324,11 +324,11 @@ class TestErrorBodiesAndEndpoint:
 
     def test_an_ordinary_429_is_not_refused(self):
         provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
-        provider._handle_special_status(self._resp(429, body={"error": {"type": "rate_limit_exceeded"}}))
+        assert provider._handle_special_status(self._resp(429, body={"error": {"type": "rate_limit_exceeded"}})) is None
 
     def test_a_non_429_status_is_ignored_by_the_policy(self):
         provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
-        provider._handle_special_status(self._resp(402, body={"error": {"type": "insufficient_quota"}}))
+        assert provider._handle_special_status(self._resp(402, body={"error": {"type": "insufficient_quota"}})) is None
 
     def test_a_missing_key_is_refused_with_the_exact_message(self, monkeypatch):
         class _Settings:
