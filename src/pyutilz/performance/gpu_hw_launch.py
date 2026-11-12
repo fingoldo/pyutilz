@@ -283,16 +283,21 @@ def block_size_for(
         id(props), _DEV_PROPS_ID, regs, static, int(dyn_smem), int(min_active_blocks), None if max_width is None else int(max_width),
         None if work_items is None or int(work_items) <= 0 else ((int(work_items) + warp_w - 1) // warp_w) * warp_w, bool(pow2), int(preferred), int(default),
     )
-    hit = _BLOCK_SIZE_CACHE.get(cache_key)
-    if hit is not None:
-        return int(hit)
+    with _CACHE_LOCK:
+        hit = _BLOCK_SIZE_CACHE.get(cache_key)
+    # the entry keeps the properties object it was computed for: a key built from id(props) alone would answer for a new object that reused the address
+    if hit is not None and hit[0] is props:
+        return int(hit[1])
     chosen = _block_size_for_uncached(regs, static, dyn_smem, min_active_blocks, max_width, work_items, pow2, preferred, default)
-    if len(_BLOCK_SIZE_CACHE) >= _BLOCK_SIZE_CACHE_MAX_SIZE:
-        _BLOCK_SIZE_CACHE.clear()
-    _BLOCK_SIZE_CACHE[cache_key] = chosen
+    with _CACHE_LOCK:
+        if len(_BLOCK_SIZE_CACHE) >= _BLOCK_SIZE_CACHE_MAX_SIZE:
+            _BLOCK_SIZE_CACHE.clear()
+        _BLOCK_SIZE_CACHE[cache_key] = (props, chosen)
     return chosen
 
 
+# the two caches are read and written under one lock; the computation between a miss and its store runs outside it
+_CACHE_LOCK = threading.RLock()
 _BLOCK_SIZE_CACHE: dict = {}
 _BLOCK_SIZE_CACHE_MAX_SIZE = 4096  # the cache is cleared once it holds this many answers
 
@@ -304,13 +309,15 @@ _KERNEL_RESOURCES_MAX_SIZE = 1024  # the cache is cleared once it holds this man
 def _kernel_resources(kernel: object) -> "tuple[int, int]":
     """``(registers per thread, static shared bytes)`` of a compiled kernel, read once per kernel object (each read is a driver attribute query); the entry keeps the kernel alive so its id is not reused."""
     key = id(kernel)
-    hit = _KERNEL_RESOURCES.get(key)
+    with _CACHE_LOCK:
+        hit = _KERNEL_RESOURCES.get(key)
     if hit is not None and hit[0] is kernel:
         return hit[1], hit[2]
     regs, static = _kernel_registers(kernel), _kernel_static_shared(kernel)
-    if len(_KERNEL_RESOURCES) >= _KERNEL_RESOURCES_MAX_SIZE:
-        _KERNEL_RESOURCES.clear()
-    _KERNEL_RESOURCES[key] = (kernel, regs, static)
+    with _CACHE_LOCK:
+        if len(_KERNEL_RESOURCES) >= _KERNEL_RESOURCES_MAX_SIZE:
+            _KERNEL_RESOURCES.clear()
+        _KERNEL_RESOURCES[key] = (kernel, regs, static)
     return regs, static
 
 
