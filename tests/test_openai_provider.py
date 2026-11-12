@@ -10,6 +10,7 @@ import asyncio
 import pytest
 
 from pyutilz.llm import openai_provider as op
+from pyutilz.llm.exceptions import LLMProviderError
 
 _FAKE_KEY = "sk-test-key"  # pragma: allowlist secret
 
@@ -276,3 +277,87 @@ class TestPriceAndLimitTablesArePinned:
 
     def test_the_long_context_tier_is_exact(self):
         assert tuple(op._LONG_CONTEXT_TIER) == (272000, 2.0, 1.5, 2.0, 2.0, False)
+
+
+class TestErrorBodiesAndEndpoint:
+    """The error object of a body, the 429 policy (quota versus ordinary limit), the missing-key message, the endpoint and the timeouts (openai_provider 254-300)."""
+
+    def _resp(self, status, body=None, text=""):
+        import httpx
+
+        request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+        if body is None:
+            return httpx.Response(status, text=text, request=request)
+        return httpx.Response(status, json=body, request=request)
+
+    def test_a_body_that_is_not_json_gives_no_error_object_and_is_logged(self, monkeypatch):
+        recorder: list = []
+
+        class _DebugLog:
+            def debug(self, fmt, *args, **kwargs):
+                recorder.append((fmt, args))
+
+        monkeypatch.setattr(op, "logger", _DebugLog())
+        assert op._error_object(self._resp(500, text="<html>")) == {}
+        fmt, args = recorder[0]
+        assert fmt == "_error_object: error response body is not JSON: %s: %s"
+        assert args[0] == "JSONDecodeError"
+
+    def test_an_object_without_an_error_or_a_non_object_body_gives_no_error_object(self):
+        assert op._error_object(self._resp(400, body={"other": 1})) == {}
+        assert op._error_object(self._resp(400, body=[1, 2])) == {}
+
+    def test_the_error_object_is_returned_as_is(self):
+        assert op._error_object(self._resp(400, body={"error": {"type": "x", "code": "y"}})) == {"type": "x", "code": "y"}
+
+    def test_an_exhausted_quota_429_is_refused_with_the_reason_and_message(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        with pytest.raises(LLMProviderError) as info:
+            provider._handle_special_status(self._resp(429, body={"error": {"type": "insufficient_quota", "message": "top up"}}))
+        assert str(info.value) == "OpenAI account has no credit left (HTTP 429 insufficient_quota): top up"
+
+    def test_a_credit_balance_code_names_the_code_as_the_reason(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        with pytest.raises(LLMProviderError) as info:
+            provider._handle_special_status(self._resp(429, body={"error": {"code": "credit_balance_exhausted", "message": "m"}}))
+        assert "(HTTP 429 credit_balance_exhausted)" in str(info.value)
+
+    def test_an_ordinary_429_is_not_refused(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        provider._handle_special_status(self._resp(429, body={"error": {"type": "rate_limit_exceeded"}}))
+
+    def test_a_non_429_status_is_ignored_by_the_policy(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        provider._handle_special_status(self._resp(402, body={"error": {"type": "insufficient_quota"}}))
+
+    def test_a_missing_key_is_refused_with_the_exact_message(self, monkeypatch):
+        class _Settings:
+            openai_api_key = None
+
+        monkeypatch.setattr(op, "get_llm_settings", lambda: _Settings())
+        with pytest.raises(ValueError) as info:
+            op.OpenAIProvider(api_key=None)
+        assert str(info.value) == "OpenAI API key not provided. Set OPENAI_API_KEY in .env or pass api_key="
+
+    def test_the_endpoint_and_provider_name_are_pinned(self):
+        assert op.OpenAIProvider._base_url == "https://api.openai.com/v1"
+        assert op.OpenAIProvider._provider_name == "OpenAI"
+
+    def test_reasoning_families_get_the_long_timeouts(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        assert provider._get_timeout("o3-mini") == 1200.0
+        assert provider._get_timeout("gpt-5.5-pro") == 600.0
+        assert provider._get_timeout("gpt-5-mini") == 240.0
+
+    def test_the_default_model_and_concurrency_are_pinned(self):
+        import inspect
+
+        params = inspect.signature(op.OpenAIProvider.__init__).parameters
+        assert params["model"].default == "gpt-5-mini"
+        assert params["max_concurrent"].default == 10
+
+    def test_dated_snapshots_and_latest_are_stripped_but_not_other_suffixes(self):
+        assert op._SNAPSHOT_SUFFIX.search("gpt-5-2026-01-15")
+        assert op._SNAPSHOT_SUFFIX.search("gpt-5-20260115")
+        assert op._SNAPSHOT_SUFFIX.search("gpt-5-latest")
+        assert op._SNAPSHOT_SUFFIX.search("gpt-5-mini") is None
