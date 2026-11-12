@@ -161,6 +161,30 @@ def flag_rejected(stderr: str | None, flag: str = "--thinking-display") -> bool:
     return flag in text and ("unknown option" in text or "unrecognized" in text)
 
 
+def sdk_thinking_text(blocks: Any) -> str:
+    """The text of the ``ThinkingBlock`` s of one SDK ``AssistantMessage``, blocks joined by a blank line; empty when the CLI withheld it.
+
+    The SDK's ``ThinkingBlock`` carries its text in ``thinking`` (it has no ``text``), so the generic ``.text`` branch never saw it.
+    """
+    texts = [t for b in blocks or [] if type(b).__name__ == "ThinkingBlock" and isinstance(t := getattr(b, "thinking", None), str) and t]
+    return "\n\n".join(texts)
+
+
+async def call_with_thinking_display(owner: Any, display: Optional[str], call: Any) -> str:
+    """``await call(display)``; an older CLI that rejects ``--thinking-display`` is remembered on ``owner`` for the process and the call repeated with ``None``.
+
+    The SDK reports the rejection as an exception whose message or ``stderr`` carries the CLI's "unknown option" text; anything else is raised as it is.
+    """
+    try:
+        return str(await call(display))
+    except Exception as exc:
+        if not (display and flag_rejected(f"{exc} {getattr(exc, 'stderr', '')}")):
+            raise
+        owner._thinking_display_unsupported = True
+        logger.warning("The Claude CLI rejected --thinking-display; calling without it from now on (its reasoning will not be captured)")
+        return str(await call(None))
+
+
 class ThinkingFlagRejectedError(Exception):
     """The installed CLI does not know ``--thinking-display``; the call is repeated without it."""
 

@@ -43,6 +43,8 @@ from pyutilz.llm.claude_code_cli import (  # re-export, placed after the logger 
     MAX_TIMEOUT_RETRIES,
     THINKING_DISPLAYS,
     ThinkingFlagRejectedError,
+    call_with_thinking_display,
+    sdk_thinking_text,
     _CliResultMessage,
     _consume_cli_stream,  # noqa: F401 -- re-export: imported from this module by existing callers and tests
     _find_claude_executable,
@@ -573,14 +575,21 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         thinking_tokens: int | None = None,
         effort: str | None = None,
     ) -> str:
-        """Generate text using claude-code-sdk; ``thinking_tokens`` goes to the CLI as MAX_THINKING_TOKENS, ``effort`` as ``--effort``."""
+        """Generate text using claude-code-sdk (``thinking_tokens`` -> MAX_THINKING_TOKENS, ``effort`` -> ``--effort``); asks for ``--thinking-display`` like the CLI path."""
+        async def once(display: str | None) -> str:
+            """One SDK call asking for ``display``."""
+            return await self._generate_sdk_once(prompt, system, thinking_tokens, effort, display)
+        return await call_with_thinking_display(type(self), self._thinking_display_to_send(), once)
+
+    async def _generate_sdk_once(self, prompt: str, system: str | None, thinking_tokens: int | None, effort: str | None, thinking_display: str | None) -> str:
+        """One SDK call; ``thinking_display`` goes to the CLI as ``--thinking-display`` when set."""
         async with self.semaphore:
             self._reset_per_call_state()
             override_env = {k: "" for k in self._NESTED_BLOCK_VARS if k in os.environ}
             if thinking_tokens is not None:
                 override_env["MAX_THINKING_TOKENS"] = str(thinking_tokens)
 
-            opts = self._build_sdk_options(system, effort, override_env)
+            opts = self._build_sdk_options(system, effort, override_env, thinking_display)
 
             logger.info("SDK call: model=%s prompt=%d system=%d", self.model, len(prompt), len(system or ""))
 
@@ -618,7 +627,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                             result_text += text
             return self._finalize_sdk_text(prompt, result_text, msg_count, msg_types)
 
-    def _build_sdk_options(self, system: str | None, effort: str | None, override_env: dict[str, str]) -> ClaudeCodeOptions:
+    def _build_sdk_options(self, system: str | None, effort: str | None, override_env: dict[str, str], thinking_display: str | None = None) -> ClaudeCodeOptions:
         """Build the SDK options for one call: no system-prompt folding, no tools, no ambient MCP servers."""
         # The system prompt stays where it belongs. 2026-09-07: this used to fold it into
         # the user message above 6000 combined characters -- so on every real call, the
@@ -642,7 +651,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             # permissions are bypassed its tools would be auto-approved. `--tools ""` does not cover
             # them: it scopes only the built-in tool set. This provider is text-generation-only, so
             # no ambient MCP configuration is ever wanted.
-            extra_args={"tools": "", "strict-mcp-config": None, **({"effort": effort} if effort else {})},
+            extra_args={"tools": "", "strict-mcp-config": None, **({"effort": effort} if effort else {}), **({"thinking-display": thinking_display} if thinking_display else {})},
         )
 
         _tools_val = opts.extra_args.get("tools") if opts.extra_args else None
@@ -663,6 +672,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         if not (hasattr(msg, "content") and msg.content):
             return None
         parts = []
+        thinking = sdk_thinking_text(msg.content)
+        if thinking:
+            self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, ("\n\n" if self._reasoning_fragments else "") + thinking)
         for block in msg.content:
             bt = type(block).__name__
             if isinstance(block, TextBlock):
@@ -676,14 +688,8 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 # reaching a tool that permission bypass then auto-approves. Fail hard
                 # instead of logging "(blocked)" while the turn continues.
                 raise ClaudeCodeToolUseError(f"Claude Code returned a tool-use block ({tool_name!r}); this provider is text-generation-only")
-            elif hasattr(block, "text") and isinstance(getattr(block, "text"), str):
-                if bt != "ThinkingBlock":
-                    parts.append(block.text)
-                else:
-                    # Kept out of the ANSWER, as before, but no longer thrown away:
-                    # Anthropic bills thinking as output tokens, and a caller that
-                    # cannot see it is comparing models on a number it cannot split.
-                    self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, block.text)
+            elif bt != "ThinkingBlock" and isinstance(getattr(block, "text", None), str):
+                parts.append(block.text)  # a ThinkingBlock is read above (sdk_thinking_text), kept out of the ANSWER
         if not parts:
             return None
         return "\n".join(parts)
