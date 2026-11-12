@@ -470,3 +470,52 @@ class TestPricingLookupAndUnknownModels:
         assert provider._long_context_tier("gpt-5.5") is op._LONG_CONTEXT_TIER
         assert provider._long_context_tier("gpt-5.5-2026-02-01") is op._LONG_CONTEXT_TIER
         assert provider._long_context_tier("gpt-5-mini") is None
+
+
+class TestRejectedParametersAndReasoningField:
+    """A 400 over temperature or reasoning_effort drops that field (temperature is remembered per model), thinking becomes reasoning_effort for reasoning models, and a non-reasoning model is warned and sent nothing (openai_provider 343-377)."""
+
+    def _provider(self, model="gpt-5.5"):
+        return op.OpenAIProvider(api_key="sk-test", model=model)  # pragma: allowlist secret
+
+    def test_a_non_400_status_repairs_nothing(self):
+        assert self._provider()._body_after_rejected_request({"temperature": 0.5}, 422, "temperature") is None
+
+    def test_a_400_over_temperature_drops_it_and_remembers_the_model(self):
+        op._MODELS_REJECTING_TEMPERATURE.discard("gpt-5.5")
+        out = self._provider()._body_after_rejected_request({"temperature": 0.5, "model": "gpt-5.5"}, 400, "Unsupported temperature")
+        assert out == {"model": "gpt-5.5"}
+        assert "gpt-5.5" in op._MODELS_REJECTING_TEMPERATURE
+        op._MODELS_REJECTING_TEMPERATURE.discard("gpt-5.5")
+
+    def test_a_400_that_names_temperature_but_the_body_has_none_repairs_nothing(self):
+        assert self._provider()._body_after_rejected_request({"model": "gpt-5.5"}, 400, "temperature is wrong") is None
+
+    def test_a_400_over_reasoning_effort_drops_it(self):
+        out = self._provider()._body_after_rejected_request({"reasoning_effort": "minimal", "model": "gpt-5.5"}, 400, "reasoning_effort not supported")
+        assert out == {"model": "gpt-5.5"}
+
+    def test_an_unrelated_400_repairs_nothing(self):
+        assert self._provider()._body_after_rejected_request({"model": "gpt-5.5"}, 400, "bad model") is None
+
+    def test_thinking_on_a_reasoning_model_is_medium_unless_an_effort_is_named(self):
+        provider = self._provider("gpt-5.5")
+        assert provider._thinking_request_field(True) == {"reasoning_effort": "medium"}
+        assert provider._thinking_request_field("high") == {"reasoning_effort": "high"}
+
+    def test_thinking_off_on_a_reasoning_model_asks_for_the_family_lowest_effort(self):
+        provider = self._provider("gpt-5.5")
+        expected = str(op.longest_prefix_lookup("gpt-5.5", op._LOWEST_EFFORT, "low"))
+        assert provider._thinking_request_field(False) == {"reasoning_effort": expected}
+
+    def test_thinking_on_a_non_reasoning_model_is_warned_and_not_sent(self, monkeypatch):
+        log = _PriceWarnLog()
+        monkeypatch.setattr(op, "logger", log)
+        assert self._provider("gpt-4.1")._thinking_request_field(True) is None
+        assert log.calls == [("OpenAI %r is not a reasoning model; thinking=%r is not sent.", ("gpt-4.1", True))]
+
+    def test_thinking_off_on_a_non_reasoning_model_is_silent(self, monkeypatch):
+        log = _PriceWarnLog()
+        monkeypatch.setattr(op, "logger", log)
+        assert self._provider("gpt-4.1")._thinking_request_field(False) is None
+        assert log.calls == []
