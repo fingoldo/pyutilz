@@ -213,21 +213,23 @@ class GeminiProvider(LLMProvider):
         self._candidate_count = max(1, int(candidate_count))
         self._cached_content = cached_content
 
+    def _family_limit(self, limits: "tuple[tuple[str, int], ...]", default: int | None) -> int | None:
+        """The limit of the first model-name prefix in ``limits`` that the configured model matches, else ``default``."""
+        for prefix, limit in limits:
+            if self.model_name.startswith(prefix):
+                return limit
+        return default
+
     @property
     def context_window(self) -> int:
         """Maximum input context size in tokens for the configured model."""
-        for prefix, limit in [("gemini-2.5", 1_048_576), ("gemini-2.0", 1_048_576), ("gemini-3", 1_048_576)]:
-            if self.model_name.startswith(prefix):
-                return limit
-        return 1_048_576
+        limit = self._family_limit((("gemini-2.5", 1_048_576), ("gemini-2.0", 1_048_576), ("gemini-3", 1_048_576)), None)
+        return limit if limit is not None else 1_048_576
 
     @property
     def max_output_tokens(self) -> int | None:
         """The configured model's output ceiling for the families listed here, else None (``max_tokens`` is then omitted)."""
-        for prefix, limit in [("gemini-3", 65536), ("gemini-2.5", 65536), ("gemini-2.0", 8192)]:
-            if self.model_name.startswith(prefix):
-                return limit
-        return None
+        return self._family_limit((("gemini-3", 65536), ("gemini-2.5", 65536), ("gemini-2.0", 8192)), None)
 
     def supports_json_mode(self) -> bool:
         """Gemini 2.0+ accepts ``response_mime_type="application/json"``

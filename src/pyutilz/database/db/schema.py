@@ -91,6 +91,35 @@ def ensure_pg_table_exists(
             )
 
 
+def _read_id_mapping(
+    dict_enums: dict,
+    table: str,
+    key_field_name: Optional[str],
+    condition: Optional[str],
+    id_field_name: Optional[str],
+    autocreate_id_type_name: Optional[str],
+    reverse: bool,
+) -> None:
+    """Shared body of the two readers: fills ``dict_enums`` with id->key, or key->id when ``reverse``.
+
+    Lives here, not in each public function, so the two cannot drift apart; the facade lookups stay on
+    ``_facade`` so a test that patches ``pyutilz.database.db.safe_execute`` still reaches this code.
+    """
+    dict_enums.clear()
+    _facade.ensure_pg_table_exists(table=table, key_field_name=key_field_name, id_field_name=id_field_name, autocreate_id_type_name=autocreate_id_type_name)
+    # table/key_field_name/id_field_name validated inside ensure_pg_table_exists above; condition is an accepted raw WHERE fragment
+    res = _facade.safe_execute(f"select {id_field_name},{key_field_name} from {table} {condition}")  # nosec B608
+    for rs in res:
+        if rs[1] is not None:
+            if rs[0] is not None:
+                the_id = rs[0]
+                key = rs[1]
+                if reverse:
+                    dict_enums[the_id] = key
+                else:
+                    dict_enums[key] = the_id
+
+
 def read_table_into_dict(
     dict_enums: dict,
     table: str,
@@ -112,16 +141,7 @@ def read_table_into_dict(
     backward compatibility with the legacy PascalCase/Hungarian-notation name.
     """
 
-    dict_enums.clear()
-    _facade.ensure_pg_table_exists(table=table, key_field_name=key_field_name, id_field_name=id_field_name, autocreate_id_type_name=autocreate_id_type_name)
-    # table/key_field_name/id_field_name validated inside ensure_pg_table_exists above; condition is an accepted raw WHERE fragment
-    res = _facade.safe_execute(f"select {id_field_name},{key_field_name} from {table} {condition}")  # nosec B608
-    for rs in res:
-        if rs[1] is not None:
-            if rs[0] is not None:
-                the_id = rs[0]
-                key = rs[1]
-                dict_enums[key] = the_id
+    _read_id_mapping(dict_enums, table, key_field_name, condition, id_field_name, autocreate_id_type_name, reverse=False)
 
 
 def read_table_into_dict_reversed(
@@ -143,16 +163,7 @@ def read_table_into_dict_reversed(
     kept for backward compatibility with the legacy PascalCase/Hungarian-notation name.
     """
 
-    dict_enums.clear()
-    _facade.ensure_pg_table_exists(table=table, key_field_name=key_field_name, id_field_name=id_field_name, autocreate_id_type_name=autocreate_id_type_name)
-    # table/key_field_name/id_field_name validated inside ensure_pg_table_exists above; condition is an accepted raw WHERE fragment
-    res = _facade.safe_execute(f"select {id_field_name},{key_field_name} from {table} {condition}")  # nosec B608
-    for rs in res:
-        if rs[1] is not None:
-            if rs[0] is not None:
-                the_id = rs[0]
-                key = rs[1]
-                dict_enums[the_id] = key
+    _read_id_mapping(dict_enums, table, key_field_name, condition, id_field_name, autocreate_id_type_name, reverse=True)
 
 
 def read_unique_table_field(

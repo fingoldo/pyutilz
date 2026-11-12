@@ -391,10 +391,7 @@ def get_unicode_emojies() -> dict:
 
     import emoji_data_python
 
-    res = dict()
-    for emoji in emoji_data_python.emoji_data:
-        res[emoji.char] = emoji.text
-    return res
+    return {emoji.char: emoji.text for emoji in emoji_data_python.emoji_data}
 
 
 def _strip_tilda_bullets(text: str) -> str:
