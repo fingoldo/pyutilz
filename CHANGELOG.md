@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `pyutilz.llm` Claude Code provider: the model's reasoning is now readable. The CLI path asks for `--thinking-display summarized` (CLI 2.1.296; the flag is hidden from `--help`), so the thinking blocks of its stream carry a SUMMARY of the reasoning instead of an empty string, and it is served as `last_reasoning_text` like every other provider's. This is the summary the CLI hands over, not the raw reasoning tokens. `ClaudeCodeProvider(thinking_display=...)` takes `summarized` (default), `omitted`, `highlights` or `None` (no flag, the old empty blocks); a CLI that rejects the flag is detected once per process and the call is repeated without it. The argv and the system-prompt temp file moved to `claude_code_cli.cli_argv` and `write_system_prompt_file` (the provider module was at its 1000-line budget); a failed prompt-file write now removes the file itself.
+
 - `dev` tree walks (`meta_test_utils` corpus, TODO-marker, repository-symbol and audit-document scans, `persistence_sweep.written_files`) go through one pruned walk, `dev._pruned_walk.iter_files_pruned`, which never enters `.claude` (Claude Code's agent worktrees, each a complete copy of the repository). `tests/test_meta/test_no_unpruned_tree_walk.py` fails a new `rglob`/`os.walk` in `src/pyutilz` that neither uses it nor carries `# walk-ok: <reason>`.
 
 - `pyutilz.llm`: the OpenRouter speech client (`OpenRouterSpeech`, `SpeechRequest`, `SpeechResult`, `SpeechAccounting`, `SpeechError`, `SpeechInputError`) is re-exported lazily from the package; the module `pyutilz.llm.openrouter_speech` is unchanged.

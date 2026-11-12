@@ -304,3 +304,129 @@ class TestSystemPromptGoesInAFile:
 
         assert "--system-prompt-file" not in captured["cmd"]
         assert captured["system_file"] is None
+
+
+_THINKING_FIXTURE = Path(__file__).parent / "data" / "claude_cli_thinking_summarized.jsonl"
+
+
+class _ScriptedProc:
+    """A finished CLI process with a scripted exit code, stdout transcript and stderr; just enough of Popen for ``run_cli``."""
+
+    stdin = SimpleNamespace(write=lambda _s: None, close=lambda: None)
+
+    def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
+        self.returncode = returncode
+        self.stdout = io.StringIO(stdout)
+        self.stderr = io.StringIO(stderr)
+
+    def poll(self):
+        """The transcript is complete, so the process is never still running."""
+        return self.returncode
+
+    def __enter__(self):
+        """`run_cli` uses `with Popen(...)`."""
+        return self
+
+    def __exit__(self, *_exc):
+        """Nothing to release; the streams are in-memory."""
+        return False
+
+    def kill(self):
+        """Never running, nothing to kill."""
+
+    def wait(self, timeout=None):  # unused-ok: keeps the real API signature
+        """Already finished."""
+        return self.returncode
+
+
+def _withheld_transcript() -> str:
+    """The same call as the fixture but as the CLI answers WITHOUT ``--thinking-display``: the thinking block is there and its text is empty."""
+    import json
+
+    lines = []
+    for line in _THINKING_FIXTURE.read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event["type"] == "assistant":
+            for block in event["message"]["content"]:
+                if block["type"] == "thinking":
+                    block["thinking"] = ""
+        lines.append(json.dumps(event))
+    return "\n".join(lines) + "\n"
+
+
+def _drive(provider, scripts):
+    """Run ``_generate_cli`` against scripted processes (one per spawn, in order); returns (answer, every argv spawned, the reasoning text).
+
+    The reasoning is read inside the same task that made the call: ``last_reasoning_text`` is context-local (``PerCallAttr``), so it is gone once ``asyncio.run`` returns.
+    """
+    import asyncio
+
+    provider._claude_path = "claude"
+    argvs: list[list[str]] = []
+    queue_of_scripts = list(scripts)
+
+    def fake_popen(cmd, **kwargs):
+        argvs.append(list(cmd))
+        return queue_of_scripts.pop(0)
+
+    async def call():
+        answer = await provider._generate_cli(prompt="hi")
+        return answer, provider.last_reasoning_text
+
+    with patch.object(subprocess, "Popen", fake_popen):
+        answer, reasoning = asyncio.run(call())
+    return answer, argvs, reasoning
+
+
+class TestTheReasoningSummaryReachesThePublicApi:
+    """``--thinking-display summarized`` is sent by default and the summary comes back as ``last_reasoning_text``, like any other provider's reasoning."""
+
+    def setup_method(self):
+        ClaudeCodeProvider._thinking_display_unsupported = False
+
+    def teardown_method(self):
+        ClaudeCodeProvider._thinking_display_unsupported = False
+
+    def test_the_flag_is_sent_by_default_and_the_summary_is_served(self):
+        transcript = _THINKING_FIXTURE.read_text(encoding="utf-8")
+        p = _provider()
+
+        answer, argvs, reasoning = _drive(p, [_ScriptedProc(0, transcript, "")])
+
+        assert argvs[0][argvs[0].index("--thinking-display") + 1] == "summarized"
+        assert answer
+        assert reasoning is not None and len(reasoning) == 472
+
+    def test_none_sends_no_flag_and_serves_no_reasoning(self):
+        transcript = _withheld_transcript()
+        p = ClaudeCodeProvider(thinking_display=None)
+
+        _answer, argvs, reasoning = _drive(p, [_ScriptedProc(0, transcript, "")])
+
+        assert "--thinking-display" not in argvs[0]
+        assert reasoning is None
+
+    def test_a_value_the_cli_does_not_offer_is_refused_at_construction(self):
+        with pytest.raises(ValueError, match="thinking_display"):
+            ClaudeCodeProvider(thinking_display="full")
+
+    def test_a_cli_that_rejects_the_flag_is_asked_again_without_it_and_remembered(self):
+        p = _provider()
+        rejected = _ScriptedProc(1, "", "error: unknown option '--thinking-display'\n")
+
+        answer, argvs, reasoning = _drive(p, [rejected, _ScriptedProc(0, _withheld_transcript(), "")])
+
+        assert "--thinking-display" in argvs[0] and "--thinking-display" not in argvs[1]
+        assert answer
+        assert reasoning is None, "the repeated call carried no flag, so there is no summary"
+        assert ClaudeCodeProvider._thinking_display_unsupported is True
+        _answer, later, _reasoning = _drive(p, [_ScriptedProc(0, _withheld_transcript(), "")])
+        assert "--thinking-display" not in later[0], "the rejection was not remembered"
+
+    def test_another_failure_is_not_taken_for_a_rejected_flag(self):
+        p = _provider()
+
+        with pytest.raises(RuntimeError, match="authentication failed"):
+            _drive(p, [_ScriptedProc(1, "", "authentication failed")])
+
+        assert ClaudeCodeProvider._thinking_display_unsupported is False
