@@ -519,3 +519,27 @@ class TestRejectedParametersAndReasoningField:
         monkeypatch.setattr(op, "logger", log)
         assert self._provider("gpt-4.1")._thinking_request_field(False) is None
         assert log.calls == []
+
+
+class TestOutputAndContextLimits:
+    """The output cap and context window of a model: its row, a dated snapshot of it, a family prefix, or the default for an unlisted model (openai_provider 457-463)."""
+
+    def _provider(self, model):
+        return op.OpenAIProvider(api_key="sk-test", model=model)  # pragma: allowlist secret
+
+    def test_the_output_cap_is_the_row_value_for_a_listed_model_and_its_snapshot(self):
+        assert self._provider("gpt-5.5").max_output_tokens == op._MAX_TOKENS["gpt-5.5"]
+        assert self._provider("gpt-5.5-2026-02-01").max_output_tokens == op._MAX_TOKENS["gpt-5.5"]
+
+    def test_the_output_cap_of_a_family_prefix_is_the_longest_matching_row(self):
+        assert self._provider("gpt-5.5-typo").max_output_tokens == op._MAX_TOKENS["gpt-5.5"]
+
+    def test_an_unlisted_model_has_no_output_cap(self):
+        assert self._provider("zzz-unknown").max_output_tokens is None
+
+    def test_the_context_window_is_the_row_value_for_a_listed_model_and_its_snapshot(self):
+        assert self._provider("gpt-5.5").context_window == op._CONTEXT_WINDOW["gpt-5.5"]
+        assert self._provider("gpt-5.5-2026-02-01").context_window == op._CONTEXT_WINDOW["gpt-5.5"]
+
+    def test_an_unlisted_model_gets_the_class_default_context_window(self):
+        assert self._provider("zzz-unknown").context_window == op.OpenAIProvider._default_context_window == 128_000
