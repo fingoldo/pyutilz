@@ -357,6 +357,13 @@ def clean_description(text: str, newlines: Optional[str] = None) -> str:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+def _emoji_records():
+    """The emoji records of the ``emoji_data_python`` package (its ``char`` and ``text`` fields), read once per call."""
+    import emoji_data_python
+
+    return emoji_data_python.emoji_data
+
+
 def get_ascii_emojies() -> dict:
     """
     >>> get_ascii_emojies()
@@ -374,10 +381,8 @@ def get_ascii_emojies() -> dict:
      ":'(": '😭'}
     """
 
-    import emoji_data_python
-
     res = dict()
-    for emoji in emoji_data_python.emoji_data:
+    for emoji in _emoji_records():
         if emoji.text:
             res[emoji.text] = emoji.char
             if len(emoji.text) == 2:
@@ -389,10 +394,8 @@ def get_ascii_emojies() -> dict:
 def get_unicode_emojies() -> dict:
     """Build a mapping from unicode emoji character to its ASCII text name (inverse of get_ascii_emojies)."""
 
-    import emoji_data_python
-
     res = dict()
-    for emoji in emoji_data_python.emoji_data:
+    for emoji in _emoji_records():
         res[emoji.char] = emoji.text
     return res
 
