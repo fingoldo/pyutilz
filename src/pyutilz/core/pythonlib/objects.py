@@ -305,14 +305,19 @@ def batch(iterable: Sequence[Any], n: int = 1) -> Iterator[Sequence[Any]]:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+def _adjacent_pairs_hold(lst: Sequence, holds) -> bool:
+    """Whether ``holds(lst[i], lst[i + 1])`` is true for every adjacent pair of ``lst``."""
+    return all(holds(lst[i], lst[i + 1]) for i in range(len(lst) - 1))
+
+
 def list_is_non_increasing(lst: Sequence) -> bool:
     """Checks if a list is sorted."""
-    return all(lst[i] >= lst[i + 1] for i in range(len(lst) - 1))
+    return _adjacent_pairs_hold(lst, lambda a, b: a >= b)
 
 
 def list_is_non_decreasing(lst: Sequence) -> bool:
     """Checks if a list is sorted."""
-    return all(lst[i] <= lst[i + 1] for i in range(len(lst) - 1))
+    return _adjacent_pairs_hold(lst, lambda a, b: a <= b)
 
 
 def sort_dict_by_value(dct: dict, reverse: bool = False) -> dict:
