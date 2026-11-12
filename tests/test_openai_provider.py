@@ -395,3 +395,78 @@ class TestQuotaRefusalDetails:
         provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
         provider._handle_special_status(self._resp(429, {"error": {"type": "rate_limit_exceeded"}}))
         assert recorded == ["OpenAI rate limit hit (HTTP 429). Retrying via tenacity loop."]
+
+
+class _PriceWarnLog:
+    def __init__(self):
+        self.calls: list = []
+
+    def warning(self, fmt, *args, **kwargs):
+        self.calls.append((fmt, args))
+
+
+@pytest.fixture
+def price_log(monkeypatch):
+    from pyutilz.dev.logginglib import reset_log_throttles
+
+    reset_log_throttles()
+    log = _PriceWarnLog()
+    monkeypatch.setattr(op, "logger", log)
+    yield log
+    reset_log_throttles()
+
+
+class TestPricingLookupAndUnknownModels:
+    """A model resolves to its row exactly or as a dated/latest snapshot, a family match prices as its family, a genuine miss prices at gpt-5-mini; only an unknown model warns, once (openai_provider 408-472)."""
+
+    def _provider(self, model="gpt-5-mini"):
+        return op.OpenAIProvider(api_key="sk-test", model=model)  # pragma: allowlist secret
+
+    def test_an_exact_row_or_its_snapshot_resolves_to_that_row(self):
+        assert op.OpenAIProvider._known_row("gpt-5-mini", op._PRICING) == "gpt-5-mini"
+        assert op.OpenAIProvider._known_row("gpt-5-mini-2026-01-15", op._PRICING) == "gpt-5-mini"
+        assert op.OpenAIProvider._known_row("gpt-5-mini-20260115", op._PRICING) == "gpt-5-mini"
+        assert op.OpenAIProvider._known_row("gpt-5-mini-latest", op._PRICING) == "gpt-5-mini"
+
+    def test_a_family_prefix_or_a_typo_is_not_a_known_row(self):
+        assert op.OpenAIProvider._known_row("gpt-5-typo", op._PRICING) is None
+        assert op.OpenAIProvider._known_row("gpt-5-mini-x", op._PRICING) is None
+
+    def test_a_known_row_is_priced_with_its_rates_and_no_warning(self, price_log):
+        priced = self._provider()._resolve_pricing("gpt-5.5")
+        assert (priced.input, priced.output) == (5.0, 30.0)
+        assert price_log.calls == []
+
+    def test_a_dated_snapshot_of_a_known_row_is_priced_silently(self, price_log):
+        priced = self._provider()._resolve_pricing("gpt-5.5-2026-02-01")
+        assert (priced.input, priced.output) == (5.0, 30.0)
+        assert price_log.calls == []
+
+    def test_a_family_match_is_priced_as_its_family_and_warned_once(self, price_log):
+        provider = self._provider()
+        priced = provider._resolve_pricing("gpt-5.5-typo")
+        assert (priced.input, priced.output) == (5.0, 30.0)
+        provider._resolve_pricing("gpt-5.5-typo")
+        assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("gpt-5.5-typo", "its family's"))]
+
+    def test_a_model_with_no_known_family_is_priced_at_gpt_five_mini_and_warned(self, price_log):
+        priced = self._provider()._resolve_pricing("zzz-unknown")
+        assert (priced.input, priced.output) == (0.25, 2.0)
+        assert price_log.calls[0][1] == ("zzz-unknown", "gpt-5-mini")
+
+    def test_the_cache_write_rate_is_only_known_for_a_listed_row(self):
+        provider = self._provider()
+        assert provider._resolve_pricing("gpt-5.5").cache_write == op._CACHE_WRITE_COST.get("gpt-5.5")
+        assert provider._resolve_pricing("gpt-5.5-typo").cache_write is None
+
+    def test_the_cache_hit_rate_is_the_row_value_or_the_family_or_gpt_five_mini(self, price_log):
+        provider = self._provider()
+        assert provider._cache_hit_cost_per_1m("gpt-5.5") == op._CACHE_HIT_COST["gpt-5.5"]
+        assert provider._cache_hit_cost_per_1m("gpt-5.5-typo") == op._CACHE_HIT_COST["gpt-5.5"]
+        assert provider._cache_hit_cost_per_1m("zzz-unknown") == op._CACHE_HIT_COST["gpt-5-mini"]
+
+    def test_the_long_context_tier_applies_to_listed_models_and_their_snapshots_only(self):
+        provider = self._provider()
+        assert provider._long_context_tier("gpt-5.5") is op._LONG_CONTEXT_TIER
+        assert provider._long_context_tier("gpt-5.5-2026-02-01") is op._LONG_CONTEXT_TIER
+        assert provider._long_context_tier("gpt-5-mini") is None
