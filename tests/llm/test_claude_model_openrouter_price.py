@@ -8,12 +8,12 @@ from pyutilz.llm import _claude_models as cm
 from pyutilz.llm.openrouter_provider import _catalogue
 
 _HAIKU_LISTING = {
-    "anthropic/claude-haiku-5.5": {
+    "anthropic/claude-haiku-5.6": {
         "pricing": {"prompt": "0.0000001", "completion": "0.0000005"},
         "top_provider": {"max_completion_tokens": 128000},
         "context_length": 1000000,
     },
-    "anthropic/claude-haiku-5.5:batch": {
+    "anthropic/claude-haiku-5.6:batch": {
         "pricing": {"prompt": "0.00000005", "completion": "0.00000025"},
         "top_provider": {"max_completion_tokens": 128000},
         "context_length": 1000000,
@@ -38,7 +38,7 @@ def _listing(monkeypatch: pytest.MonkeyPatch, catalogue: dict) -> None:
 
 def test_an_unlisted_claude_model_takes_its_openrouter_price_and_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
     _listing(monkeypatch, _HAIKU_LISTING)
-    spec = cm.claude_model_spec("claude-haiku-5-5", provider_label="Claude Code")
+    spec = cm.claude_model_spec("claude-haiku-5-6", provider_label="Claude Code")
     assert spec.input_per_1m == pytest.approx(0.10)
     assert spec.output_per_1m == pytest.approx(0.50)
     assert spec.max_output == 128000
@@ -46,14 +46,14 @@ def test_an_unlisted_claude_model_takes_its_openrouter_price_and_ceiling(monkeyp
 
 
 def test_variants_and_aliases_are_not_the_models_own_price(monkeypatch: pytest.MonkeyPatch) -> None:
-    _listing(monkeypatch, {k: v for k, v in _HAIKU_LISTING.items() if k != "anthropic/claude-haiku-5.5"})
-    spec = cm.claude_model_spec("claude-haiku-5-5")
+    _listing(monkeypatch, {k: v for k, v in _HAIKU_LISTING.items() if k != "anthropic/claude-haiku-5.6"})
+    spec = cm.claude_model_spec("claude-haiku-5-6")
     assert spec == cm.UNKNOWN_CLAUDE_MODEL, "only :batch and ~latest listings exist, neither is the model's own"
 
 
 def test_a_failed_catalogue_falls_back_to_the_default_row(monkeypatch: pytest.MonkeyPatch) -> None:
     _listing(monkeypatch, {})
-    assert cm.claude_model_spec("claude-haiku-5-5") == cm.UNKNOWN_CLAUDE_MODEL
+    assert cm.claude_model_spec("claude-haiku-5-6") == cm.UNKNOWN_CLAUDE_MODEL
 
 
 def test_a_model_the_table_lists_is_never_looked_up(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,14 +72,23 @@ def test_the_lookup_happens_once_per_model_name(monkeypatch: pytest.MonkeyPatch)
         return dict(_HAIKU_LISTING)
 
     monkeypatch.setattr(_catalogue, "_fetch_models_catalogue", counting)
-    cm.claude_model_spec("claude-haiku-5-5")
-    cm.claude_model_spec("claude-haiku-5-5")
+    cm.claude_model_spec("claude-haiku-5-6")
+    cm.claude_model_spec("claude-haiku-5-6")
     assert calls["n"] == 1
 
 
 def test_the_listed_price_has_no_default_so_an_unlisted_model_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
     _listing(monkeypatch, _HAIKU_LISTING)
-    assert cm.claude_model_listed_price("claude-haiku-5-5") == pytest.approx((0.10, 0.50))
+    assert cm.claude_model_listed_price("claude-haiku-5-6") == pytest.approx((0.10, 0.50))
     assert cm.claude_model_listed_price("claude-sonnet-5") is not None, "a table row prices without the network"
     _listing(monkeypatch, {})
     assert cm.claude_model_listed_price("claude-no-such-model-9") is None
+
+
+def test_haiku_5_5_is_a_table_row_at_the_documented_base_price(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*a, **k):  # the table row must answer without the network
+        raise AssertionError("catalogue consulted for a table row")
+
+    monkeypatch.setattr(_catalogue, "_fetch_models_catalogue", boom)
+    spec = cm.claude_model_spec("claude-haiku-5-5")
+    assert (spec.input_per_1m, spec.output_per_1m, spec.max_output, spec.context_window) == (0.10, 0.50, 128_000, 1_000_000)
