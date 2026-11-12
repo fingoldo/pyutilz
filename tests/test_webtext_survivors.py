@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pyutilz.text.strings import webtext as wt
 
 
@@ -99,3 +101,120 @@ class TestLinebreakEdgeBoundaries:
 
     def test_a_break_before_space_and_a_digit_becomes_a_full_stop(self):
         assert wt.fix_broken_sentences("word\n 5") == "word. 5"
+
+
+class TestMissedSpaceBetweenSentences:
+    def test_a_missing_space_after_a_full_stop_is_inserted(self):
+        assert wt.fix_missed_space_between_sentences("Hello.World") == "Hello. World"
+
+    def test_a_decimal_point_between_digits_is_not_split(self):
+        assert wt.fix_missed_space_between_sentences("$2.50") == "$2.50"
+        assert wt.fix_missed_space_between_sentences("1.5") == "1.5"
+
+    def test_a_full_stop_before_a_digit_after_a_letter_is_split(self):
+        assert wt.fix_missed_space_between_sentences("a.1") == "a. 1"
+
+    def test_a_space_already_present_is_left_alone(self):
+        assert wt.fix_missed_space_between_sentences("end. World") == "end. World"
+
+    def test_a_full_stop_before_punctuation_is_left_alone(self):
+        assert wt.fix_missed_space_between_sentences("Hi.!") == "Hi.!"
+
+    def test_a_full_stop_at_the_end_is_left_alone(self):
+        assert wt.fix_missed_space_between_sentences("end.") == "end."
+
+    def test_chained_sentences_are_each_split(self):
+        assert wt.fix_missed_space_between_sentences("x.y.z") == "x. y. z"
+
+
+class TestMergePunctuationSigns:
+    def test_consecutive_sentence_end_tokens_are_merged(self):
+        assert wt.merge_punctuation_signs(["Hi", ".", "!", "x"]) == ["Hi", ".!", "x"]
+
+    def test_a_single_sentence_end_token_is_kept(self):
+        assert wt.merge_punctuation_signs(["Hi", "."]) == ["Hi", "."]
+
+    def test_an_empty_list_stays_empty(self):
+        assert wt.merge_punctuation_signs([]) == []
+
+    def test_a_leading_sentence_end_token_is_kept(self):
+        assert wt.merge_punctuation_signs(["."]) == ["."]
+
+    def test_plain_words_are_not_merged(self):
+        assert wt.merge_punctuation_signs(["a", "b"]) == ["a", "b"]
+
+    def test_repeated_question_marks_merge(self):
+        assert wt.merge_punctuation_signs(["?", "?"]) == ["??"]
+
+
+class TestEnsureSpaceAfterComma:
+    def test_a_comma_before_a_letter_gets_a_space(self):
+        assert wt.ensure_space_after_comma("a,b,c") == "a, b, c"
+
+    def test_a_comma_before_a_digit_gets_a_space(self):
+        assert wt.ensure_space_after_comma("a,1") == "a, 1"
+
+    def test_a_comma_full_stop_pair_becomes_a_full_stop(self):
+        assert wt.ensure_space_after_comma("devices,.") == "devices."
+
+    def test_a_comma_already_followed_by_a_space_is_kept(self):
+        assert wt.ensure_space_after_comma("a,  b") == "a,  b"
+
+    def test_a_trailing_comma_is_kept(self):
+        assert wt.ensure_space_after_comma("a,") == "a,"
+
+    def test_text_without_commas_is_unchanged(self):
+        assert wt.ensure_space_after_comma("plain text") == "plain text"
+
+
+class TestStripTildaBullets:
+    def test_a_leading_marker_is_removed(self):
+        assert wt._strip_tilda_bullets("~ great") == "great"
+        assert wt._strip_tilda_bullets("- great") == "great"
+
+    def test_a_trailing_marker_is_removed(self):
+        assert wt._strip_tilda_bullets("great ~") == "great"
+
+    def test_an_interior_dash_is_kept(self):
+        assert wt._strip_tilda_bullets("- Great product - really") == "Great product - really"
+
+    def test_text_without_markers_is_unchanged(self):
+        assert wt._strip_tilda_bullets("a-b") == "a-b"
+
+
+class TestSentencizeText:
+    def test_empty_and_blank_input_is_returned_unchanged(self):
+        assert wt.sentencize_text("") == ""
+        assert wt.sentencize_text("   ") == "   "
+
+    def test_a_missing_full_stop_is_added_and_the_first_letter_capitalised(self):
+        assert wt.sentencize_text("hello world") == "Hello world."
+
+    def test_a_sentence_end_mark_is_kept(self):
+        assert wt.sentencize_text("Done!") == "Done!"
+
+    def test_an_emoticon_ending_is_kept(self):
+        text = "Not sure what to make of the included love note, it did make me smile though :)"
+        assert wt.sentencize_text(text) == text
+
+    def test_a_leading_digit_is_not_capitalised_but_still_gets_a_full_stop(self):
+        assert wt.sentencize_text("1st") == "1st."
+
+
+class TestSuffixize:
+    def test_a_singular_count_keeps_the_noun(self):
+        pytest.importorskip("inflect")
+        assert wt.suffixize("job", 1) == "job"
+
+    def test_a_plural_count_pluralises_the_noun(self):
+        pytest.importorskip("inflect")
+        assert wt.suffixize("job", 2) == "jobs"
+        assert wt.suffixize("child", 2) == "children"
+
+
+class TestCleanDescriptionPipeline:
+    def test_an_ampersand_becomes_and_and_the_sentence_is_finished(self):
+        assert wt.clean_description("a & b") == "A and b."
+
+    def test_newlines_are_unified_before_cleaning(self):
+        assert wt.clean_description("a|b", newlines="|") == "A b."

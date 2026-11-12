@@ -794,6 +794,14 @@ no_implicit_optional = true
 # Secret shapes for py_ci_shared.tracked_secret_shapes (pre-commit hook and tests/test_meta). detect-secrets has no bearer-header
 # detector, and the repo handles bearer tokens (see the 2026-09-02 security audit, LoginAndGetCookies). A deliberate fake carries
 # `pragma: allowlist secret` on its line.
+# Complexity ratchet, moved here from tests/test_meta/test_complexity_ratchet.py. The two baselined functions were over
+# the limit when the ratchet was first run here; they may not grow and must be split before they shrink.
+[tool.py_ci_shared.gates.complexity_ratchet]
+files = ["src/**/*.py"]
+root = "."
+baseline_path = "tests/test_meta/_complexity_baseline.json"
+limit = 20
+
 [tool.py_ci_shared.secret_shapes]
 bearer_token = { pattern = "[Bb]earer [A-Za-z0-9._~+/-]{32,}=*", min_length = 40, note = "a bearer token literal: revoke it, git history is not rewritten" }
 

@@ -135,25 +135,22 @@ class TestReadParquetWithPyarrow:
         assert len(result) == 10
 
     def test_read_without_nrows(self, tmp_path):
-        """nrows=0 is falsy, takes the else branch (line 517-518)."""
+        """nrows=0 is falsy, so the whole dataset is read: scanner().to_table().to_pandas()."""
         expected = pd.DataFrame({"a": range(50)})
-        mock_table = MagicMock()
-        mock_table.to_pandas.return_value = expected
         mock_scanner = MagicMock()
-        mock_scanner.to_pandas.return_value = expected
-        mock_scanner.head.return_value = mock_table
+        mock_scanner.to_table.return_value.to_pandas.return_value = expected
         mock_ds = MagicMock()
         mock_ds.scanner.return_value = mock_scanner
         with patch("pyutilz.data.pandaslib.dataset", return_value=mock_ds):
             result = read_parquet_with_pyarrow("fake.parquet", nrows=0)
         assert len(result) == 50
-        mock_scanner.to_pandas.assert_called_once()
+        mock_scanner.to_table.return_value.to_pandas.assert_called_once()
 
     def test_read_nrows_none(self, tmp_path):
-        """nrows=None is falsy, takes the else branch."""
+        """nrows=None is falsy, so the whole dataset is read: scanner().to_table().to_pandas()."""
         expected = pd.DataFrame({"a": range(20)})
         mock_scanner = MagicMock()
-        mock_scanner.to_pandas.return_value = expected
+        mock_scanner.to_table.return_value.to_pandas.return_value = expected
         mock_ds = MagicMock()
         mock_ds.scanner.return_value = mock_scanner
         with patch("pyutilz.data.pandaslib.dataset", return_value=mock_ds):
