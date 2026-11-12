@@ -376,3 +376,16 @@ def pytest_runtest_logreport(report):
 def pytest_terminal_summary(terminalreporter):
     if _LIVE_SKIPPED:
         terminalreporter.write_line(f"live provider tests skipped (outage or missing key): {len(_LIVE_SKIPPED)}", yellow=True)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """A fake monotonic clock for the logginglib throttle tests; the throttle windows are reset before and after."""
+    from pyutilz.dev import logginglib as ll
+    from tests.logginglib_survivors_support import _Clock
+
+    ll.reset_log_throttles()
+    fake = _Clock(now=1000.0)
+    monkeypatch.setattr(ll, "time", fake)
+    yield fake
+    ll.reset_log_throttles()

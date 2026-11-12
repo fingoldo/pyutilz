@@ -91,8 +91,20 @@ def ensure_pg_table_exists(
             )
 
 
-def _load_mapping(dict_enums: dict, table: str, key_field_name, condition, id_field_name, autocreate_id_type_name, *, reverse: bool) -> None:
-    """Fill ``dict_enums`` from ``table``: ``id -> value`` (``reverse=False``) or ``value -> id`` (``reverse=True``); creates the table when asked."""
+def _read_id_mapping(
+    dict_enums: dict,
+    table: str,
+    key_field_name: Optional[str],
+    condition: Optional[str],
+    id_field_name: Optional[str],
+    autocreate_id_type_name: Optional[str],
+    reverse: bool,
+) -> None:
+    """Shared body of the two readers: fills ``dict_enums`` with id->key, or key->id when ``reverse``.
+
+    Lives here, not in each public function, so the two cannot drift apart; the facade lookups stay on
+    ``_facade`` so a test that patches ``pyutilz.database.db.safe_execute`` still reaches this code.
+    """
     dict_enums.clear()
     _facade.ensure_pg_table_exists(table=table, key_field_name=key_field_name, id_field_name=id_field_name, autocreate_id_type_name=autocreate_id_type_name)
     # table/key_field_name/id_field_name validated inside ensure_pg_table_exists above; condition is an accepted raw WHERE fragment
@@ -129,7 +141,7 @@ def read_table_into_dict(
     backward compatibility with the legacy PascalCase/Hungarian-notation name.
     """
 
-    _load_mapping(dict_enums, table, key_field_name, condition, id_field_name, autocreate_id_type_name, reverse=False)
+    _read_id_mapping(dict_enums, table, key_field_name, condition, id_field_name, autocreate_id_type_name, reverse=False)
 
 
 def read_table_into_dict_reversed(
@@ -151,7 +163,7 @@ def read_table_into_dict_reversed(
     kept for backward compatibility with the legacy PascalCase/Hungarian-notation name.
     """
 
-    _load_mapping(dict_enums, table, key_field_name, condition, id_field_name, autocreate_id_type_name, reverse=True)
+    _read_id_mapping(dict_enums, table, key_field_name, condition, id_field_name, autocreate_id_type_name, reverse=True)
 
 
 def read_unique_table_field(

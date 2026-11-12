@@ -1,4 +1,10 @@
 {
-  "src/pyutilz/text/similarity/_numba_kernels.py::_compare_one_candidate": 24,
-  "src/pyutilz/text/similarity/_numba_kernels.py::_sentences_similarity_core": 25
+  "src/pyutilz/text/similarity/_numba_kernels.py::_compare_one_candidate": {
+    "count": 24,
+    "note": "Accepted at its measured complexity (24), over the shared limit of 20: _compare_one_candidate is a numba kernel loop that must be split into helpers before this ceiling can shrink; nothing may grow past it."
+  },
+  "src/pyutilz/text/similarity/_numba_kernels.py::_sentences_similarity_core": {
+    "count": 25,
+    "note": "Accepted at its measured complexity (25), over the shared limit of 20: _sentences_similarity_core is a numba kernel loop that must be split into helpers before this ceiling can shrink; nothing may grow past it."
+  }
 }

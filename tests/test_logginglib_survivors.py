@@ -1,30 +1,25 @@
-"""External-IP resolution and log filename pins for dev.logginglib (mutation survivors, first group)."""
-
-from __future__ import annotations
+"""OpenAI-compatible provider tests: logging setup, function logs and loaded rows."""
 
 import logging
 import os
 import types
 from pathlib import Path
-
 import pytest
-
 import pyutilz.web as web
-
 from pyutilz.dev import logginglib as ll
-
-
-class _Log:
-    def __init__(self):
-        self.warning_calls: list = []
-
-    def warning(self, *args):
-        self.warning_calls.append(args)
-
-
-def _reset(monkeypatch):
-    monkeypatch.setattr(ll, "EXTERNAL_IP", None)
-    monkeypatch.setattr(ll, "_EXTERNAL_IP_RESOLVED", False)
+from tests.logginglib_survivors_support import (
+    _ExcLog,
+    _FakeRedis,
+    _InfoLog,
+    _Log,
+    _fresh_log,
+    _parent_explicit,
+    _parent_for_log,
+    _parent_kw_for_error,
+    _parent_p_for_error,
+    _record,
+    _reset,
+)
 
 
 class TestNodeExternalIp:
@@ -242,19 +237,11 @@ class TestInitLoggingFileHandlerDetails:
         assert recorded == [{"errors": "replace"}]
 
 
-def _parent_for_log(alpha, beta=2, **kwargs):
-    return ll.initialize_function_log()
-
-
-def _parent_explicit(alpha, beta=2, **kwargs):
-    return ll.initialize_function_log(explicit_only=True)
-
-
 class TestInitializeFunctionLog:
     def test_the_caller_name_and_module_are_recorded(self):
         out = _parent_for_log(1)
         assert out["function"] == "_parent_for_log"
-        assert out["module"] == "test_logginglib_survivors.py"
+        assert out["module"] == "logginglib_survivors_support.py"
 
     def test_the_parameters_of_the_caller_are_recorded(self):
         out = _parent_for_log(1, beta=5, gamma="x")
@@ -278,22 +265,6 @@ class TestInitializeFunctionLog:
         started = out["results"]["timing"]["started_at"]
         assert isinstance(started, _dt.datetime)
         assert started.tzinfo == _dt.timezone.utc
-
-
-def _parent_kw_for_error(alpha, **kwargs):
-    return ll.initialize_function_log()
-
-
-def _parent_p_for_error(alpha):
-    return ll.initialize_function_log()
-
-
-class _ExcLog:
-    def __init__(self):
-        self.exceptions: list = []
-
-    def exception(self, e):
-        self.exceptions.append(e)
 
 
 class TestInitializeFunctionLogErrors:
@@ -370,14 +341,6 @@ class TestInitializeFunctionLogSecondStage:
         assert any(isinstance(e, AttributeError) for e in log.exceptions)
 
 
-class _InfoLog:
-    def __init__(self):
-        self.info_calls: list = []
-
-    def info(self, *args):
-        self.info_calls.append(args)
-
-
 class TestClockAndMessage:
     def test_stopping_the_clock_records_finish_time_and_duration(self):
         from datetime import datetime, timedelta, timezone
@@ -441,17 +404,6 @@ class TestSubSecondDuration:
         obj = {"started_at": datetime.now(timezone.utc) - timedelta(milliseconds=500)}
         duration = ll._stop_clocks(obj)
         assert 0.4 < duration < 5
-
-
-def _fresh_log(function="f"):
-    from datetime import datetime, timezone
-
-    return {
-        "module": "m.py",
-        "function": function,
-        "parameters": {"a": 1},
-        "results": {"timing": {"started_at": datetime.now(timezone.utc)}},
-    }
 
 
 class TestFinalizeFunctionLog:
@@ -738,3 +690,228 @@ class TestRedactParametersAndCallParams:
         with pytest.raises(AssertionError) as info:
             ll._call_params((1,), {}, False, (int,))
         assert str(info.value) == "expected dict params, got list"
+
+
+class TestCallHeaderAndSession:
+    def test_the_header_names_the_module_basename_and_the_function(self, monkeypatch):
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: "10.0.0.1")
+        log = _fresh_log()
+        ll._fill_call_header(log, "/srv/app/jobs.py", "run", {"n": 1}, include_node_ip=False)
+        assert log["module"] == "jobs.py"
+        assert log["function"] == "run"
+
+    def test_session_variables_are_left_out_of_the_parameters(self, monkeypatch):
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: None)
+        log = _fresh_log()
+        ll._fill_call_header(log, "/a/b.py", "f", {"n": 1, "login": "bob", "current_proxy": "http://u:p@h:1"}, include_node_ip=False)
+        assert log["parameters"] == {"n": 1}
+
+    def test_the_node_ip_is_recorded_only_when_requested(self, monkeypatch):
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: "10.0.0.1")
+        with_ip = _fresh_log()
+        ll._fill_call_header(with_ip, "/a/b.py", "f", {}, include_node_ip=True)
+        without = _fresh_log()
+        ll._fill_call_header(without, "/a/b.py", "f", {}, include_node_ip=False)
+        assert with_ip["node"] == {"ip": "10.0.0.1"}
+        assert "node" not in without
+
+    def test_a_truthy_proxy_is_recorded_redacted_in_the_session(self):
+        log = _fresh_log()
+        ll._record_session(log, {"current_proxy": "http://u:p@h:1"})
+        assert log["session"] == {"current_proxy": "http://***@h:1"}
+
+    def test_a_truthy_login_is_recorded_masked_when_short(self):
+        log = _fresh_log()
+        ll._record_session(log, {"login": "bob"})
+        assert log["session"] == {"login": "***"}
+
+    def test_falsy_session_values_create_no_session_entry(self):
+        log = _fresh_log()
+        ll._record_session(log, {"login": "", "current_proxy": None})
+        assert "session" not in log
+
+    def test_non_session_keys_are_ignored(self):
+        log = _fresh_log()
+        ll._record_session(log, {"n": 1})
+        assert "session" not in log
+
+
+class TestDecoratedCallWritesTheHeader:
+    """The ``logged`` wrapper itself writes the call header; the helper tests above do not reach that call."""
+
+    def _capture(self, monkeypatch):
+        captured: list = []
+        monkeypatch.setattr(ll, "finalize_function_log", lambda log, **kwargs: captured.append(log) or log)
+        return captured
+
+    def test_a_decorated_call_records_its_module_function_and_parameters(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(n, label="x", **_):
+            return n
+
+        load(3, label="abc")
+        assert captured[0]["module"] == "test_logginglib_survivors.py"
+        assert captured[0]["function"] == "load"
+        assert captured[0]["parameters"] == {0: 3, "label": "abc"}
+
+    def test_a_caller_supplied_results_log_is_the_one_finalized(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(n, **_):
+            return n
+
+        log: dict = {}
+        assert load(1, results_log=log) == 1
+        assert captured[0] is log
+        assert log["function"] == "load"
+
+    def test_no_node_ip_is_written_when_the_decorator_disables_it(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: "10.0.0.1")
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 1
+
+        load()
+        assert "node" not in captured[0]
+
+    def test_the_node_ip_is_written_when_the_decorator_enables_it(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+        monkeypatch.setattr(ll, "get_node_external_ip", lambda: "10.0.0.1")
+
+        @ll.logged(include_node_ip=True)
+        def load(**_):
+            return 1
+
+        load()
+        assert captured[0]["node"] == {"ip": "10.0.0.1"}
+
+
+class TestWrapperSessionClocksAndErrors:
+    """The wrapper's session record, start stamp, error record and finalize-failure path (logginglib 486-508)."""
+
+    def _capture(self, monkeypatch):
+        captured: list = []
+        monkeypatch.setattr(ll, "finalize_function_log", lambda log, **kwargs: captured.append(log) or log)
+        return captured
+
+    def test_a_truthy_session_variable_is_recorded_on_the_log(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 1
+
+        load(login="alice_user_01")
+        assert "session" in captured[0]
+        assert "login" in captured[0]["session"]
+
+    def test_no_session_is_recorded_without_a_truthy_session_variable(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 1
+
+        load(login="")
+        assert "session" not in captured[0]
+
+    def test_the_start_stamp_is_written_before_the_call(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+        seen: list = []
+
+        @ll.logged(include_node_ip=False)
+        def load(**kwargs):
+            seen.append(kwargs["results_log"]["results"]["timing"].get("started_at"))
+            return 1
+
+        load()
+        assert seen[0] is not None
+        assert captured[0]["results"]["timing"]["started_at"] is seen[0]
+
+    def test_an_exception_is_recorded_on_the_log_and_reraised(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            load()
+        assert captured[0]["results"]["error"] == "RuntimeError: boom"
+
+    def test_a_successful_call_records_no_error(self, monkeypatch):
+        captured = self._capture(monkeypatch)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 1
+
+        load()
+        assert "error" not in captured[0]["results"]
+
+    def test_a_finalize_failure_keeps_the_wrapped_result(self, monkeypatch):
+        class _Recorder:
+            def __init__(self):
+                self.messages: list = []
+
+            def exception(self, msg, *args, **kwargs):
+                self.messages.append(msg)
+
+        recorder = _Recorder()
+        monkeypatch.setattr(ll, "logger", recorder)
+
+        def broken_finalize(log, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(ll, "finalize_function_log", broken_finalize)
+
+        @ll.logged(include_node_ip=False)
+        def load(**_):
+            return 42
+
+        assert load() == 42
+        assert recorder.messages == ["finalize_function_log failed; the wrapped function's own result/exception is preserved"]
+
+
+class TestRedisHandler:
+    def test_the_defaults_are_the_logs_list_and_a_thousand_entries(self):
+        h = ll.RedisHandler(_FakeRedis())
+        assert (h.LOG_DEST, h.LOG_SIZE) == ("Logs", 1000)
+
+    def test_the_constructor_arguments_are_kept(self):
+        h = ll.RedisHandler(_FakeRedis(), LOG_DEST="jobs", LOG_SIZE=7)
+        assert (h.LOG_DEST, h.LOG_SIZE) == ("jobs", 7)
+
+    def test_each_record_is_pushed_onto_the_destination_list(self, monkeypatch):
+        rc = _FakeRedis()
+        monkeypatch.setattr(ll, "random", lambda: 0.5)
+        h = ll.RedisHandler(rc, LOG_DEST="jobs")
+        h.setFormatter(__import__("logging").Formatter("%(message)s"))
+        h.emit(_record("hi"))
+        assert rc.pushed == [("jobs", "hi")]
+
+    def test_the_list_is_trimmed_to_the_size_limit_on_the_sampled_path(self, monkeypatch):
+        rc = _FakeRedis()
+        monkeypatch.setattr(ll, "random", lambda: 0.0)
+        h = ll.RedisHandler(rc, LOG_DEST="jobs", LOG_SIZE=7)
+        h.emit(_record())
+        assert rc.trimmed == [("jobs", 0, 7)]
+
+    def test_no_trim_happens_off_the_sampled_path(self, monkeypatch):
+        rc = _FakeRedis()
+        monkeypatch.setattr(ll, "random", lambda: 0.1)
+        ll.RedisHandler(rc).emit(_record())
+        assert rc.trimmed == []
+
+    def test_a_redis_failure_goes_to_handle_error_and_is_not_raised(self, monkeypatch):
+        handled: list = []
+        monkeypatch.setattr(ll, "random", lambda: 0.5)
+        h = ll.RedisHandler(_FakeRedis(fail=True))
+        monkeypatch.setattr(h, "handleError", lambda record: handled.append(record.getMessage()))
+        h.emit(_record("oops"))
+        assert handled == ["oops"]

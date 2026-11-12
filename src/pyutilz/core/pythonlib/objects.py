@@ -6,7 +6,8 @@ package ``__init__`` to preserve the public import surface.
 
 # pylint: disable=unidiomatic-typecheck
 
-from typing import Dict, Iterator, List
+import operator
+from typing import Callable, Dict, Iterator, List
 
 from ._common import Any, Iterable, MappingABC, Optional, Sequence, Set, Union, logger, numbers
 from .numerics import is_float, to_float
@@ -305,19 +306,19 @@ def batch(iterable: Sequence[Any], n: int = 1) -> Iterator[Sequence[Any]]:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def _adjacent_pairs_hold(lst: Sequence, holds) -> bool:
-    """Whether ``holds(lst[i], lst[i + 1])`` is true for every adjacent pair of ``lst``."""
-    return all(holds(lst[i], lst[i + 1]) for i in range(len(lst) - 1))
+def _every_adjacent_pair(lst: Sequence, pair_ok: Callable[[Any, Any], bool]) -> bool:
+    """True when ``pair_ok(lst[i], lst[i + 1])`` holds for every neighbouring pair (vacuously True below two items)."""
+    return all(pair_ok(lst[i], lst[i + 1]) for i in range(len(lst) - 1))
 
 
 def list_is_non_increasing(lst: Sequence) -> bool:
     """Checks if a list is sorted."""
-    return _adjacent_pairs_hold(lst, lambda a, b: a >= b)
+    return _every_adjacent_pair(lst, operator.ge)
 
 
 def list_is_non_decreasing(lst: Sequence) -> bool:
     """Checks if a list is sorted."""
-    return _adjacent_pairs_hold(lst, lambda a, b: a <= b)
+    return _every_adjacent_pair(lst, operator.le)
 
 
 def sort_dict_by_value(dct: dict, reverse: bool = False) -> dict:

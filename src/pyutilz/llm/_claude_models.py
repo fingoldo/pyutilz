@@ -69,6 +69,9 @@ CLAUDE_MODELS: dict[str, ClaudeModelSpec] = {
     "claude-sonnet-5-5": ClaudeModelSpec(2.0, 10.0, 128_000, _1M),
     "claude-sonnet-5": ClaudeModelSpec(2.0, 10.0, 128_000, _1M),
     "claude-sonnet-4-6": ClaudeModelSpec(3.0, 15.0, 128_000, _1M, effort_levels=("low", "medium", "high", "max")),
+    # Anthropic's models table (read 2026-11-12): $0.10 / $0.50 per 1M for a prompt up to 100K tokens, $0.50 / $2.50 beyond it. This row is the
+    # base tier; the spec has no field for the long-prompt tier, so a call over 100K input tokens is priced at a fifth of its real rate.
+    "claude-haiku-5-5": ClaudeModelSpec(0.10, 0.50, 128_000, _1M),
     # Extended-thinking-only generation. Opus 4.5 is the one of them that also takes ``effort``.
     "claude-opus-4-5": ClaudeModelSpec(5.0, 25.0, 64_000, _200K, adaptive_thinking=False, effort_levels=("low", "medium", "high")),
     # ``GET /v1/models`` reports ``max_input_tokens: 1000000`` for claude-sonnet-4-5-20250929 (2026-10-03).
@@ -89,12 +92,10 @@ CLAUDE_MODELS: dict[str, ClaudeModelSpec] = {
 # current Opus tier, so an unknown model is neither silently capped at a legacy limit nor priced at zero.
 UNKNOWN_CLAUDE_MODEL = ClaudeModelSpec(4.0, 20.0, 64_000, _200K)
 
-# Not listed on purpose: ``claude-haiku-5-5``. The CLI reports its limits (``modelUsage``, 2026-10-12, CLI 2.1.296):
-# ``maxOutputTokens`` 128,000 and ``contextWindow`` 1,000,000, accepts ``--effort`` (low and max verified, thinking
-# 394 and 1,322 tokens on one question), and the table has no documented price for it. An invented price would misprice
-# every call, so a model the table lacks is priced from the OpenRouter catalogue (the live listing of the same model,
-# :func:`_openrouter_claude_spec`); only when that lists no row either does the unknown-model default apply. The default's
-# own max-output and context figures are ours and are NOT a cap sent to the model; the Claude Code provider never sends max_tokens.
+# ``claude-haiku-5-5`` is listed above since Anthropic documents its price. A model the table lacks is priced from the OpenRouter catalogue (the live
+# listing of the same model, :func:`_openrouter_claude_spec`); only when that lists no row either does the unknown-model default apply. The default's
+# own max-output and context figures are ours and are NOT a cap sent to the model; the Claude Code provider never sends max_tokens. The CLI reported
+# the Haiku 5.5 limits too (``modelUsage``, 2026-10-12, CLI 2.1.296): ``maxOutputTokens`` 128,000 and ``contextWindow`` 1,000,000.
 
 # Claude Code's model aliases, as the CLI resolves them (``claude --model opus``). Verified 2026-09-26 against
 # CLI 2.1.263 by reading ``modelUsage`` off a live ``--output-format json`` result: ``opus`` is Opus 5, not the

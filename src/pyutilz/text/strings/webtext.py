@@ -394,10 +394,9 @@ def get_ascii_emojies() -> dict:
 def get_unicode_emojies() -> dict:
     """Build a mapping from unicode emoji character to its ASCII text name (inverse of get_ascii_emojies)."""
 
-    res = dict()
-    for emoji in _emoji_records():
-        res[emoji.char] = emoji.text
-    return res
+    import emoji_data_python
+
+    return {emoji.char: emoji.text for emoji in emoji_data_python.emoji_data}
 
 
 def _strip_tilda_bullets(text: str) -> str:

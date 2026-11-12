@@ -1,87 +1,21 @@
-"""Tests for OpenAICompatibleProvider base class."""
-
-from __future__ import annotations
+"""OpenAI-compatible provider tests: requests, timeouts and buffered generation."""
 
 from pyutilz.core import jsonlib
 import logging
 from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 from tenacity import stop_after_attempt, wait_none
-
-httpx = pytest.importorskip("httpx")
-
 from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+from tests.openai_compat_support import (
+    _FakeResponse,
+    _MockStreamResponse,
+    _TestProvider,
+    _make_provider,
+    _mock_response,
+)
 
-
-class _TestProvider(OpenAICompatibleProvider):
-    _base_url = "https://test.example.com"
-    _provider_name = "TestProvider"
-    _max_tokens_map = {"test-model": 4096}
-    _default_max_tokens = 2048
-
-    def _input_cost_per_1m(self, model: str) -> float:
-        return 1.0
-
-    def _output_cost_per_1m(self, model: str) -> float:
-        return 2.0
-
-    def _cache_hit_cost_per_1m(self, model: str) -> float:
-        return 0.1
-
-
-def _make_provider(model: str = "test-model") -> _TestProvider:
-    return _TestProvider(api_key="test-key", model=model)  # pragma: allowlist secret
-
-
-def _mock_response(status_code: int = 200, body: dict | None = None, text: str = "") -> httpx.Response:
-    if body is None:
-        body = {
-            "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": 10,
-                "completion_tokens": 5,
-                "prompt_cache_hit_tokens": 2,
-                "completion_tokens_details": {"reasoning_tokens": 1},
-            },
-        }
-    resp = httpx.Response(
-        status_code=status_code,
-        json=body,
-        request=httpx.Request("POST", "https://test.example.com/chat/completions"),
-    )
-    return resp
-
-
-class _MockStreamResponse:
-    """Minimal async-context-manager mock standing in for
-    ``httpx.AsyncClient.stream(...)``'s ``async with ... as resp:`` result.
-    """
-
-    def __init__(self, status_code: int = 200, headers: dict | None = None, lines: list[str] | None = None):
-        self.status_code = status_code
-        self.headers = headers or {}
-        self._lines = lines or []
-        self.request = httpx.Request("POST", "https://test.example.com/chat/completions")
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise httpx.HTTPStatusError(
-                f"status {self.status_code}",
-                request=self.request,
-                response=httpx.Response(self.status_code, headers=self.headers, request=self.request),
-            )
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc_info):
-        return False
+httpx = pytest.importorskip("httpx")
 
 
 class TestProperties:
@@ -622,6 +556,8 @@ class TestStrictJsonSchema:
         body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert body["response_format"]["type"] == "json_schema"
         assert out == {"relation": "CAUSES"}
+
+
 class TestContextClamp:
     """An explicit output budget must fit the context window, or the upstream rejects the whole request with
     HTTP 400 before generating anything (llama-3.3-70b: 128k output cap, 131k window). An unset budget is not
@@ -657,21 +593,6 @@ class TestContextClamp:
         await p.generate("short", max_tokens=1000)
         body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert body["max_tokens"] == 1000
-
-
-class _FakeResponse:
-    """The three response shapes an intermediary can return in place of the API's JSON envelope."""
-
-    def __init__(self, text: str, status_code: int = 200, payload: object | None = None, raises: bool = False):
-        self.text = text
-        self.status_code = status_code
-        self._payload = payload
-        self._raises = raises
-
-    def json(self) -> object:
-        if self._raises:
-            raise ValueError("Expecting value: line 1 column 1 (char 0)")
-        return self._payload
 
 
 def test_an_empty_body_is_raised_as_a_retryable_unparsable_response():
@@ -974,3 +895,45 @@ class TestAnErrorChunkInAStreamIsNotSkipped:
                 received.append(chunk)
 
         assert received == ["partial answer text"]
+
+
+class TestFreshProviderDefaults:
+    """Per-call and cumulative state start at their documented zero values (openai_compat 84-135)."""
+
+    def test_the_per_call_usage_starts_with_zero_token_counts(self):
+        provider = _make_provider()
+        assert provider._last_usage == {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+
+    def test_the_per_call_post_reasoning_count_starts_at_zero(self):
+        assert _make_provider()._last_post_reasoning_tokens == 0
+
+    def test_the_per_call_finish_reason_starts_as_none(self):
+        assert _make_provider()._last_finish_reason is None
+
+    def test_the_per_call_collections_start_empty(self):
+        provider = _make_provider()
+        assert provider.last_tool_calls == []
+        assert provider.last_citations == []
+        assert provider.last_rate_limits == {}
+
+    def test_the_per_call_flags_start_false(self):
+        provider = _make_provider()
+        assert provider._last_json_schema_applied is False
+        assert provider.last_json_mode_fallback is False
+
+    def test_the_cumulative_counters_start_at_zero(self):
+        provider = _make_provider()
+        assert (provider.total_prompt_tokens, provider.total_completion_tokens) == (0, 0)
+        assert (provider.total_cache_hit_tokens, provider.total_reasoning_tokens, provider.total_cache_write_tokens) == (0, 0, 0)
+        assert provider._call_count == 0
+
+    def test_the_long_context_tally_starts_at_zero(self):
+        provider = _make_provider()
+        assert provider._long_context_surcharge_usd == 0.0
+        assert provider._long_context_calls == 0
+
+    def test_the_concurrency_limit_defaults_to_ten(self):
+        import inspect
+
+        assert inspect.signature(OpenAICompatibleProvider.__init__).parameters["max_concurrent"].default == 10
+        assert _make_provider()._max_concurrent == 10

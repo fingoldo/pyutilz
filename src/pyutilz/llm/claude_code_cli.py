@@ -11,6 +11,7 @@ The names are re-exported from ``claude_code_provider`` for existing importers.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
 import importlib
 import logging
@@ -20,6 +21,7 @@ import signal
 import shutil
 import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
 import sys
+import tempfile
 import threading
 import re
 import time
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 from pyutilz.core import jsonlib
-from pyutilz.llm.exceptions import ClaudeCodeToolUseError
+from pyutilz.llm.exceptions import ClaudeCodeToolUseError, LLMProviderError
 
 
 def _find_claude_executable() -> str:
@@ -115,9 +117,10 @@ def _is_transient_subprocess_error(exc: BaseException) -> bool:
 def _count_thinking_blocks(event: dict) -> int:
     """How many thinking blocks this ``assistant`` event carries.
 
-    The COUNT, not the text: the CLI returns a thinking block whose ``thinking`` field is an empty
-    string plus an opaque ``signature``, so the reasoning itself is withheld on this path. Measured
-    2026-09-14 against opus. Counting them is still worth doing -- it distinguishes "the model did
+    The COUNT, not the text. Without ``--thinking-display`` the CLI returns a thinking block whose ``thinking`` field is an empty
+    string plus an opaque ``signature``, so the reasoning itself is withheld on that path. Measured 2026-09-14 against opus. With
+    ``--thinking-display summarized`` (CLI 2.1.296, measured 2026-11-12 against claude-sonnet-5-5) the same block carries a summary of the
+    reasoning, which :func:`thinking_text_of` reads. Counting them is still worth doing -- it distinguishes "the model did
     not reason" from "the model reasoned and the tool did not hand it over", which is otherwise
     indistinguishable from the caller's side and cost one session an afternoon of wrong conclusions.
     """
@@ -125,6 +128,68 @@ def _count_thinking_blocks(event: dict) -> int:
     if not isinstance(content, list):
         return 0
     return sum(1 for b in content if isinstance(b, dict) and b.get("type") == "thinking")
+
+
+#: The hidden ``--thinking-display`` choices of CLI 2.1.296 (``full`` is rejected: "Allowed choices are summarized, omitted, highlights").
+THINKING_DISPLAYS = ("summarized", "omitted", "highlights")
+
+#: What the provider asks for by default: the reasoning SUMMARY, the only form the CLI hands over (not the raw tokens).
+DEFAULT_THINKING_DISPLAY = "summarized"
+
+
+def thinking_text_of(event: dict) -> str:
+    """The text of the thinking blocks of one ``assistant`` event, blocks joined by a blank line; empty when the CLI withheld it."""
+    content = (event.get("message") or {}).get("content") or []
+    if not isinstance(content, list):
+        return ""
+    texts = [b["thinking"] for b in content if isinstance(b, dict) and b.get("type") == "thinking" and isinstance(b.get("thinking"), str) and b["thinking"]]
+    return "\n\n".join(texts)
+
+
+def thinking_delta_of(event: dict) -> str:
+    """The text of one ``thinking_delta`` partial-message event (only sent with ``--include-partial-messages``), else empty."""
+    if event.get("type") != "stream_event":
+        return ""
+    delta = (event.get("event") or {}).get("delta") or {}
+    text = delta.get("thinking") if isinstance(delta, dict) and delta.get("type") == "thinking_delta" else ""
+    return text if isinstance(text, str) else ""
+
+
+def flag_rejected(stderr: str | None, flag: str = "--thinking-display") -> bool:
+    """Whether the CLI's stderr says it does not know ``flag`` (an older CLI): the one case where the call is repeated without it."""
+    text = (stderr or "").lower()
+    return flag in text and ("unknown option" in text or "unrecognized" in text)
+
+
+def sdk_thinking_text(blocks: Any) -> str:
+    """The text of the ``ThinkingBlock`` s of one SDK ``AssistantMessage``, blocks joined by a blank line; empty when the CLI withheld it.
+
+    The SDK's ``ThinkingBlock`` carries its text in ``thinking`` (it has no ``text``), so the generic ``.text`` branch never saw it.
+    """
+    texts = [t for b in blocks or [] if type(b).__name__ == "ThinkingBlock" and isinstance(t := getattr(b, "thinking", None), str) and t]
+    return "\n\n".join(texts)
+
+
+async def call_with_thinking_display(owner: Any, display: Optional[str], call: Any) -> str:
+    """``await call(display)``; an older CLI that rejects ``--thinking-display`` is remembered on ``owner`` for the process and the call repeated with ``None``.
+
+    The SDK reports the rejection as an exception whose message or ``stderr`` carries the CLI's "unknown option" text; anything else is raised as it is.
+    """
+    try:
+        return str(await call(display))
+    except Exception as exc:
+        if not (display and flag_rejected(f"{exc} {getattr(exc, 'stderr', '')}")):
+            raise
+        owner._thinking_display_unsupported = True
+        logger.warning("The Claude CLI rejected --thinking-display; calling without it from now on (its reasoning will not be captured)")
+        return str(await call(None))
+
+
+class ThinkingFlagRejectedError(LLMProviderError):
+    """The installed CLI does not know ``--thinking-display``; the call is repeated without it.
+
+    Rooted in ``LLMProviderError`` like every other exception of this domain (test_architecture_audit_20260903).
+    """
 
 
 def _raise_on_cli_tool_use(event: dict) -> None:
@@ -169,6 +234,29 @@ def _result_outcome(event: dict) -> "tuple[str | None, str | None]":
     return None, fallback
 
 
+class _ThinkingCapture:
+    """The reasoning text of one stream: the final ``assistant`` thinking blocks, with the partial-message deltas as the fallback."""
+
+    def __init__(self) -> None:
+        self._blocks: list[str] = []
+        self._deltas: list[str] = []
+
+    def observe(self, event: dict) -> None:
+        """Take what this event carries: an ``assistant`` event its thinking blocks, any other its thinking delta."""
+        if event.get("type") == "assistant":
+            block = thinking_text_of(event)
+            if block:
+                self._blocks.append(block)
+        else:
+            self._deltas.append(thinking_delta_of(event))
+
+    def text(self) -> str:
+        """The blocks (final text, one blank line between turns) when any carried text, else the concatenated deltas, else empty."""
+        if self._blocks:
+            return "\n\n".join(self._blocks)
+        return "".join(self._deltas)
+
+
 def _observe_stream_event(event: dict) -> int:
     """Handle one non-result stream event; returns the thinking-block count it carries (0 for all but ``assistant``)."""
     etype = event.get("type")
@@ -205,8 +293,10 @@ def _consume_cli_stream(
     result_text: "str | None" = None
     error_text: "str | None" = None
     result_event: "dict | None" = None
-    # Counted, not read: the CLI withholds the thinking TEXT (see _count_thinking_blocks).
+    # Counted, and READ when the CLI was asked for ``--thinking-display`` (see _count_thinking_blocks): the text of the final thinking
+    # blocks, with the concatenated partial-message deltas as the fallback for a stream that ended before its ``assistant`` event.
     thinking_blocks = 0
+    capture = _ThinkingCapture()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if cancel_evt is not None and cancel_evt.is_set():
@@ -235,12 +325,14 @@ def _consume_cli_stream(
             result_text, error_text = _result_outcome(event)
             break
         thinking_blocks += _observe_stream_event(event)
+        capture.observe(event)
     else:
         return None, None, True, None
     if isinstance(result_event, dict):
         # Carried on the result event rather than as a fifth return value, so every existing caller
         # of this four-tuple keeps working; `_CliResultMessage` exposes it to the provider.
         result_event["thinking_blocks"] = thinking_blocks
+        result_event["thinking_text"] = capture.text()
     return result_text, error_text, False, result_event
 
 
@@ -274,7 +366,7 @@ class _CliResultMessage:
     ``generate()`` reading the same four fields out of a dict.
     """
 
-    __slots__ = ("duration_ms", "num_turns", "session_id", "total_cost_usd", "usage")
+    __slots__ = ("duration_ms", "num_turns", "session_id", "thinking_text", "total_cost_usd", "usage")
 
     def __init__(self, event: dict) -> None:
         raw = event.get("usage") or {}
@@ -289,6 +381,8 @@ class _CliResultMessage:
         self.session_id = event.get("session_id")
         self.num_turns = event.get("num_turns")
         self.duration_ms = event.get("duration_ms")
+        text = event.get("thinking_text")
+        self.thinking_text: str | None = text if isinstance(text, str) and text else None
 
 
 def _kill_process_tree(proc: "subprocess.Popen") -> None:
@@ -326,6 +420,81 @@ def _kill_process_tree(proc: "subprocess.Popen") -> None:
         pass
 
 
+def cli_argv(claude_path: str, model: str, effort: str | None, thinking_display: str | None) -> list[str]:
+    """The argv of one ``claude --print`` call up to, and excluding, the system-prompt file and the ``-`` that makes it read stdin.
+
+    Every flag keeps the reason it was chosen, below. Carved out of ``ClaudeCodeProvider._generate_cli`` (2026-11-12) when adding
+    ``--thinking-display`` would have pushed that module past its 1000-line budget.
+    """
+    return [
+        claude_path,
+        "--print",
+        # --verbose is REQUIRED alongside --print --output-format stream-json.
+        "--verbose",
+        # 2026-09-07: --include-partial-messages was here. Probed with and without on CLI
+        # 2.1.263: it adds seven stream_event lines and a second system event per short
+        # call and changes the answer not at all. _consume_cli_stream handles result,
+        # assistant, rate_limit_event and system-init, and ignores stream_event entirely,
+        # so every one of those lines was parsed and thrown away.
+        '--model', model,
+        '--output-format', 'stream-json',
+        # 2026-09-07: was --dangerously-skip-permissions, which auto-approves whatever
+        # reaches a permission check -- on a call whose entire input is untrusted text and
+        # which wants no tools at all. --restricted is its opposite: the built-in tools
+        # that run commands or code and WebFetch are removed unless --tools names them
+        # (it names nothing), file tools are confined to the working directories, and
+        # bypassPermissions is refused outright. --permission-prompts none denies any
+        # prompt immediately rather than waiting on an answer a --print subprocess has no
+        # way to give. Probed against CLI 2.1.263 with this exact flag set: is_error
+        # false, num_turns 1, answer returned.
+        '--restricted',
+        '--permission-prompts', 'none',
+        '--no-session-persistence',
+        # Use ONLY MCP servers given via --mcp-config (none are), so the invoking user's
+        # global/project MCP servers are not loaded. `--tools ""` scopes the BUILT-IN tool
+        # set only, and with --dangerously-skip-permissions any loaded MCP tool would be
+        # auto-approved -- reachable from untrusted text passed in as the prompt.
+        "--strict-mcp-config",
+        *(["--effort", effort] if effort else []),
+        *(["--thinking-display", thinking_display] if thinking_display else []),
+        # LAST, immediately before the `-` positional: --tools is variadic, so it eats
+        # following arguments until the next flag. It parses correctly today with flags
+        # after it, but nothing pins that, and a variadic that swallowed the next flag
+        # would fail OPEN -- the tool restriction would silently not apply. With nothing
+        # after it there is nothing to swallow.
+        "--tools", "",
+    ]
+
+
+def write_system_prompt_file(system: str) -> str:
+    """Write ``system`` to a temporary file and return its path; the CALLER removes the file, but a failed write removes it here.
+
+    The system prompt goes in a FILE, not in argv.
+
+    2026-09-06: Windows caps a whole command line at 32767 characters (CreateProcess), and a real system prompt blows past that on its own -- the
+    measured case was 48378 characters, which failed with WinError 206 "the filename or extension is too long" on every attempt, was retried
+    thirteen times as though it were transient, and burned a 40-minute budget before the caller gave up. There is no size threshold to pick here
+    and no need for one: the CLI takes --system-prompt-file, so the file path is what argv carries whatever the prompt's length. The prompt itself
+    already goes through stdin.
+
+    ``delete=False``, because the subprocess has to be able to open the file after this function closes the handle. ``newline=""``: text mode on
+    Windows rewrites every LF as CRLF, so the file the CLI reads would not be the prompt we built, hashed and stored -- different bytes, a different
+    cached prefix, and an archived system prompt that does not match what the model was actually sent.
+    """
+    path = ""
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", suffix=".txt", prefix="claude-system-", delete=False) as handle:
+            # Bound before the write, not after: the write can fail (a full disk, an encoding error) and the cleanup below is keyed on this variable.
+            path = handle.name
+            handle.write(system)
+    except BaseException:
+        if path:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        raise
+    return path
+
+
 def run_cli(cmd: "list[str]", prompt: str, sub_env: dict, child_cwd: str, timeout: float, proc_holder: "list", cancel_evt: "threading.Event") -> "tuple[int, str, str, dict | None]":
     """Spawn the ``claude`` CLI as a subprocess, stream its stdout via a background reader thread, and parse the stream-json events until a ``result`` event, timeout, or EOF; returns ``(returncode, result_text, stderr_text, result_event)``."""
     with subprocess.Popen(
@@ -353,14 +522,14 @@ def run_cli(cmd: "list[str]", prompt: str, sub_env: dict, child_cwd: str, timeou
 
 def _write_prompt(proc: "subprocess.Popen", prompt: str) -> None:
     """Write the prompt to the child's stdin and close it; a child that already exited is tolerated."""
+    assert proc.stdin is not None  # guaranteed by stdin=subprocess.PIPE above
     try:
-        assert proc.stdin is not None  # guaranteed by stdin=subprocess.PIPE above
         try:
             proc.stdin.write(prompt)
         finally:
             # Close on every path: a write that raises something other than BrokenPipeError must not leave the child waiting on stdin.
             proc.stdin.close()
-    except BrokenPipeError:
+    except BrokenPipeError:  # swallow-ok: the child exited before reading its prompt; its exit status and stderr carry the real failure
         pass
 
 

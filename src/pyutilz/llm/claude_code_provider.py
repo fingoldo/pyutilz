@@ -39,7 +39,12 @@ logger = logging.getLogger(__name__)
 from pyutilz.llm.claude_code_cli import usage_thinking_tokens
 from pyutilz.llm._claude_code_guards import _assert_argv_shell_safe, _check_attempt_budget, _strip_json_fence
 from pyutilz.llm.claude_code_cli import (  # re-export, placed after the logger it shares
+    DEFAULT_THINKING_DISPLAY,
     MAX_TIMEOUT_RETRIES,
+    THINKING_DISPLAYS,
+    ThinkingFlagRejectedError,
+    call_with_thinking_display,
+    sdk_thinking_text,
     _CliResultMessage,
     _consume_cli_stream,  # noqa: F401 -- re-export: imported from this module by existing callers and tests
     _find_claude_executable,
@@ -51,8 +56,11 @@ from pyutilz.llm.claude_code_cli import (  # re-export, placed after the logger 
     _RATE_LIMIT_PATTERN,  # noqa: F401 -- re-export: downstream (glossum) imports the patterns from this module
     _RESET_TIME_PATTERN,  # noqa: F401 -- re-export, as above
     _TIMEZONE_PATTERN,  # noqa: F401 -- re-export, as above
+    cli_argv,
+    flag_rejected,
     run_cli,
     usage_int,
+    write_system_prompt_file,
 )
 
 # ---------------------------------------------------------------------------
@@ -224,6 +232,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
     INPUT_COST_PER_1M = 0.0
     OUTPUT_COST_PER_1M = 0.0
 
+    #: Set once, for the whole process, when an installed CLI rejects ``--thinking-display`` (older than 2.1.296): later calls do not send it.
+    _thinking_display_unsupported = False
+
     # Per-call "last successful call" state -- contextvar-backed via PerCallAttr, NOT plain
     # instance attributes (2026-09-03 audit F08). generate_batch() fires N concurrent
     # self.generate() calls on ONE shared, factory-cached provider; as plain attributes the
@@ -250,7 +261,13 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         model: str = "opus",
         max_concurrent: int = 1,
         timeout: int = 2400,
+        thinking_display: str | None = DEFAULT_THINKING_DISPLAY,
     ):
+        if thinking_display is not None and thinking_display not in THINKING_DISPLAYS:
+            raise ValueError(f"thinking_display must be one of {THINKING_DISPLAYS} or None, got {thinking_display!r}")
+        # What the CLI is asked to put in the thinking blocks of its stream: a SUMMARY of the reasoning (the raw tokens are not available
+        # on this path). None sends no flag, which is the old behaviour: empty thinking blocks.
+        self.thinking_display = thinking_display
         self.model = model
         self.model_name = model
         self.timeout = timeout
@@ -558,14 +575,21 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         thinking_tokens: int | None = None,
         effort: str | None = None,
     ) -> str:
-        """Generate text using claude-code-sdk; ``thinking_tokens`` goes to the CLI as MAX_THINKING_TOKENS, ``effort`` as ``--effort``."""
+        """Generate text using claude-code-sdk (``thinking_tokens`` -> MAX_THINKING_TOKENS, ``effort`` -> ``--effort``); asks for ``--thinking-display`` like the CLI path."""
+        async def once(display: str | None) -> str:
+            """One SDK call asking for ``display``."""
+            return await self._generate_sdk_once(prompt, system, thinking_tokens, effort, display)
+        return await call_with_thinking_display(type(self), self._thinking_display_to_send(), once)
+
+    async def _generate_sdk_once(self, prompt: str, system: str | None, thinking_tokens: int | None, effort: str | None, thinking_display: str | None) -> str:
+        """One SDK call; ``thinking_display`` goes to the CLI as ``--thinking-display`` when set."""
         async with self.semaphore:
             self._reset_per_call_state()
             override_env = {k: "" for k in self._NESTED_BLOCK_VARS if k in os.environ}
             if thinking_tokens is not None:
                 override_env["MAX_THINKING_TOKENS"] = str(thinking_tokens)
 
-            opts = self._build_sdk_options(system, effort, override_env)
+            opts = self._build_sdk_options(system, effort, override_env, thinking_display)
 
             logger.info("SDK call: model=%s prompt=%d system=%d", self.model, len(prompt), len(system or ""))
 
@@ -603,7 +627,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                             result_text += text
             return self._finalize_sdk_text(prompt, result_text, msg_count, msg_types)
 
-    def _build_sdk_options(self, system: str | None, effort: str | None, override_env: dict[str, str]) -> ClaudeCodeOptions:
+    def _build_sdk_options(self, system: str | None, effort: str | None, override_env: dict[str, str], thinking_display: str | None = None) -> ClaudeCodeOptions:
         """Build the SDK options for one call: no system-prompt folding, no tools, no ambient MCP servers."""
         # The system prompt stays where it belongs. 2026-09-07: this used to fold it into
         # the user message above 6000 combined characters -- so on every real call, the
@@ -627,7 +651,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             # permissions are bypassed its tools would be auto-approved. `--tools ""` does not cover
             # them: it scopes only the built-in tool set. This provider is text-generation-only, so
             # no ambient MCP configuration is ever wanted.
-            extra_args={"tools": "", "strict-mcp-config": None, **({"effort": effort} if effort else {})},
+            extra_args={"tools": "", "strict-mcp-config": None, **({"effort": effort} if effort else {}), **({"thinking-display": thinking_display} if thinking_display else {})},
         )
 
         _tools_val = opts.extra_args.get("tools") if opts.extra_args else None
@@ -648,6 +672,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         if not (hasattr(msg, "content") and msg.content):
             return None
         parts = []
+        thinking = sdk_thinking_text(msg.content)
+        if thinking:
+            self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, ("\n\n" if self._reasoning_fragments else "") + thinking)
         for block in msg.content:
             bt = type(block).__name__
             if isinstance(block, TextBlock):
@@ -661,14 +688,8 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 # reaching a tool that permission bypass then auto-approves. Fail hard
                 # instead of logging "(blocked)" while the turn continues.
                 raise ClaudeCodeToolUseError(f"Claude Code returned a tool-use block ({tool_name!r}); this provider is text-generation-only")
-            elif hasattr(block, "text") and isinstance(getattr(block, "text"), str):
-                if bt != "ThinkingBlock":
-                    parts.append(block.text)
-                else:
-                    # Kept out of the ANSWER, as before, but no longer thrown away:
-                    # Anthropic bills thinking as output tokens, and a caller that
-                    # cannot see it is comparing models on a number it cannot split.
-                    self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, block.text)
+            elif bt != "ThinkingBlock" and isinstance(getattr(block, "text", None), str):
+                parts.append(block.text)  # a ThinkingBlock is read above (sdk_thinking_text), kept out of the ANSWER
         if not parts:
             return None
         return "\n".join(parts)
@@ -683,6 +704,10 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             logger.warning("SDK returned empty response: model=%s prompt_len=%d msgs=%d types=%s", self.model, len(prompt), msg_count, msg_types)
         return stripped
 
+    def _thinking_display_to_send(self) -> str | None:
+        """The ``--thinking-display`` value for the next CLI call: the configured one, unless this process already learned the CLI rejects the flag."""
+        return None if type(self)._thinking_display_unsupported else self.thinking_display
+
     async def _generate_cli(
         self,
         prompt: str,
@@ -694,75 +719,38 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
 
         Takes no temperature/max_tokens: the CLI exposes no flag for either, so accepting them here
         only made the drop look deliberate. ``generate()`` warns about them once instead.
+
+        Asks the CLI for ``--thinking-display`` (the reasoning summary, readable afterwards as ``last_reasoning_text``). A CLI that does not know the
+        flag fails with "unknown option"; that is detected once, remembered for the process, and the call is repeated without it.
         """
+        display = self._thinking_display_to_send()
+        try:
+            return await self._generate_cli_once(prompt, system, thinking_tokens, effort, display)
+        except ThinkingFlagRejectedError:
+            type(self)._thinking_display_unsupported = True
+            logger.warning("The Claude CLI rejected --thinking-display; calling without it from now on (its reasoning will not be captured)")
+            return await self._generate_cli_once(prompt, system, thinking_tokens, effort, None)
+
+    async def _generate_cli_once(
+        self,
+        prompt: str,
+        system: str | None,
+        thinking_tokens: int | None,
+        effort: str | None,
+        thinking_display: str | None,
+    ) -> str:
+        """One CLI call; raises ``ThinkingFlagRejectedError`` when ``thinking_display`` was sent and the CLI did not know the flag."""
         async with self.semaphore:
             self._reset_per_call_state()
             if not hasattr(self, "_claude_path"):
                 self._claude_path = _find_claude_executable()
 
-            cmd = [
-                self._claude_path,
-                "--print",
-                # --verbose is REQUIRED alongside --print --output-format stream-json.
-                "--verbose",
-                # 2026-09-07: --include-partial-messages was here. Probed with and without on CLI
-                # 2.1.263: it adds seven stream_event lines and a second system event per short
-                # call and changes the answer not at all. _consume_cli_stream handles result,
-                # assistant, rate_limit_event and system-init, and ignores stream_event entirely,
-                # so every one of those lines was parsed and thrown away.
-                '--model', self.model,
-                '--output-format', 'stream-json',
-                # 2026-09-07: was --dangerously-skip-permissions, which auto-approves whatever
-                # reaches a permission check -- on a call whose entire input is untrusted text and
-                # which wants no tools at all. --restricted is its opposite: the built-in tools
-                # that run commands or code and WebFetch are removed unless --tools names them
-                # (it names nothing), file tools are confined to the working directories, and
-                # bypassPermissions is refused outright. --permission-prompts none denies any
-                # prompt immediately rather than waiting on an answer a --print subprocess has no
-                # way to give. Probed against CLI 2.1.263 with this exact flag set: is_error
-                # false, num_turns 1, answer returned.
-                '--restricted',
-                '--permission-prompts', 'none',
-                '--no-session-persistence',
-                # Use ONLY MCP servers given via --mcp-config (none are), so the invoking user's
-                # global/project MCP servers are not loaded. `--tools ""` scopes the BUILT-IN tool
-                # set only, and with --dangerously-skip-permissions any loaded MCP tool would be
-                # auto-approved -- reachable from untrusted text passed in as the prompt.
-                "--strict-mcp-config",
-                *(["--effort", effort] if effort else []),
-                # LAST, immediately before the `-` positional: --tools is variadic, so it eats
-                # following arguments until the next flag. It parses correctly today with flags
-                # after it, but nothing pins that, and a variadic that swallowed the next flag
-                # would fail OPEN -- the tool restriction would silently not apply. With nothing
-                # after it there is nothing to swallow.
-                "--tools", "",
-            ]
+            cmd = cli_argv(self._claude_path, self.model, effort, thinking_display)
 
-            # The system prompt goes in a FILE, not in argv.
-            #
-            # 2026-09-06: Windows caps a whole command line at 32767 characters
-            # (CreateProcess), and a real system prompt blows past that on its own -- the
-            # measured case was 48378 characters, which failed with WinError 206 "the
-            # filename or extension is too long" on every attempt, was retried thirteen
-            # times as though it were transient, and burned a 40-minute budget before the
-            # caller gave up. There is no size threshold to pick here and no need for one:
-            # the CLI takes --system-prompt-file, so the file path is what argv carries
-            # whatever the prompt's length. The prompt itself already goes through stdin.
+            # The system prompt goes in a FILE, not in argv (see write_system_prompt_file).
             system_prompt_file: str | None = None
             if system:
-                # delete=False, because the subprocess has to be able to open it after this
-                # block closes the handle; the finally below removes it.
-                # newline="": text mode on Windows rewrites every \n as \r\n, so the file the
-                # CLI reads would not be the prompt we built, hashed and stored -- different
-                # bytes, a different cached prefix, and an archived system prompt that does not
-                # match what the model was actually sent.
-                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", suffix=".txt", prefix="claude-system-", delete=False) as handle:
-                    # Bound before the write, not after: the write can fail (a full disk, an
-                    # encoding error) and the cleanup in the finally is keyed on this variable,
-                    # so binding it afterwards left the file on disk on exactly the path that
-                    # created it.
-                    system_prompt_file = handle.name
-                    handle.write(system)
+                system_prompt_file = write_system_prompt_file(system)
                 cmd.extend(["--system-prompt-file", system_prompt_file])
 
             cmd.append("-")
@@ -808,6 +796,15 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 # own (empty) context, so a PerCallAttr write there would be invisible to the caller.
                 if result_event is not None:
                     self._last_result_message = _CliResultMessage(result_event)
+                    # The reasoning summary the CLI put in its thinking blocks (empty unless ``--thinking-display`` was sent), served as
+                    # ``last_reasoning_text`` like every other provider's reasoning.
+                    self._reasoning_fragments = _reasoning.collect([], self._last_result_message.thinking_text)
+            except RuntimeError as exc:
+                # An older CLI that does not know ``--thinking-display`` exits with "unknown option" and no result event, which ``run_cli`` reports
+                # as "produced no result. stderr: ..."; that, and only that, is repeated without the flag.
+                if thinking_display and flag_rejected(str(exc)):
+                    raise ThinkingFlagRejectedError(str(exc)) from exc
+                raise
             except asyncio.CancelledError:
                 # Reach into the thread's process and end it. The executor thread itself cannot be
                 # cancelled, but with the child dead its stdout closes, the reader hits EOF and

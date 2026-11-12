@@ -32,7 +32,7 @@ class TestPromoteColumnToInt64:
         assert ints == ["n"]
 
     def test_fractional_values_are_rejected_and_the_column_is_untouched(self):
-        df = pd.DataFrame({"n": ["3.5", "2"]})
+        df = pd.DataFrame({"n": pd.Series(["3.5", "2"], dtype=object)})
         old, ints = {"n": "object"}, []
         with pytest.raises(ValueError):
             dt._promote_column_to_int64(df, "n", old, ints)
@@ -41,7 +41,7 @@ class TestPromoteColumnToInt64:
         assert ints == []
 
     def test_identifier_like_text_is_rejected_even_when_the_values_round_trip(self):
-        df = pd.DataFrame({"zip": ["007", "42"]})
+        df = pd.DataFrame({"zip": pd.Series(["007", "42"], dtype=object)})
         old, ints = {"zip": "object"}, []
         with pytest.raises(ValueError, match="identifier-like"):
             dt._promote_column_to_int64(df, "zip", old, ints)
@@ -59,7 +59,7 @@ class TestPromoteColumnToFloat64:
         assert floats == ["x"]
 
     def test_identifier_like_text_is_rejected_and_the_column_is_untouched(self):
-        df = pd.DataFrame({"code": ["+1.5", "2"]})
+        df = pd.DataFrame({"code": pd.Series(["+1.5", "2"], dtype=object)})
         old, floats = {"code": "object"}, []
         with pytest.raises(ValueError, match="identifier-like"):
             dt._promote_column_to_float64(df, "code", old, floats)
@@ -112,7 +112,7 @@ class TestPromoteObjectColumns:
         assert list(df["v"]) == [2.5, 3.0]
 
     def test_a_skipped_column_does_not_stop_the_later_columns(self):
-        df = pd.DataFrame({"a": ["1"], "b": ["2"]})
+        df = pd.DataFrame({"a": pd.Series(["1"], dtype=object), "b": pd.Series(["2"], dtype=object)})
         old = {"a": "object", "b": "object"}
         _promote(df, old, skip=["a"])
         assert df["a"].dtype == object
@@ -132,7 +132,7 @@ class TestPromoteObjectColumns:
         assert old == {"n": "int64"}
 
     def test_high_cardinality_text_is_left_as_text_when_categories_exceed_the_cap(self):
-        df = pd.DataFrame({"s": ["a", "b", "c"]})
+        df = pd.DataFrame({"s": pd.Series(["a", "b", "c"], dtype=object)})
         old = {"s": "object"}
         new, _, _ = _promote(df, old, max_categories=2)
         assert "s" not in new
@@ -203,14 +203,14 @@ class TestPromoteColumnToCategory:
         assert df["s"].dtype.name == "category"
 
     def test_not_inplace_fills_the_dtype_map_and_keeps_the_frame(self):
-        df = pd.DataFrame({"s": ["a", "b", "a"]})
+        df = pd.DataFrame({"s": pd.Series(["a", "b", "a"], dtype=object)})
         new = {}
         dt._promote_column_to_category(df, "s", "object", new, 5, False, False)
         assert new == {"s": "category"}
         assert df["s"].dtype == object
 
     def test_too_many_distinct_values_leave_everything_alone(self):
-        df = pd.DataFrame({"s": ["a", "b", "c"]})
+        df = pd.DataFrame({"s": pd.Series(["a", "b", "c"], dtype=object)})
         new = {}
         dt._promote_column_to_category(df, "s", "object", new, 2, True, False)
         assert new == {}
@@ -451,7 +451,7 @@ class TestOptimizeDtypesPipeline:
         assert out["n"].dtype == "uint8"
 
     def test_a_skipped_text_column_stays_text(self):
-        df = pd.DataFrame({"s": ["12", "7"]})
+        df = pd.DataFrame({"s": pd.Series(["12", "7"], dtype=object)})
         out = dt.optimize_dtypes(df, inplace=False, skip_columns=["s"])
         assert out["s"].dtype == object
 
