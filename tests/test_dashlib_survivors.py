@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from pyutilz.dev import dashlib as dl
+
+# dev/dashlib.py builds its tab widgets from flask/dash/dash-bootstrap-components, which live in the
+# optional [dash] extra that CI never installs. The classes that call those builders skip without it,
+# as tests/test_dashlib.py does with pytest.importorskip; the pure-Python classes still run everywhere.
+_dash_stack_installed = all(importlib.util.find_spec(m) is not None for m in ("flask", "dash", "dash_bootstrap_components"))
+_needs_dash_extra = pytest.mark.skipif(not _dash_stack_installed, reason="optional [dash] extra (flask, dash, dash-bootstrap-components) not installed")
 
 
 class TestExportLocaleLabels:
@@ -93,6 +101,7 @@ class _User:
         self.role = role
 
 
+@_needs_dash_extra
 class TestBuildTabEntries:
     def _build(self, tabs, user=None, active="pre-b", active_label="act", sep=","):
         return dl._build_tab_entries(tabs, user, "content", "pre-", sep, active_label, active)
@@ -143,6 +152,7 @@ class TestBuildTabEntries:
         assert log.debug_calls == [("tabLabel=%s, tabId=%s, tabUsers=%s", "A", "a", ["admin"])]
 
 
+@_needs_dash_extra
 class TestAssembleTabs:
     def _assemble(self, **kwargs):
         calls: list = []
@@ -220,6 +230,7 @@ class TestAssembleTabs:
         assert card.children[1].className == "px-2 py-0"
 
 
+@_needs_dash_extra
 class TestCreateTabsFlow:
     def _draw(self, active):
         return "BODY:" + active
@@ -282,6 +293,7 @@ class TestCreateTabsFlow:
         assert isinstance(container, dbc.Container)
 
 
+@_needs_dash_extra
 class TestCreateTabsOptions:
     def _draw(self, active):
         return "BODY:" + active
