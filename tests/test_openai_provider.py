@@ -639,3 +639,32 @@ class TestRemainingRepairAndCachePaths:
         provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
         assert provider._cache_hit_cost_per_1m("zzz-unknown") == op._CACHE_HIT_COST["gpt-5-mini"]
         assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("zzz-unknown", "gpt-5-mini"))]
+
+
+class TestLowestEffortQuotaAndSnapshotConstants:
+    """The lowest reasoning effort per family, the quota codes and the snapshot suffix are pinned exactly, and the suffix is anchored at the end (openai_provider 230-247)."""
+
+    def test_the_lowest_effort_table_is_exact(self):
+        assert op._LOWEST_EFFORT == {
+            "gpt-5": "minimal",
+            "gpt-5.1": "none",
+            "gpt-5.2": "none",
+            "gpt-5.4": "none",
+            "gpt-5.5": "none",
+            "gpt-5.6": "none",
+            "gpt-6": "none",
+            "gpt-6-astra": "low",
+            "gpt-6-sol": "low",
+            "gpt-6.1-sol": "low",
+            "o1": "low",
+            "o3": "low",
+            "o4": "low",
+        }
+
+    def test_the_quota_codes_are_exactly_the_two_documented_ones(self):
+        assert op._QUOTA_EXHAUSTED_CODES == frozenset({"insufficient_quota", "credit_balance_exhausted"})
+
+    def test_the_snapshot_suffix_is_anchored_at_the_end(self):
+        assert op._SNAPSHOT_SUFFIX.pattern == r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|latest)$"
+        assert op._SNAPSHOT_SUFFIX.search("gpt-5-latestx") is None
+        assert op._SNAPSHOT_SUFFIX.search("gpt-5-2026-01-15x") is None
