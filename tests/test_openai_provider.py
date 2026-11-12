@@ -579,3 +579,25 @@ class TestOpenAIBodyShaping:
     def test_a_family_without_a_lowest_effort_row_asks_for_low(self, monkeypatch):
         monkeypatch.setattr(op, "_LOWEST_EFFORT", {})
         assert self._provider("gpt-5.5")._thinking_request_field(False) == {"reasoning_effort": "low"}
+
+
+class TestCreditHintAndUnknownModelThrottle:
+    """The credit query refuses with the exact billing hint, and an unknown model's warning is throttled per model under its own key (openai_provider 388, 393)."""
+
+    def test_the_credit_query_refuses_with_the_exact_billing_hint(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        with pytest.raises(NotImplementedError) as info:
+            asyncio.run(provider.get_account_credits())
+        assert str(info.value) == (
+            "OpenAI has no public API to fetch remaining credit. Check platform.openai.com/usage or platform.openai.com/account/billing/overview."
+        )
+
+    def test_an_unknown_model_warning_is_throttled_under_its_own_key(self, price_log):
+        from pyutilz.dev import logginglib as ll
+
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        provider._warn_unknown_model_once("zzz-keyed")
+        assert "openai.unknown_model:zzz-keyed" in ll._log_throttle_last
+        provider._warn_unknown_model_once("zzz-keyed")
+        assert len(price_log.calls) == 1
+        assert price_log.calls[0][1] == ("zzz-keyed", "gpt-5-mini")
