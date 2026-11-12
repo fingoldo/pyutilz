@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 from pyutilz.core import jsonlib
-from pyutilz.llm.exceptions import ClaudeCodeToolUseError
+from pyutilz.llm.exceptions import ClaudeCodeToolUseError, LLMProviderError
 
 
 def _find_claude_executable() -> str:
@@ -185,8 +185,11 @@ async def call_with_thinking_display(owner: Any, display: Optional[str], call: A
         return str(await call(None))
 
 
-class ThinkingFlagRejectedError(Exception):
-    """The installed CLI does not know ``--thinking-display``; the call is repeated without it."""
+class ThinkingFlagRejectedError(LLMProviderError):
+    """The installed CLI does not know ``--thinking-display``; the call is repeated without it.
+
+    Rooted in ``LLMProviderError`` like every other exception of this domain (test_architecture_audit_20260903).
+    """
 
 
 def _raise_on_cli_tool_use(event: dict) -> None:
@@ -519,14 +522,14 @@ def run_cli(cmd: "list[str]", prompt: str, sub_env: dict, child_cwd: str, timeou
 
 def _write_prompt(proc: "subprocess.Popen", prompt: str) -> None:
     """Write the prompt to the child's stdin and close it; a child that already exited is tolerated."""
+    assert proc.stdin is not None  # guaranteed by stdin=subprocess.PIPE above
     try:
-        assert proc.stdin is not None  # guaranteed by stdin=subprocess.PIPE above
         try:
             proc.stdin.write(prompt)
         finally:
             # Close on every path: a write that raises something other than BrokenPipeError must not leave the child waiting on stdin.
             proc.stdin.close()
-    except BrokenPipeError:
+    except BrokenPipeError:  # swallow-ok: the child exited before reading its prompt; its exit status and stderr carry the real failure
         pass
 
 

@@ -432,6 +432,8 @@ class TestCliToolUseTripwire:
         # get_event_loop(), which raises "There is no current event loop" in a sync test body.
         provider._max_concurrent = 1
         provider._claude_path = "claude"
+        # __new__ skips __init__, so the attribute __init__ sets is absent here; None sends no --thinking-display flag.
+        provider.thinking_display = None
         provider._reset_per_call_state = lambda: None
         with patch.object(claude_code_provider.subprocess, "Popen", lambda *a, **k: _FakeProc(events)):
             return asyncio.run(provider._generate_cli("hi"))

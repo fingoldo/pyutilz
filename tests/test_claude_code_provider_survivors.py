@@ -134,8 +134,9 @@ class ToolUseBlock:
 
 
 class ThinkingBlock:
+    # The SDK's ThinkingBlock carries its reasoning in ``thinking`` (it has no ``text``); see claude_code_cli.sdk_thinking_text.
     def __init__(self, text: str) -> None:
-        self.text = text
+        self.thinking = text
 
 
 class TestAssistantMessageText:
