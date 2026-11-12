@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, Sequence, TypeVar
 
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 # Import google.genai at module level to check availability
 genai: Any
 types: Any
+_T = TypeVar("_T")
+
 try:
     from google import genai  # type: ignore[no-redef]
     from google.genai import types  # type: ignore[no-redef]
@@ -213,7 +215,7 @@ class GeminiProvider(LLMProvider):
         self._candidate_count = max(1, int(candidate_count))
         self._cached_content = cached_content
 
-    def _prefix_limit(self, table, default):
+    def _prefix_limit(self, table: Sequence[tuple[str, int]], default: _T) -> int | _T:
         """The limit of the first ``(prefix, limit)`` in ``table`` that the configured model name starts with, else ``default``."""
         for prefix, limit in table:
             if self.model_name.startswith(prefix):
