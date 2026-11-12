@@ -225,7 +225,9 @@ class _ThinkingCapture:
 
     def text(self) -> str:
         """The blocks (final text, one blank line between turns) when any carried text, else the concatenated deltas, else empty."""
-        return "\n\n".join(self._blocks) or "".join(self._deltas)
+        if self._blocks:
+            return "\n\n".join(self._blocks)
+        return "".join(self._deltas)
 
 
 def _observe_stream_event(event: dict) -> int:
