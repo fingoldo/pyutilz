@@ -601,3 +601,18 @@ class TestCreditHintAndUnknownModelThrottle:
         provider._warn_unknown_model_once("zzz-keyed")
         assert len(price_log.calls) == 1
         assert price_log.calls[0][1] == ("zzz-keyed", "gpt-5-mini")
+
+
+class TestUnknownModelWarningPerPath:
+    """The pricing path and the cache-hit path each warn about an unknown model on their own (openai_provider 429, 471)."""
+
+    def test_the_pricing_path_warns_by_itself_when_the_cache_rate_is_stubbed(self, price_log, monkeypatch):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        monkeypatch.setattr(provider, "_cache_hit_cost_per_1m", lambda model: 0.1)
+        provider._resolve_pricing("gpt-5.5-typo")
+        assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("gpt-5.5-typo", "its family's"))]
+
+    def test_the_cache_hit_path_warns_by_itself_for_an_unknown_model(self, price_log):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        provider._cache_hit_cost_per_1m("gpt-5.5-typo")
+        assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("gpt-5.5-typo", "its family's"))]
