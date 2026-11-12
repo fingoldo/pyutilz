@@ -245,7 +245,11 @@ nlp = [
     # flagged all three as used-but-undeclared regardless of the eager-vs-lazy distinction.
     "beautifulsoup4>=4.0",
     "inflect>=6.0",
-    "emoji-data-python>=1.6",
+    # 1.6.0 imports functools.cache at module load (Python 3.9+) yet declares Requires-Python>=3.6, so on the
+    # 3.8 legs webtext.py's lazy import fails with ImportError. 1.5.0 is the newest release without that
+    # import and exposes the same emoji_data table, so the 3.8 floor is pinned to it.
+    "emoji-data-python>=1.6 ; python_version >= '3.9'",
+    "emoji-data-python>=1.4,<1.6 ; python_version < '3.9'",
     # text/strings/__init__.py, webtext.py, basics.py, and textentropy.py all unconditionally
     # import pandas (numpy moved to core [project.dependencies], transitively required by numba)
     # -- found 2026-07-21 audit: no dedicated "text"/"strings" extras group exists, and this is
