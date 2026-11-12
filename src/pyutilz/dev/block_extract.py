@@ -262,7 +262,11 @@ def _container(fn, start: int, end: int):
             if isinstance(stmts, list) and stmts and isinstance(stmts[0], ast.stmt):
                 # the range may start/end on comment lines: every statement it overlaps must lie fully inside it
                 overlap = [s for s in stmts if s.lineno <= end and s.end_lineno >= start]
-                if overlap and all(start <= s.lineno and s.end_lineno <= end for s in overlap):
+                # the range must also stay inside the statement that owns this body: a range that runs past a loop's
+                # last line into the statement after it would be moved from the loop body alone, and the rest of the
+                # range would be silently dropped from the helper
+                owned = node is fn or (node.lineno <= start and end <= node.end_lineno)
+                if overlap and owned and all(start <= s.lineno and s.end_lineno <= end for s in overlap):
                     found.append((stmts, in_loop))
                     return
         for child in ast.iter_child_nodes(node):
@@ -714,7 +718,8 @@ def apply_extraction(
     if plan.lazy_imports:
         lazy = "".join(absolutise_relative_imports(imp, core_module) + chr(10) for imp in plan.lazy_imports)
         body = lazy + chr(10) + body
-    state = set(state_names or ())
+    # a state local that carries the parameter's own name is the state object itself: it stays a plain parameter (rewriting it would give st.st)
+    state = set(state_names or ()) - {state_param}
     ins = [n for n in plan.inputs if n not in state]
     ins = [n for n in ("self", "cls") if n in ins] + [n for n in ins if n not in ("self", "cls")]  # the receiver reads first
     outs = [n for n in plan.outputs if n not in state]

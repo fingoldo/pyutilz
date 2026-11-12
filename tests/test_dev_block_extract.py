@@ -375,3 +375,52 @@ def test_a_name_pre_bound_before_the_loop_is_passed_and_behaves_the_same(tmp_pat
     monkeypatch.delitem(sys.modules, "pb.core", raising=False)
     after_f = _import(core, "pb.core", monkeypatch).f
     assert [after_f([], 2), after_f([4, 5], 2)] == before
+
+
+def test_state_name_equal_to_state_param_is_not_doubled(tmp_path, monkeypatch):
+    """A state local named like the state parameter (``st``) keeps its own name: the rewrite must not turn ``st`` into ``st.st``."""
+    monkeypatch.syspath_prepend(str(tmp_path))
+    pkg = tmp_path / "sq"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    core = _write(
+        pkg,
+        "core.py",
+        """\
+        from types import SimpleNamespace
+
+
+        def g(values):
+            st = SimpleNamespace(total=0, seen=[])
+            for v in values:
+                st.seen.append(v)
+                st.total += v
+            return st.total, len(st.seen)
+        """,
+    )
+    expected = _import(core, "sq.core", monkeypatch).g([1, 2, 3])
+    plan = plan_extraction(core, "g", 6, 8)
+    assert not plan.problems
+    result = apply_extraction(plan, "_accumulate", pkg / "stages.py", "sq.stages", core_module="sq.core", state_names=["st"], state_param="st")
+    assert "st.st" not in result.helper_source
+    for m in ("sq.core", "sq.stages"):
+        monkeypatch.delitem(sys.modules, m, raising=False)
+    stages = _import(pkg / "stages.py", "sq.stages", monkeypatch)
+    assert stages.__dict__["_accumulate"]
+    assert _import(core, "sq.core", monkeypatch).g([1, 2, 3]) == expected
+
+
+def test_range_running_past_its_loop_is_refused(tmp_path):
+    """A range that ends after the loop it starts in is not one body's statements: it is refused, never silently truncated."""
+    core = _write(
+        tmp_path,
+        "core.py",
+        """        def g(values):
+            total = 0
+            for v in values:
+                total += v
+            return total
+        """,
+    )
+    plan = plan_extraction(core, "g", 3, 5)
+    assert plan.problems
