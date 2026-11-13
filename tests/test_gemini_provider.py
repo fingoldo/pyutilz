@@ -410,3 +410,42 @@ class TestGeminiRetryPredicateAndSafetyReasons:
         from pyutilz.llm import gemini_provider as gp
 
         assert gp._BLOCKING_FINISH_REASONS == ("SAFETY", "BLOCK", "PROHIBITED_CONTENT", "RECITATION", "SPII")
+
+
+class TestFreshGeminiProviderDefaults:
+    """A new Gemini provider starts with zero per-call and session accounting, empty per-call collections, the documented
+    per-call usage keys and the default model and concurrency (gemini_provider 160-213)."""
+
+    def _provider(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key")  # pragma: allowlist secret
+
+    def test_the_per_call_usage_has_its_three_keys_at_zero(self):
+        assert self._provider()._last_usage == {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+
+    def test_the_per_call_scalars_and_collections_start_empty(self):
+        provider = self._provider()
+        assert provider._last_finish_reason is None
+        assert provider.last_cached_content_tokens == 0
+        assert provider.last_safety_ratings == []
+        assert provider.last_function_calls == []
+        assert provider.last_all_candidates == []
+        assert provider.last_grounding_metadata is None
+        assert provider.last_citation_metadata is None
+
+    def test_the_session_totals_start_at_zero(self):
+        provider = self._provider()
+        assert (provider._call_count, provider.total_prompt_tokens, provider.total_completion_tokens) == (0, 0, 0)
+        assert (provider.total_reasoning_tokens, provider.total_cached_content_tokens) == (0, 0)
+        assert provider._long_context_surcharge_usd == 0.0
+        assert provider._long_context_calls == 0
+
+    def test_the_default_model_and_concurrency_are_pinned(self):
+        import inspect
+
+        from pyutilz.llm import gemini_provider as gp
+
+        params = inspect.signature(gp.GeminiProvider.__init__).parameters
+        assert params["model"].default == "gemini-3.1-flash-lite-preview"
+        assert params["max_concurrent"].default == 10
