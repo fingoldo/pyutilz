@@ -22,11 +22,15 @@ def _ensure_genai_types_available():
     optional dependency is present. Individual tests that patch ``types`` themselves for a
     stricter assertion (e.g. checking constructor kwargs) simply nest their own patch inside
     this one -- harmless, not a conflict."""
-    if gemini_provider_module.types is not None:
-        yield
-        return
-    with patch("pyutilz.llm.gemini_provider.types", MagicMock()):
-        yield
+    # GENAI_AVAILABLE is forced True for every test in this module: the constructor refuses to run without it, and
+    # google-genai is not installed on Python 3.8 (its marker is >=3.10), so classes that build a provider directly
+    # (not through _make_provider) would otherwise fail there. A test that needs the unavailable path patches it False itself.
+    with patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True):
+        if gemini_provider_module.types is not None:
+            yield
+        else:
+            with patch("pyutilz.llm.gemini_provider.types", MagicMock()):
+                yield
 
 
 def _make_provider(**overrides):
