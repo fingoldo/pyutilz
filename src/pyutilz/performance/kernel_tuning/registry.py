@@ -16,11 +16,13 @@ import logging
 import pkgutil
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+import inspect
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Optional
 
 from .cache import KernelTuningCache
 from .code_versioning import compute_code_version
+from .residency import DEFAULT_SCENARIO, IN_KEY, OPERANDS_KEY, OUT_KEY, normalize_scenarios, operands_residency, scenario_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +93,20 @@ class TunerSpec:
     gpu_capable: bool = False
     """Whether this kernel has GPU variants and residency matters. If True,
     the tuning sweep should discover and model H2D/D2H transfer costs via the
-    'location' axis (host/device). CPU-only kernels leave this False."""
+    residency scenarios declared in ``residencies`` (host/device in and out). CPU-only kernels leave this False."""
 
     cli_label: Optional[str] = None
     """Human-friendly name for the CLI (defaults to kernel_name). Used in
     ``mlframe-tune-kernels show <label>`` commands."""
+
+    residencies: tuple = (DEFAULT_SCENARIO,)
+    """The data placements this entry's callers can have, as ``(data_in_residency,
+    data_out_residency)`` pairs over ``("host", "device")``. The sweep runs once per declared
+    pair (each pair is its own cache entry, ``<kernel_name>__<in>_<out>``; host-in / host-out
+    keeps the plain ``kernel_name``), and ``choose`` picks the entry from the
+    ``data_in_residency`` / ``data_out_residency`` keys (or from ``operands=``). A tuner
+    declared with more than one pair is called as ``tuner(data_in_residency=..., data_out_residency=...)``
+    and must time the backends with the data placed that way; a single-pair tuner stays zero-arg."""
 
     _choice_cache: "OrderedDict[tuple, str]" = field(default_factory=OrderedDict, init=False, repr=False, compare=False)
     """Per-spec memo of choose() results, keyed by sorted dims (the dispatch is hot). Bounded LRU
@@ -129,13 +140,56 @@ class TunerSpec:
             return str(fb.get("backend_choice", ""))
         return str(fb)
 
+    def scenario_for(self, residency_in: str = "host", residency_out: str = "host") -> tuple:
+        """The declared scenario that serves a caller in ``(residency_in, residency_out)``: that pair when declared, else the first declared one (an entry that declares only
+        device-in / device-out serves every caller with its resident verdict; one that declares only the default serves every caller with the host-in / host-out verdict)."""
+        declared = normalize_scenarios(self.residencies)
+        want = (str(residency_in), str(residency_out))
+        return want if want in declared else declared[0]
+
+    def scenario_specs(self) -> list:
+        """One spec per declared scenario, each with its own cache name (``kernel_name`` plus the scenario suffix) and a tuner bound to the scenario; the spec itself when only
+        the default scenario is declared. Memoized: ``choose``'s per-spec decision memo lives on these objects."""
+        declared = normalize_scenarios(self.residencies)
+        if declared == (DEFAULT_SCENARIO,):
+            return [self]
+        memo = self.__dict__.setdefault("_scenario_specs", {})
+        if not memo:
+            for sc in declared:
+                suffix = scenario_suffix(sc)
+                memo[sc] = replace(
+                    self,
+                    kernel_name=self.kernel_name + suffix,
+                    tuner=_bind_scenario(self.tuner, sc),
+                    cli_label=(self.cli_label or self.kernel_name) + suffix,
+                    residencies=(sc,),
+                )
+        return [memo[sc] for sc in declared]
+
     def choose(self, **dims) -> str:
+        """Backend decision for these dims in the caller's data placement.
+
+        The placement is read from the dims: ``data_in_residency`` / ``data_out_residency`` (``"host"`` or ``"device"``; the output side defaults to host), or ``operands=(...)``
+        from which the input side is detected (``operands_residency``). The keys are consumed here: the fallback and the cache see the remaining dims only. A caller that says
+        nothing is host-in / host-out. The scenario entry that serves the placement answers (see :meth:`scenario_for`); a spec with one declared scenario ignores the keys."""
+        res_in = dims.pop(IN_KEY, None)
+        res_out = dims.pop(OUT_KEY, None)
+        operands = dims.pop(OPERANDS_KEY, None)
+        if res_in is None and operands is not None:
+            res_in = operands_residency(operands)
+        scenario = self.scenario_for(res_in or "host", res_out or "host")
+        specs = self.scenario_specs()
+        target = specs[0] if len(specs) == 1 else next(s for s in specs if tuple(s.residencies[0]) == scenario)
+        return target._choose_plain(dims)
+
+    def _choose_plain(self, dims: dict) -> str:
         """Per-host backend decision for these dims -- the one-call dispatch that
         replaces a consumer's hand-written _backend_choice + _code_version. Routes
         env -> code-version-checked cache -> on-miss (locked, once-per-process)
         sweep -> fallback via get_or_tune, returns the backend_choice string,
         memoized per dims. The caller MUST still gate a GPU choice on live CUDA +
         per-op compatibility before routing to device."""
+        dims = dict(dims)
         key = tuple(sorted(dims.items()))
         if key in self._choice_cache:
             self._choice_cache.move_to_end(key)
@@ -174,6 +228,17 @@ class TunerSpec:
         return bc
 
 
+def _bind_scenario(tuner: Callable[..., list], scenario: tuple) -> Callable[[], list]:
+    """A zero-arg tuner that runs ``tuner`` for one residency scenario: the sweep callable receives ``data_in_residency`` / ``data_out_residency`` and times the backends with the
+    data placed that way."""
+
+    def _tune_scenario() -> list:
+        """Run the entry's sweep for this scenario's data placement."""
+        return tuner(**{IN_KEY: scenario[0], OUT_KEY: scenario[1]})
+
+    return _tune_scenario
+
+
 def kernel_tuner(**kwargs) -> "TunerSpec":
     """Build + register a TunerSpec. Call it directly at a consumer module's
     top level (pyutilz is a hard dependency, so no defensive try/except is
@@ -194,6 +259,11 @@ def kernel_tuner(**kwargs) -> "TunerSpec":
     Registered under its (globally-unique) ``kernel_name``. Idempotent on
     re-registration. Returns the spec (handy for tests / introspection)."""
     spec = TunerSpec(**kwargs)
+    spec.residencies = normalize_scenarios(spec.residencies)
+    if len(spec.residencies) > 1 and callable(spec.tuner):
+        params = inspect.signature(spec.tuner).parameters
+        if not (IN_KEY in params and OUT_KEY in params) and not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            raise TypeError(f"kernel_tuner({spec.kernel_name!r}): an entry that declares several residency scenarios needs a tuner that accepts {IN_KEY} and {OUT_KEY}")
     if spec.kernel_name in _REGISTRY:
         # Re-registration is legitimate: a module re-import (importlib.reload, a test that drops + re-imports the
         # consumer subgraph, or two import paths reaching the same module) re-runs the decorator with an equivalent
@@ -312,7 +382,7 @@ def retune_all(
     results = {}  # {(model, kernel_name): n_regions} -- keyed per (model, kernel), NOT clobbered
 
     # CPU-only specs: run once.
-    cpu_specs = [(k, s) for k, s in specs.items() if not s.gpu_capable]
+    cpu_specs = [(sc.kernel_name, sc) for s in specs.values() if not s.gpu_capable for sc in s.scenario_specs()]
     for kernel_name, spec in tqdm(cpu_specs, desc="Tuning CPU specs", leave=False):
         code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
         results[("cpu", kernel_name)] = _run_spec_tuning(
@@ -326,7 +396,7 @@ def retune_all(
     # models this writes every model's tuning under device-0's fingerprint -- correct
     # for single-GPU and identical-multi-GPU hosts (one fingerprint), but a
     # device-aware hw_fingerprint() is needed for mixed-model hosts (untestable here).
-    gpu_specs = [(k, s) for k, s in specs.items() if s.gpu_capable]
+    gpu_specs = [(sc.kernel_name, sc) for s in specs.values() if s.gpu_capable for sc in s.scenario_specs()]
     for kernel_name, spec in tqdm(gpu_specs, desc="Tuning GPU specs", leave=False):
         for model_name, device_ids in gpu_groups.items():
             device_id = _pick_least_loaded_device(device_ids, idle_wait_tries, idle_wait_sec)
@@ -410,7 +480,9 @@ def tune_spec(spec: TunerSpec, *, force: bool = True, device_id: Optional[int] =
     re-run of an offline benchmark doesn't redo finished work. ``force=True``
     overrides skip_existing (it evicts then re-sweeps unconditionally)."""
     code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
-    return _run_spec_tuning(KernelTuningCache(), spec, code_version, device_id=device_id, force=force, hooks=hooks, skip_existing=skip_existing)
+    return sum(
+        _run_spec_tuning(KernelTuningCache(), sc, code_version, device_id=device_id, force=force, hooks=hooks, skip_existing=skip_existing) for sc in spec.scenario_specs()
+    )
 
 
 def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optional[int], force: bool, hooks: Optional[Any], skip_existing: bool = True) -> int:

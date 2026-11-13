@@ -15,16 +15,7 @@ from .cache import KernelTuningCache, cache_path, hw_fingerprint, register_defau
 from .code_versioning import compute_code_version
 from .registry import TunerSpec, discover_tuners, get_registry, kernel_tuner, retune_all, tune_spec
 from .remote import RemoteBackend, S3Backend
-
-
-def array_location(x) -> str:
-    """Residency of an array-like: ``"device"`` if GPU-resident (a cupy array or
-    anything exposing ``__cuda_array_interface__`` -- incl. numba device arrays),
-    else ``"host"``. The single detection point for residency-aware dispatch:
-    pass the result as the ``location`` dim of a residency-tuned kernel so the
-    cache picks the backend measured for where the data actually lives."""
-    return "device" if hasattr(x, "__cuda_array_interface__") else "host"
-
+from .residency import DEFAULT_SCENARIO, RESIDENCIES, array_location, operands_residency
 
 __all__ = [
     "KernelTuningCache",
@@ -41,6 +32,9 @@ __all__ = [
     "RemoteBackend",
     "S3Backend",
     "array_location",
+    "operands_residency",
+    "RESIDENCIES",
+    "DEFAULT_SCENARIO",
     "time_backend",
     "benchmark_backends",
 ]
