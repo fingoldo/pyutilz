@@ -1022,3 +1022,66 @@ class TestGeminiCountTokensAndBillingHints:
         with pytest.raises(NotImplementedError) as info:
             asyncio.run(self._provider(_CountModels(total=1)).check_account_limits())
         assert str(info.value) == ("Gemini does not expose per-key rate limits via API. Quotas are GCP-side at console.cloud.google.com/iam-admin/quotas.")
+
+
+class _Rating:
+    def __init__(self, category, probability, blocked=None):
+        self.category = category
+        self.probability = probability
+        if blocked is not None:
+            self.blocked = blocked
+
+
+class _CandidateWithRatings:
+    def __init__(self, ratings):
+        self.finish_reason = "STOP"
+        self.safety_ratings = ratings
+        self.grounding_metadata = None
+        self.citation_metadata = None
+
+
+class _MetaResponse:
+    def __init__(self, candidates):
+        self.candidates = candidates
+        self.text = "x"
+
+
+class TestGeminiCandidateMetadataCapture:
+    """Safety ratings are recorded with their category, probability and blocked flag (false when the flag is absent), and a
+    failure while reading metadata is logged at debug rather than raised (gemini_provider 565-594)."""
+
+    def _provider(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+
+    def test_a_rating_without_a_blocked_flag_is_recorded_as_not_blocked(self):
+        provider = self._provider()
+        provider._capture_candidate_metadata(_MetaResponse([_CandidateWithRatings([_Rating("HARM", "LOW")])]))
+        assert provider.last_safety_ratings == [{"category": "HARM", "probability": "LOW", "blocked": False}]
+
+    def test_a_rating_with_a_blocked_flag_keeps_it(self):
+        provider = self._provider()
+        provider._capture_candidate_metadata(_MetaResponse([_CandidateWithRatings([_Rating("HARM", "HIGH", blocked=True)])]))
+        assert provider.last_safety_ratings == [{"category": "HARM", "probability": "HIGH", "blocked": True}]
+
+    def test_a_metadata_read_failure_is_logged_at_debug_and_not_raised(self, monkeypatch):
+        from pyutilz.llm import gemini_provider as gp
+
+        recorded: list = []
+
+        class _DebugLog:
+            def debug(self, fmt, *args, **kwargs):
+                recorded.append((fmt, args))
+
+        monkeypatch.setattr(gp, "logger", _DebugLog())
+
+        class _Broken:
+            @property
+            def candidates(self):
+                raise RuntimeError("boom")
+
+        self._provider()._capture_candidate_metadata(_Broken())
+        fmt, args = recorded[0]
+        assert fmt == "Gemini candidate metadata capture failed: %s"
+        assert str(args[0]) == "boom"
