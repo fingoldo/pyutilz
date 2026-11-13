@@ -449,3 +449,52 @@ class TestFreshGeminiProviderDefaults:
         params = inspect.signature(gp.GeminiProvider.__init__).parameters
         assert params["model"].default == "gemini-3.1-flash-lite-preview"
         assert params["max_concurrent"].default == 10
+
+
+class _GeminiWarnLog:
+    def __init__(self):
+        self.calls: list = []
+
+    def warning(self, fmt, *args, **kwargs):
+        self.calls.append((fmt, args))
+
+
+class TestGeminiLimitsAndUnknownPricing:
+    """The context window and output ceiling come from the model's family prefix, the JSON support flags are on, and an
+    unknown model's price warns once with its exact text (gemini_provider 216-258)."""
+
+    def _provider(self, model):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key", model=model)  # pragma: allowlist secret
+
+    def test_a_listed_family_has_its_context_window(self):
+        assert self._provider("gemini-2.5-flash").context_window == 1_048_576
+        assert self._provider("gemini-3.1-flash-lite-preview").context_window == 1_048_576
+
+    def test_an_unlisted_model_gets_the_one_million_token_default_window(self):
+        assert self._provider("gemma-unlisted").context_window == 1_048_576
+
+    def test_the_output_ceiling_is_per_family_and_none_for_an_unlisted_one(self):
+        assert self._provider("gemini-3.1-flash-lite-preview").max_output_tokens == 65536
+        assert self._provider("gemini-2.5-flash").max_output_tokens == 65536
+        assert self._provider("gemini-2.0-flash").max_output_tokens == 8192
+        assert self._provider("gemini-1.5-pro").max_output_tokens is None
+
+    def test_json_mode_and_json_schema_are_supported(self):
+        provider = self._provider("gemini-2.5-flash")
+        assert provider.supports_json_mode() is True
+        assert provider.supports_json_schema() is True
+
+    def test_an_unknown_model_price_warns_once_with_the_default_rates(self, monkeypatch):
+        from pyutilz.llm import gemini_provider as gp
+
+        log = _GeminiWarnLog()
+        monkeypatch.setattr(gp, "logger", log)
+        gp.GeminiProvider._warned_unknown_models.discard("gemma-price-unknown")
+        provider = self._provider("gemma-price-unknown")
+        provider._get_pricing()
+        provider._get_pricing()
+        assert log.calls == [
+            ("Gemini pricing for %r is unknown; using the default %s per 1M. Cost estimates may be off.", ("gemma-price-unknown", (0.25, 1.5)))
+        ]
