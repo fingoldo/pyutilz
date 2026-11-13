@@ -537,3 +537,19 @@ class TestGeminiLongContextTierAndSurcharge:
         provider._add_long_context_surcharge(250_000, 0, 1000)
         assert provider._long_context_calls == 0
         assert provider._long_context_surcharge_usd == 0.0
+
+
+class TestGeminiClientTimeoutAndCandidateCount:
+    """The client's timeout is the request timeout in milliseconds, and the candidate count is at least one (gemini_provider 189, 213)."""
+
+    def test_the_client_timeout_is_the_request_timeout_in_milliseconds(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+        assert provider.client._api_client._http_options.timeout == int(provider._request_timeout_seconds * 1000)
+
+    def test_a_candidate_count_below_one_is_raised_to_one(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=0)._candidate_count == 1  # pragma: allowlist secret
+        assert gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=3)._candidate_count == 3  # pragma: allowlist secret
