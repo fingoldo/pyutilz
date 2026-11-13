@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from typing import Optional
 from unittest.mock import MagicMock
 import pytest
 
@@ -160,7 +161,7 @@ class TestEncodingCacheBounded:
             self._reset(mod)
 
 
-def _run_module_script(body: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+def _run_module_script(body: str, env_extra: Optional[dict] = None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env.pop("PYUTILZ_TOKEN_ENCODING_CACHE_MAX_SIZE", None)
     if env_extra:
