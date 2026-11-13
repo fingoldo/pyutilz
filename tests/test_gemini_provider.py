@@ -799,3 +799,87 @@ class TestGeminiSafetyBlocks:
         assert params["temperature"].default == 0.7
         assert params["max_tokens"].default == 0
         assert params["json_mode"].default is False
+
+
+class _FakeCandidate:
+    def __init__(self, finish_reason="STOP"):
+        self.finish_reason = finish_reason
+        self.safety_ratings = []
+
+
+class _FakeGenResponse:
+    def __init__(self, text="hello", finish_reason="STOP", candidates=True):
+        self.text = text
+        self.candidates = [_FakeCandidate(finish_reason)] if candidates else []
+        self.prompt_feedback = None
+        self.usage_metadata = None
+
+
+class _FakeModels:
+    def __init__(self, response):
+        self._response = response
+        self.calls: list = []
+
+    async def generate_content(self, model, contents, config):
+        self.calls.append({"model": model, "contents": contents, "config": config})
+        return self._response
+
+
+class _FakeGenClient:
+    def __init__(self, response):
+        self.aio = type("Aio", (), {})()
+        self.aio.models = _FakeModels(response)
+
+
+class TestGeminiGenerateCall:
+    """generate sends the model, the parts and the config to the native async client, caps the budget through the context fit, and
+    returns the answer text (gemini_provider 467-500)."""
+
+    def _provider(self, response, monkeypatch):
+        from pyutilz.llm import gemini_provider as gp
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+        provider.client = _FakeGenClient(response)
+        return provider
+
+    def test_generate_sends_the_model_and_returns_the_answer_text(self, monkeypatch):
+        import asyncio
+
+        response = _FakeGenResponse(text="the answer")
+        provider = self._provider(response, monkeypatch)
+        out = asyncio.run(provider.generate("hi"))
+        assert out == "the answer"
+        call = provider.client.aio.models.calls[0]
+        assert call["model"] == "gemini-2.5-flash"
+
+    def test_generate_passes_a_zero_budget_as_no_ceiling_through_the_context_fit(self, monkeypatch):
+        import asyncio
+
+        from pyutilz.llm import gemini_provider as gp
+
+        seen: list = []
+        monkeypatch.setattr(gp.GeminiProvider, "fit_max_tokens_to_context", lambda self, budget, prompt, system: seen.append(budget) or budget)
+        provider = self._provider(_FakeGenResponse(), monkeypatch)
+        asyncio.run(provider.generate("hi", max_tokens=0))
+        asyncio.run(provider.generate("hi", max_tokens=300))
+        assert seen == [None, 300]
+
+
+class TestGeminiPerCallStateResets:
+    """A new generate call starts from a clean per-call state, so a count left by an earlier call does not survive a response that
+    reports no usage (gemini_provider 467)."""
+
+    def test_a_stale_cached_count_is_cleared_by_the_next_call(self):
+        import asyncio
+
+        from pyutilz.llm import gemini_provider as gp
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+        provider.client = _FakeGenClient(_FakeGenResponse())
+        provider.last_cached_content_tokens = 7
+
+        async def call_then_read():
+            await provider.generate("hi")
+            return provider.last_cached_content_tokens
+
+        assert asyncio.run(call_then_read()) == 0
