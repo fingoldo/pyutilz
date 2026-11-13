@@ -60,15 +60,17 @@ jobs:
           import json, os
 
           full = os.environ["EVENT_NAME"] in ("pull_request", "schedule") or os.environ.get("FORCE_FULL") == "true"
-          versions = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+          versions = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
           if full:
               legs = [{"os": "ubuntu-22.04" if v in ("3.8", "3.9") else "ubuntu-24.04", "python-version": v} for v in versions]
               legs += [{"os": "windows-2025", "python-version": v} for v in versions]
               # macos-latest is arm64 and setup-python publishes no 3.8/3.9 build for it, so the floor
               # runs on the Intel image instead of being dropped.
               legs += [{"os": "macos-15-intel" if v in ("3.8", "3.9") else "macos-15", "python-version": v} for v in versions]
+              # Free-threaded builds (no GIL), ubuntu only, experimental: see continue-on-error on the test job.
+              legs += [{"os": "ubuntu-24.04", "python-version": v, "experimental": True} for v in ("3.13t", "3.14t", "3.15t")]
           else:
-              legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-24.04", "python-version": v} for v in ("3.8", "3.11", "3.14")]
+              legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-24.04", "python-version": v} for v in ("3.8", "3.11", "3.14", "3.15")]
               legs += [{"os": "windows-2025", "python-version": "3.11"}, {"os": "macos-15", "python-version": "3.11"}]
           print("matrix=" + json.dumps({"include": legs}))
           PY
@@ -76,6 +78,8 @@ jobs:
   test:
     needs: matrix-setup
     runs-on: ${{ matrix.os }}
+    # Free-threaded (no GIL) legs are experimental: a failure shows in the run but does not fail ci-required.
+    continue-on-error: ${{ matrix.experimental == true }}
     # bash on every OS (it ships on the Windows runners too): the run: blocks below are
     # written in POSIX shell, and Windows would otherwise default to pwsh and parse them differently.
     defaults:
