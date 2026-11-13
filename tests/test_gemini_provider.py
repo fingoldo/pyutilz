@@ -26,11 +26,13 @@ def _ensure_genai_types_available():
     # google-genai is not installed on Python 3.8 (its marker is >=3.10), so classes that build a provider directly
     # (not through _make_provider) would otherwise fail there. A test that needs the unavailable path patches it False itself.
     with patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True):
-        if gemini_provider_module.types is not None:
+        # genai (the client) is None on 3.8 as well: the constructor calls genai.Client(...) and types.HttpOptions(...).
+        with patch.multiple(
+            "pyutilz.llm.gemini_provider",
+            genai=gemini_provider_module.genai if gemini_provider_module.genai is not None else MagicMock(),
+            types=gemini_provider_module.types if gemini_provider_module.types is not None else MagicMock(),
+        ):
             yield
-        else:
-            with patch("pyutilz.llm.gemini_provider.types", MagicMock()):
-                yield
 
 
 def _make_provider(**overrides):
