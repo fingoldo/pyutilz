@@ -369,3 +369,44 @@ class TestGeminiPriceTablesArePinned:
                  for k, v in gp.GeminiProvider._LONG_CONTEXT_TIERS.items()}
         assert tiers == _TIERS_PIN
         assert gp.GeminiProvider._LONG_CONTEXT_THRESHOLD == 200_000
+
+
+class TestGeminiRetryPredicateAndSafetyReasons:
+    """The zero-quota pattern is a whole word, the retry predicate retries server errors and an ordinary 429 only, and the
+    policy-withheld finish reasons are exact (gemini_provider 35-77). Uses the real google-genai error classes."""
+
+    def test_genai_is_available_when_the_package_is_installed(self):
+        pytest.importorskip("google.genai")
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp.GENAI_AVAILABLE is True
+
+    def test_the_zero_quota_pattern_matches_a_whole_limit_zero_only(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp._ZERO_QUOTA.search("quota limit: 0") is not None
+        assert gp._ZERO_QUOTA.search("xlimit: 0") is None
+        assert gp._ZERO_QUOTA.search("limit: 05") is None
+        assert gp._ZERO_QUOTA.search("limit: 0.5") is None
+
+    def test_a_server_error_is_retryable_and_a_zero_quota_429_is_not(self):
+        pytest.importorskip("google.genai")
+        from google.genai.errors import ClientError, ServerError
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp._is_retryable_genai_error(ServerError(503, {"error": {"message": "down"}})) is True
+        assert gp._is_retryable_genai_error(ClientError(429, {"error": {"message": "quota exceeded, limit: 0"}})) is False
+
+    def test_an_ordinary_429_is_retryable_and_other_client_errors_are_not(self):
+        pytest.importorskip("google.genai")
+        from google.genai.errors import ClientError
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp._is_retryable_genai_error(ClientError(429, {"error": {"message": "slow down"}})) is True
+        assert gp._is_retryable_genai_error(ClientError(400, {"error": {"message": "bad request"}})) is False
+        assert gp._is_retryable_genai_error(ValueError("not genai")) is False
+
+    def test_the_policy_withheld_finish_reasons_are_exact(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp._BLOCKING_FINISH_REASONS == ("SAFETY", "BLOCK", "PROHIBITED_CONTENT", "RECITATION", "SPII")
