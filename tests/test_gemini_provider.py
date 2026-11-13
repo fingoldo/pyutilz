@@ -883,3 +883,68 @@ class TestGeminiPerCallStateResets:
             return provider.last_cached_content_tokens
 
         assert asyncio.run(call_then_read()) == 0
+
+
+class _RaisingTextResponse(_FakeGenResponse):
+    def __init__(self, error, finish_reason="STOP"):
+        self.candidates = [_FakeCandidate(finish_reason)]
+        self.prompt_feedback = None
+        self.usage_metadata = None
+        self._error = error
+
+    @property
+    def text(self):
+        raise self._error
+
+
+class TestGeminiResponseTextHandling:
+    """A response that ran out of tokens is refused with its partial text (empty, with a warning, when that text cannot be read);
+    a response with no readable text is refused as a safety block with its details (gemini_provider 511-539)."""
+
+    def _generate(self, response):
+        import asyncio
+
+        from pyutilz.llm import gemini_provider as gp
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+        provider.client = _FakeGenClient(response)
+
+        async def call():
+            return await provider.generate("hi")
+
+        return asyncio.run(call())
+
+    def test_a_token_cutoff_is_refused_with_its_partial_text_and_finish_reason(self):
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        with pytest.raises(LLMTruncationError) as info:
+            self._generate(_FakeGenResponse(text="half", finish_reason="MAX_TOKENS"))
+        assert str(info.value) == "Gemini response truncated by max_tokens (finish_reason=MAX_TOKENS)"
+        assert info.value.finish_reason == "MAX_TOKENS"
+        assert info.value.partial_text == "half"
+
+    def test_an_unreadable_partial_text_is_empty_and_warned_about(self, monkeypatch):
+        from pyutilz.llm import gemini_provider as gp
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        recorded: list = []
+
+        class _WarnLog:
+            def warning(self, fmt, *args, **kwargs):
+                recorded.append((fmt, args))
+
+        monkeypatch.setattr(gp, "logger", _WarnLog())
+        with pytest.raises(LLMTruncationError) as info:
+            self._generate(_RaisingTextResponse(ValueError("no text"), finish_reason="MAX_TOKENS"))
+        assert info.value.partial_text == ""
+        fmt, args = recorded[0]
+        assert fmt == "Could not read partial text off a truncated Gemini response; reporting it as empty: %s"
+        assert str(args[0]) == "no text"
+
+    def test_a_response_with_no_readable_text_is_refused_as_a_safety_block(self):
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+
+        with pytest.raises(LLMSafetyBlockError) as info:
+            self._generate(_RaisingTextResponse(AttributeError("gone")))
+        assert str(info.value) == "Gemini response has no text (likely safety block): gone"
+        assert info.value.details == {"finish_reason": "STOP", "safety_ratings": []}
