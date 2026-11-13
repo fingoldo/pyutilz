@@ -317,3 +317,55 @@ def test_missing_api_key_error_names_pass_api_key_fallback():
     with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings), patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True):
         with pytest.raises(ValueError, match=r"pass api_key="):
             GeminiProvider(api_key=None)
+
+
+_PRICING_PIN = {'gemini-2.5-flash': (0.3, 2.5),
+ 'gemini-2.5-flash-lite': (0.1, 0.4),
+ 'gemini-2.5-pro': (1.25, 10.0),
+ 'gemini-3-flash-preview': (0.5, 3.0),
+ 'gemini-3.1-flash-lite': (0.25, 1.5),
+ 'gemini-3.1-flash-lite-preview': (0.25, 1.5),
+ 'gemini-3.1-pro-preview': (2.0, 12.0),
+ 'gemini-3.5-flash': (1.5, 9.0),
+ 'gemini-3.5-flash-lite': (0.3, 2.5),
+ 'gemini-3.6-flash': (0.75, 3.75),
+ 'gemini-3.7-flash': (0.75, 3.75),
+ 'gemini-3.8-flash': (0.75, 3.75)}
+_CACHE_HIT_PIN = {'gemini-2.5-flash': 0.03,
+ 'gemini-2.5-flash-lite': 0.01,
+ 'gemini-2.5-pro': 0.125,
+ 'gemini-3-flash-preview': 0.05,
+ 'gemini-3.1-flash-lite': 0.025,
+ 'gemini-3.1-flash-lite-preview': 0.025,
+ 'gemini-3.1-pro-preview': 0.2,
+ 'gemini-3.5-flash': 0.15,
+ 'gemini-3.5-flash-lite': 0.03,
+ 'gemini-3.6-flash': 0.075,
+ 'gemini-3.7-flash': 0.075,
+ 'gemini-3.8-flash': 0.075}
+_TIERS_PIN = {'gemini-2.5-pro': (200000, 2.0, 1.5, 2.0, 2.0, False),
+ 'gemini-3.1-pro-preview': (200000, 2.0, 1.5, 2.0, 2.0, False)}
+
+
+class TestGeminiPriceTablesArePinned:
+    """Every Gemini price, cache rate and long-context tier is pinned as a whole table, so a changed row, a misplaced
+    number or an emptied model name fails here, not only where a test names one model (gemini_provider 93-232)."""
+
+    def test_the_pricing_table_and_its_default_are_exact(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp.GeminiProvider._PRICING == _PRICING_PIN
+        assert tuple(gp.GeminiProvider._DEFAULT_PRICING) == (0.25, 1.5)
+
+    def test_the_cache_hit_table_is_exact(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp.GeminiProvider._CACHE_HIT_COST == _CACHE_HIT_PIN
+
+    def test_the_long_context_tiers_and_threshold_are_exact(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        tiers = {k: (v.threshold_tokens, v.input_mult, v.output_mult, v.cached_input_mult, v.cache_write_mult, v.inclusive)
+                 for k, v in gp.GeminiProvider._LONG_CONTEXT_TIERS.items()}
+        assert tiers == _TIERS_PIN
+        assert gp.GeminiProvider._LONG_CONTEXT_THRESHOLD == 200_000
