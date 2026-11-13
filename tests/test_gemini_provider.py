@@ -948,3 +948,77 @@ class TestGeminiResponseTextHandling:
             self._generate(_RaisingTextResponse(AttributeError("gone")))
         assert str(info.value) == "Gemini response has no text (likely safety block): gone"
         assert info.value.details == {"finish_reason": "STOP", "safety_ratings": []}
+
+
+class _CountModels:
+    def __init__(self, total=None, error=None):
+        self._total = total
+        self._error = error
+
+    async def count_tokens(self, model, contents):
+        if self._error is not None:
+            raise self._error
+        return type("Counted", (), {"total_tokens": self._total})()
+
+
+class TestGeminiCountTokensAndBillingHints:
+    """count_tokens asks the API and falls back to the local estimate when the API fails or reports no total; the billing and
+    rate-limit queries refuse with their exact hints (gemini_provider 597-640)."""
+
+    def _provider(self, models):
+        from pyutilz.llm import gemini_provider as gp
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+        provider.client = type("C", (), {})()
+        provider.client.aio = type("A", (), {})()
+        provider.client.aio.models = models
+        return provider
+
+    def test_count_tokens_returns_the_api_total(self):
+        import asyncio
+
+        assert asyncio.run(self._provider(_CountModels(total=42)).count_tokens("hello")) == 42
+
+    def test_a_missing_total_falls_back_to_the_local_estimate(self, monkeypatch):
+        import asyncio
+
+        import pyutilz.llm.token_counter as tc
+
+        monkeypatch.setattr(tc, "count_tokens", lambda text: 99)
+        assert asyncio.run(self._provider(_CountModels(total=None)).count_tokens("hello")) == 99
+
+    def test_an_api_failure_falls_back_and_is_logged_at_debug(self, monkeypatch):
+        import asyncio
+
+        import pyutilz.llm.token_counter as tc
+        from pyutilz.llm import gemini_provider as gp
+
+        monkeypatch.setattr(tc, "count_tokens", lambda text: 77)
+        recorded: list = []
+
+        class _DebugLog:
+            def debug(self, fmt, *args, **kwargs):
+                recorded.append((fmt, args))
+
+        monkeypatch.setattr(gp, "logger", _DebugLog())
+        assert asyncio.run(self._provider(_CountModels(error=ConnectionError("down"))).count_tokens("hello")) == 77
+        fmt, args = recorded[0]
+        assert fmt == "Gemini count_tokens API failed (%s); falling back to tiktoken."
+        assert str(args[0]) == "down"
+
+    def test_the_billing_query_refuses_with_its_gcp_hint(self):
+        import asyncio
+
+        with pytest.raises(NotImplementedError) as info:
+            asyncio.run(self._provider(_CountModels(total=1)).get_account_credits())
+        assert str(info.value) == (
+            "Gemini billing is GCP-based — there is no balance endpoint reachable with a Gemini API key. "
+            "Check console.cloud.google.com/billing or use the Cloud Billing API with separate GCP credentials."
+        )
+
+    def test_the_rate_limit_query_refuses_with_its_quota_hint(self):
+        import asyncio
+
+        with pytest.raises(NotImplementedError) as info:
+            asyncio.run(self._provider(_CountModels(total=1)).check_account_limits())
+        assert str(info.value) == ("Gemini does not expose per-key rate limits via API. Quotas are GCP-side at console.cloud.google.com/iam-admin/quotas.")
