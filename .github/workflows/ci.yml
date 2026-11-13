@@ -60,15 +60,18 @@ jobs:
           import json, os
 
           full = os.environ["EVENT_NAME"] in ("pull_request", "schedule") or os.environ.get("FORCE_FULL") == "true"
-          versions = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+          versions = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
           if full:
               legs = [{"os": "ubuntu-22.04" if v in ("3.8", "3.9") else "ubuntu-24.04", "python-version": v} for v in versions]
               legs += [{"os": "windows-2025", "python-version": v} for v in versions]
               # macos-latest is arm64 and setup-python publishes no 3.8/3.9 build for it, so the floor
               # runs on the Intel image instead of being dropped.
               legs += [{"os": "macos-15-intel" if v in ("3.8", "3.9") else "macos-15", "python-version": v} for v in versions]
+              # Free-threaded (3.13t+) legs are not run: orjson, a core dependency, publishes no free-threaded
+              # wheel on PyPI (checked 2026-11-13, every release through 3.13.0), so the install cannot succeed.
+              # Re-add them once an orjson release ships cp31Nt wheels.
           else:
-              legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-24.04", "python-version": v} for v in ("3.8", "3.11", "3.14")]
+              legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-24.04", "python-version": v} for v in ("3.8", "3.11", "3.14", "3.15")]
               legs += [{"os": "windows-2025", "python-version": "3.11"}, {"os": "macos-15", "python-version": "3.11"}]
           print("matrix=" + json.dumps({"include": legs}))
           PY

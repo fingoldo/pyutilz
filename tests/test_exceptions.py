@@ -112,3 +112,47 @@ class TestWebHierarchy:
         err = UnsafeURLError("file://")
         assert isinstance(err, ValueError)
         assert not isinstance(err, OSError)
+
+
+class TestLLMExceptionAttributesAndSignatures:
+    """Each LLM exception sets its message and details through its base, so str() and the attributes are right, and the stream-interrupted error takes its message by keyword (llm/exceptions.py 12-117)."""
+
+    def test_a_provider_error_with_details_has_the_message_as_its_string(self):
+        from pyutilz.llm.exceptions import LLMProviderError
+
+        err = LLMProviderError("boom", details={"status_code": 500})
+        assert str(err) == "boom"
+        assert err.message == "boom"
+        assert err.details == {"status_code": 500}
+
+    def test_a_refusal_sets_message_and_details_through_its_base(self):
+        from pyutilz.llm.exceptions import LLMRefusalError
+
+        err = LLMRefusalError("refused", raw_text="raw", details={"reason": "policy"})
+        assert str(err) == "refused"
+        assert err.message == "refused"
+        assert err.details == {"reason": "policy"}
+        assert err.raw_text == "raw"
+
+    def test_a_truncation_sets_message_and_details_through_its_base(self):
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        err = LLMTruncationError("cut", finish_reason="length", partial_text="ab")
+        assert str(err) == "cut"
+        assert err.message == "cut"
+        assert err.details == {}
+
+    def test_a_stream_interruption_sets_message_and_details_through_its_base(self):
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        err = LLMStreamInterruptedError("interrupted", code="server_error", partial_text="x")
+        assert str(err) == "interrupted"
+        assert err.message == "interrupted"
+        assert err.details == {}
+
+    def test_a_stream_interruption_takes_its_message_by_keyword(self):
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        err = LLMStreamInterruptedError(message="by keyword", retryable=False)
+        assert str(err) == "by keyword"
+        assert err.retryable is False

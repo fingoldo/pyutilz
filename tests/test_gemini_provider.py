@@ -22,11 +22,17 @@ def _ensure_genai_types_available():
     optional dependency is present. Individual tests that patch ``types`` themselves for a
     stricter assertion (e.g. checking constructor kwargs) simply nest their own patch inside
     this one -- harmless, not a conflict."""
-    if gemini_provider_module.types is not None:
-        yield
-        return
-    with patch("pyutilz.llm.gemini_provider.types", MagicMock()):
-        yield
+    # GENAI_AVAILABLE is forced True for every test in this module: the constructor refuses to run without it, and
+    # google-genai is not installed on Python 3.8 (its marker is >=3.10), so classes that build a provider directly
+    # (not through _make_provider) would otherwise fail there. A test that needs the unavailable path patches it False itself.
+    with patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True):
+        # genai (the client) is None on 3.8 as well: the constructor calls genai.Client(...) and types.HttpOptions(...).
+        with patch.multiple(
+            "pyutilz.llm.gemini_provider",
+            genai=gemini_provider_module.genai if gemini_provider_module.genai is not None else MagicMock(),
+            types=gemini_provider_module.types if gemini_provider_module.types is not None else MagicMock(),
+        ):
+            yield
 
 
 def _make_provider(**overrides):
@@ -317,3 +323,239 @@ def test_missing_api_key_error_names_pass_api_key_fallback():
     with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings), patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True):
         with pytest.raises(ValueError, match=r"pass api_key="):
             GeminiProvider(api_key=None)
+
+
+_PRICING_PIN = {'gemini-2.5-flash': (0.3, 2.5),
+ 'gemini-2.5-flash-lite': (0.1, 0.4),
+ 'gemini-2.5-pro': (1.25, 10.0),
+ 'gemini-3-flash-preview': (0.5, 3.0),
+ 'gemini-3.1-flash-lite': (0.25, 1.5),
+ 'gemini-3.1-flash-lite-preview': (0.25, 1.5),
+ 'gemini-3.1-pro-preview': (2.0, 12.0),
+ 'gemini-3.5-flash': (1.5, 9.0),
+ 'gemini-3.5-flash-lite': (0.3, 2.5),
+ 'gemini-3.6-flash': (0.75, 3.75),
+ 'gemini-3.7-flash': (0.75, 3.75),
+ 'gemini-3.8-flash': (0.75, 3.75)}
+_CACHE_HIT_PIN = {'gemini-2.5-flash': 0.03,
+ 'gemini-2.5-flash-lite': 0.01,
+ 'gemini-2.5-pro': 0.125,
+ 'gemini-3-flash-preview': 0.05,
+ 'gemini-3.1-flash-lite': 0.025,
+ 'gemini-3.1-flash-lite-preview': 0.025,
+ 'gemini-3.1-pro-preview': 0.2,
+ 'gemini-3.5-flash': 0.15,
+ 'gemini-3.5-flash-lite': 0.03,
+ 'gemini-3.6-flash': 0.075,
+ 'gemini-3.7-flash': 0.075,
+ 'gemini-3.8-flash': 0.075}
+_TIERS_PIN = {'gemini-2.5-pro': (200000, 2.0, 1.5, 2.0, 2.0, False),
+ 'gemini-3.1-pro-preview': (200000, 2.0, 1.5, 2.0, 2.0, False)}
+
+
+class TestGeminiPriceTablesArePinned:
+    """Every Gemini price, cache rate and long-context tier is pinned as a whole table, so a changed row, a misplaced
+    number or an emptied model name fails here, not only where a test names one model (gemini_provider 93-232)."""
+
+    def test_the_pricing_table_and_its_default_are_exact(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp.GeminiProvider._PRICING == _PRICING_PIN
+        assert tuple(gp.GeminiProvider._DEFAULT_PRICING) == (0.25, 1.5)
+
+    def test_the_cache_hit_table_is_exact(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp.GeminiProvider._CACHE_HIT_COST == _CACHE_HIT_PIN
+
+    def test_the_long_context_tiers_and_threshold_are_exact(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        tiers = {k: (v.threshold_tokens, v.input_mult, v.output_mult, v.cached_input_mult, v.cache_write_mult, v.inclusive)
+                 for k, v in gp.GeminiProvider._LONG_CONTEXT_TIERS.items()}
+        assert tiers == _TIERS_PIN
+        assert gp.GeminiProvider._LONG_CONTEXT_THRESHOLD == 200_000
+
+
+class TestGeminiRetryPredicateAndSafetyReasons:
+    """The zero-quota pattern is a whole word, the retry predicate retries server errors and an ordinary 429 only, and the
+    policy-withheld finish reasons are exact (gemini_provider 35-77). Uses the real google-genai error classes."""
+
+    def test_genai_is_available_when_the_package_is_installed(self):
+        pytest.importorskip("google.genai")
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp.GENAI_AVAILABLE is True
+
+    def test_the_zero_quota_pattern_matches_a_whole_limit_zero_only(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp._ZERO_QUOTA.search("quota limit: 0") is not None
+        assert gp._ZERO_QUOTA.search("xlimit: 0") is None
+        assert gp._ZERO_QUOTA.search("limit: 05") is None
+        assert gp._ZERO_QUOTA.search("limit: 0.5") is None
+
+    def test_a_server_error_is_retryable_and_a_zero_quota_429_is_not(self):
+        pytest.importorskip("google.genai")
+        from google.genai.errors import ClientError, ServerError
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp._is_retryable_genai_error(ServerError(503, {"error": {"message": "down"}})) is True
+        assert gp._is_retryable_genai_error(ClientError(429, {"error": {"message": "quota exceeded, limit: 0"}})) is False
+
+    def test_an_ordinary_429_is_retryable_and_other_client_errors_are_not(self):
+        pytest.importorskip("google.genai")
+        from google.genai.errors import ClientError
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp._is_retryable_genai_error(ClientError(429, {"error": {"message": "slow down"}})) is True
+        assert gp._is_retryable_genai_error(ClientError(400, {"error": {"message": "bad request"}})) is False
+        assert gp._is_retryable_genai_error(ValueError("not genai")) is False
+
+    def test_the_policy_withheld_finish_reasons_are_exact(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp._BLOCKING_FINISH_REASONS == ("SAFETY", "BLOCK", "PROHIBITED_CONTENT", "RECITATION", "SPII")
+
+
+class TestFreshGeminiProviderDefaults:
+    """A new Gemini provider starts with zero per-call and session accounting, empty per-call collections, the documented
+    per-call usage keys and the default model and concurrency (gemini_provider 160-213)."""
+
+    def _provider(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key")  # pragma: allowlist secret
+
+    def test_the_per_call_usage_has_its_three_keys_at_zero(self):
+        assert self._provider()._last_usage == {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+
+    def test_the_per_call_scalars_and_collections_start_empty(self):
+        provider = self._provider()
+        assert provider._last_finish_reason is None
+        assert provider.last_cached_content_tokens == 0
+        assert provider.last_safety_ratings == []
+        assert provider.last_function_calls == []
+        assert provider.last_all_candidates == []
+        assert provider.last_grounding_metadata is None
+        assert provider.last_citation_metadata is None
+
+    def test_the_session_totals_start_at_zero(self):
+        provider = self._provider()
+        assert (provider._call_count, provider.total_prompt_tokens, provider.total_completion_tokens) == (0, 0, 0)
+        assert (provider.total_reasoning_tokens, provider.total_cached_content_tokens) == (0, 0)
+        assert provider._long_context_surcharge_usd == 0.0
+        assert provider._long_context_calls == 0
+
+    def test_the_default_model_and_concurrency_are_pinned(self):
+        import inspect
+
+        from pyutilz.llm import gemini_provider as gp
+
+        params = inspect.signature(gp.GeminiProvider.__init__).parameters
+        assert params["model"].default == "gemini-3.1-flash-lite-preview"
+        assert params["max_concurrent"].default == 10
+
+
+class _GeminiWarnLog:
+    def __init__(self):
+        self.calls: list = []
+
+    def warning(self, fmt, *args, **kwargs):
+        self.calls.append((fmt, args))
+
+
+class TestGeminiLimitsAndUnknownPricing:
+    """The context window and output ceiling come from the model's family prefix, the JSON support flags are on, and an
+    unknown model's price warns once with its exact text (gemini_provider 216-258)."""
+
+    def _provider(self, model):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key", model=model)  # pragma: allowlist secret
+
+    def test_a_listed_family_has_its_context_window(self):
+        assert self._provider("gemini-2.5-flash").context_window == 1_048_576
+        assert self._provider("gemini-3.1-flash-lite-preview").context_window == 1_048_576
+
+    def test_an_unlisted_model_gets_the_one_million_token_default_window(self):
+        assert self._provider("gemma-unlisted").context_window == 1_048_576
+
+    def test_the_output_ceiling_is_per_family_and_none_for_an_unlisted_one(self):
+        assert self._provider("gemini-3.1-flash-lite-preview").max_output_tokens == 65536
+        assert self._provider("gemini-2.5-flash").max_output_tokens == 65536
+        assert self._provider("gemini-2.0-flash").max_output_tokens == 8192
+        assert self._provider("gemini-1.5-pro").max_output_tokens is None
+
+    def test_json_mode_and_json_schema_are_supported(self):
+        provider = self._provider("gemini-2.5-flash")
+        assert provider.supports_json_mode() is True
+        assert provider.supports_json_schema() is True
+
+    def test_an_unknown_model_price_warns_once_with_the_default_rates(self, monkeypatch):
+        from pyutilz.llm import gemini_provider as gp
+
+        log = _GeminiWarnLog()
+        monkeypatch.setattr(gp, "logger", log)
+        gp.GeminiProvider._warned_unknown_models.discard("gemma-price-unknown")
+        provider = self._provider("gemma-price-unknown")
+        provider._get_pricing()
+        provider._get_pricing()
+        assert log.calls == [
+            ("Gemini pricing for %r is unknown; using the default %s per 1M. Cost estimates may be off.", ("gemma-price-unknown", (0.25, 1.5)))
+        ]
+
+
+class TestGeminiLongContextTierAndSurcharge:
+    """Only the Pro rows and their versioned ids have the long-context tier, and a surcharge is tallied only above the
+    prompt threshold, per call (gemini_provider 260-285)."""
+
+    def _provider(self, model):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key", model=model)  # pragma: allowlist secret
+
+    def test_a_pro_row_and_its_versioned_id_have_the_tier_and_a_flash_row_does_not(self):
+        assert self._provider("gemini-2.5-pro")._long_context_tier() is not None
+        assert self._provider("gemini-2.5-pro-002")._long_context_tier() is not None
+        assert self._provider("gemini-2.5-flash")._long_context_tier() is None
+        assert self._provider("gemini-2.5-proish")._long_context_tier() is None
+
+    def test_the_current_pricing_carries_the_cache_rate_and_the_tier_of_its_row(self):
+        priced = self._provider("gemini-2.5-pro")._current_pricing()
+        assert priced.cache_hit == pytest.approx(0.125)
+        assert priced.long_context is not None
+
+    def test_no_surcharge_is_tallied_below_the_threshold(self):
+        provider = self._provider("gemini-2.5-pro")
+        provider._add_long_context_surcharge(100, 0, 10)
+        assert provider._long_context_calls == 0
+
+    def test_a_surcharge_is_tallied_per_call_above_the_threshold_on_pro(self):
+        provider = self._provider("gemini-2.5-pro")
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        assert provider._long_context_calls == 2
+        assert provider._long_context_surcharge_usd > 0.0
+
+    def test_a_flash_model_above_the_threshold_gets_no_surcharge(self):
+        provider = self._provider("gemini-2.5-flash")
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        assert provider._long_context_calls == 0
+        assert provider._long_context_surcharge_usd == 0.0
+
+
+class TestGeminiClientTimeoutAndCandidateCount:
+    """The client's timeout is the request timeout in milliseconds, and the candidate count is at least one (gemini_provider 189, 213)."""
+
+    def test_the_client_timeout_is_the_request_timeout_in_milliseconds(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+        assert provider.client._api_client._http_options.timeout == int(provider._request_timeout_seconds * 1000)
+
+    def test_a_candidate_count_below_one_is_raised_to_one(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        assert gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=0)._candidate_count == 1  # pragma: allowlist secret
+        assert gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=3)._candidate_count == 3  # pragma: allowlist secret

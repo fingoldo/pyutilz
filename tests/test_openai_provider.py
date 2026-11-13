@@ -395,3 +395,284 @@ class TestQuotaRefusalDetails:
         provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
         provider._handle_special_status(self._resp(429, {"error": {"type": "rate_limit_exceeded"}}))
         assert recorded == ["OpenAI rate limit hit (HTTP 429). Retrying via tenacity loop."]
+
+
+class _PriceWarnLog:
+    def __init__(self):
+        self.calls: list = []
+
+    def warning(self, fmt, *args, **kwargs):
+        self.calls.append((fmt, args))
+
+
+@pytest.fixture
+def price_log(monkeypatch):
+    from pyutilz.dev.logginglib import reset_log_throttles
+
+    reset_log_throttles()
+    log = _PriceWarnLog()
+    monkeypatch.setattr(op, "logger", log)
+    yield log
+    reset_log_throttles()
+
+
+class TestPricingLookupAndUnknownModels:
+    """A model resolves to its row exactly or as a dated/latest snapshot, a family match prices as its family, a genuine miss prices at gpt-5-mini; only an unknown model warns, once (openai_provider 408-472)."""
+
+    def _provider(self, model="gpt-5-mini"):
+        return op.OpenAIProvider(api_key="sk-test", model=model)  # pragma: allowlist secret
+
+    def test_an_exact_row_or_its_snapshot_resolves_to_that_row(self):
+        assert op.OpenAIProvider._known_row("gpt-5-mini", op._PRICING) == "gpt-5-mini"
+        assert op.OpenAIProvider._known_row("gpt-5-mini-2026-01-15", op._PRICING) == "gpt-5-mini"
+        assert op.OpenAIProvider._known_row("gpt-5-mini-20260115", op._PRICING) == "gpt-5-mini"
+        assert op.OpenAIProvider._known_row("gpt-5-mini-latest", op._PRICING) == "gpt-5-mini"
+
+    def test_a_family_prefix_or_a_typo_is_not_a_known_row(self):
+        assert op.OpenAIProvider._known_row("gpt-5-typo", op._PRICING) is None
+        assert op.OpenAIProvider._known_row("gpt-5-mini-x", op._PRICING) is None
+
+    def test_a_known_row_is_priced_with_its_rates_and_no_warning(self, price_log):
+        priced = self._provider()._resolve_pricing("gpt-5.5")
+        assert (priced.input, priced.output) == (5.0, 30.0)
+        assert price_log.calls == []
+
+    def test_a_dated_snapshot_of_a_known_row_is_priced_silently(self, price_log):
+        priced = self._provider()._resolve_pricing("gpt-5.5-2026-02-01")
+        assert (priced.input, priced.output) == (5.0, 30.0)
+        assert price_log.calls == []
+
+    def test_a_family_match_is_priced_as_its_family_and_warned_once(self, price_log):
+        provider = self._provider()
+        priced = provider._resolve_pricing("gpt-5.5-typo")
+        assert (priced.input, priced.output) == (5.0, 30.0)
+        provider._resolve_pricing("gpt-5.5-typo")
+        assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("gpt-5.5-typo", "its family's"))]
+
+    def test_a_model_with_no_known_family_is_priced_at_gpt_five_mini_and_warned(self, price_log):
+        priced = self._provider()._resolve_pricing("zzz-unknown")
+        assert (priced.input, priced.output) == (0.25, 2.0)
+        assert price_log.calls[0][1] == ("zzz-unknown", "gpt-5-mini")
+
+    def test_the_cache_write_rate_is_only_known_for_a_listed_row(self):
+        provider = self._provider()
+        assert provider._resolve_pricing("gpt-5.5").cache_write == op._CACHE_WRITE_COST.get("gpt-5.5")
+        assert provider._resolve_pricing("gpt-5.5-typo").cache_write is None
+
+    def test_the_cache_hit_rate_is_the_row_value_or_the_family_or_gpt_five_mini(self, price_log):
+        provider = self._provider()
+        assert provider._cache_hit_cost_per_1m("gpt-5.5") == op._CACHE_HIT_COST["gpt-5.5"]
+        assert provider._cache_hit_cost_per_1m("gpt-5.5-typo") == op._CACHE_HIT_COST["gpt-5.5"]
+        assert provider._cache_hit_cost_per_1m("zzz-unknown") == op._CACHE_HIT_COST["gpt-5-mini"]
+
+    def test_the_long_context_tier_applies_to_listed_models_and_their_snapshots_only(self):
+        provider = self._provider()
+        assert provider._long_context_tier("gpt-5.5") is op._LONG_CONTEXT_TIER
+        assert provider._long_context_tier("gpt-5.5-2026-02-01") is op._LONG_CONTEXT_TIER
+        assert provider._long_context_tier("gpt-5-mini") is None
+
+
+class TestRejectedParametersAndReasoningField:
+    """A 400 over temperature or reasoning_effort drops that field (temperature is remembered per model), thinking becomes reasoning_effort for reasoning models, and a non-reasoning model is warned and sent nothing (openai_provider 343-377)."""
+
+    def _provider(self, model="gpt-5.5"):
+        return op.OpenAIProvider(api_key="sk-test", model=model)  # pragma: allowlist secret
+
+    def test_a_non_400_status_repairs_nothing(self):
+        assert self._provider()._body_after_rejected_request({"temperature": 0.5}, 422, "temperature") is None
+
+    def test_a_400_over_temperature_drops_it_and_remembers_the_model(self):
+        op._MODELS_REJECTING_TEMPERATURE.discard("gpt-5.5")
+        out = self._provider()._body_after_rejected_request({"temperature": 0.5, "model": "gpt-5.5"}, 400, "Unsupported temperature")
+        assert out == {"model": "gpt-5.5"}
+        assert "gpt-5.5" in op._MODELS_REJECTING_TEMPERATURE
+        op._MODELS_REJECTING_TEMPERATURE.discard("gpt-5.5")
+
+    def test_a_400_that_names_temperature_but_the_body_has_none_repairs_nothing(self):
+        assert self._provider()._body_after_rejected_request({"model": "gpt-5.5"}, 400, "temperature is wrong") is None
+
+    def test_a_400_over_reasoning_effort_drops_it(self):
+        out = self._provider()._body_after_rejected_request({"reasoning_effort": "minimal", "model": "gpt-5.5"}, 400, "reasoning_effort not supported")
+        assert out == {"model": "gpt-5.5"}
+
+    def test_an_unrelated_400_repairs_nothing(self):
+        assert self._provider()._body_after_rejected_request({"model": "gpt-5.5"}, 400, "bad model") is None
+
+    def test_thinking_on_a_reasoning_model_is_medium_unless_an_effort_is_named(self):
+        provider = self._provider("gpt-5.5")
+        assert provider._thinking_request_field(True) == {"reasoning_effort": "medium"}
+        assert provider._thinking_request_field("high") == {"reasoning_effort": "high"}
+
+    def test_thinking_off_on_a_reasoning_model_asks_for_the_family_lowest_effort(self):
+        provider = self._provider("gpt-5.5")
+        expected = str(op.longest_prefix_lookup("gpt-5.5", op._LOWEST_EFFORT, "low"))
+        assert provider._thinking_request_field(False) == {"reasoning_effort": expected}
+
+    def test_thinking_on_a_non_reasoning_model_is_warned_and_not_sent(self, monkeypatch):
+        log = _PriceWarnLog()
+        monkeypatch.setattr(op, "logger", log)
+        assert self._provider("gpt-4.1")._thinking_request_field(True) is None
+        assert log.calls == [("OpenAI %r is not a reasoning model; thinking=%r is not sent.", ("gpt-4.1", True))]
+
+    def test_thinking_off_on_a_non_reasoning_model_is_silent(self, monkeypatch):
+        log = _PriceWarnLog()
+        monkeypatch.setattr(op, "logger", log)
+        assert self._provider("gpt-4.1")._thinking_request_field(False) is None
+        assert log.calls == []
+
+
+class TestOutputAndContextLimits:
+    """The output cap and context window of a model: its row, a dated snapshot of it, a family prefix, or the default for an unlisted model (openai_provider 457-463)."""
+
+    def _provider(self, model):
+        return op.OpenAIProvider(api_key="sk-test", model=model)  # pragma: allowlist secret
+
+    def test_the_output_cap_is_the_row_value_for_a_listed_model_and_its_snapshot(self):
+        assert self._provider("gpt-5.5").max_output_tokens == op._MAX_TOKENS["gpt-5.5"]
+        assert self._provider("gpt-5.5-2026-02-01").max_output_tokens == op._MAX_TOKENS["gpt-5.5"]
+
+    def test_the_output_cap_of_a_family_prefix_is_the_longest_matching_row(self):
+        assert self._provider("gpt-5.5-typo").max_output_tokens == op._MAX_TOKENS["gpt-5.5"]
+
+    def test_an_unlisted_model_has_no_output_cap(self):
+        assert self._provider("zzz-unknown").max_output_tokens is None
+
+    def test_the_context_window_is_the_row_value_for_a_listed_model_and_its_snapshot(self):
+        assert self._provider("gpt-5.5").context_window == op._CONTEXT_WINDOW["gpt-5.5"]
+        assert self._provider("gpt-5.5-2026-02-01").context_window == op._CONTEXT_WINDOW["gpt-5.5"]
+
+    def test_an_unlisted_model_gets_the_class_default_context_window(self):
+        assert self._provider("zzz-unknown").context_window == op.OpenAIProvider._default_context_window == 128_000
+
+
+class TestOpenAIBodyShaping:
+    """The chat body renames max_tokens, drops temperature for reasoning models and for models that refused it, keeps it otherwise; the streaming builder passes its keywords through; an unlisted family's reasoning effort is low (openai_provider 343-377)."""
+
+    def _provider(self, model):
+        return op.OpenAIProvider(api_key="sk-test", model=model)  # pragma: allowlist secret
+
+    def test_max_tokens_is_renamed_to_max_completion_tokens(self):
+        out = self._provider("gpt-4.1")._openai_body({"max_tokens": 50, "model": "gpt-4.1"})
+        assert out == {"max_completion_tokens": 50, "model": "gpt-4.1"}
+
+    def test_temperature_is_kept_for_a_non_reasoning_model_that_accepts_it(self):
+        op._MODELS_REJECTING_TEMPERATURE.discard("gpt-4.1")
+        assert self._provider("gpt-4.1")._openai_body({"temperature": 0.7})["temperature"] == 0.7
+
+    def test_temperature_is_dropped_for_a_reasoning_model(self):
+        assert "temperature" not in self._provider("gpt-5.5")._openai_body({"temperature": 0.7})
+
+    def test_temperature_is_dropped_for_a_model_that_refused_it_before(self):
+        op._MODELS_REJECTING_TEMPERATURE.add("gpt-4.1")
+        try:
+            assert "temperature" not in self._provider("gpt-4.1")._openai_body({"temperature": 0.7})
+        finally:
+            op._MODELS_REJECTING_TEMPERATURE.discard("gpt-4.1")
+
+    def test_the_streaming_builder_passes_its_keywords_to_the_shared_builder(self):
+        out = self._provider("gpt-4.1")._build_stream_body(
+            prompt="hi", system=None, temperature=0.7, max_tokens=50, json_mode=False, thinking=None, json_schema=None, images=None
+        )
+        assert out["max_completion_tokens"] == 50
+        assert "max_tokens" not in out
+
+    def test_a_family_without_a_lowest_effort_row_asks_for_low(self, monkeypatch):
+        monkeypatch.setattr(op, "_LOWEST_EFFORT", {})
+        assert self._provider("gpt-5.5")._thinking_request_field(False) == {"reasoning_effort": "low"}
+
+
+class TestCreditHintAndUnknownModelThrottle:
+    """The credit query refuses with the exact billing hint, and an unknown model's warning is throttled per model under its own key (openai_provider 388, 393)."""
+
+    def test_the_credit_query_refuses_with_the_exact_billing_hint(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        with pytest.raises(NotImplementedError) as info:
+            asyncio.run(provider.get_account_credits())
+        assert str(info.value) == (
+            "OpenAI has no public API to fetch remaining credit. Check platform.openai.com/usage or platform.openai.com/account/billing/overview."
+        )
+
+    def test_an_unknown_model_warning_is_throttled_under_its_own_key(self, price_log):
+        from pyutilz.dev import logginglib as ll
+
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        provider._warn_unknown_model_once("zzz-keyed")
+        assert "openai.unknown_model:zzz-keyed" in ll._log_throttle_last
+        provider._warn_unknown_model_once("zzz-keyed")
+        assert len(price_log.calls) == 1
+        assert price_log.calls[0][1] == ("zzz-keyed", "gpt-5-mini")
+
+
+class TestUnknownModelWarningPerPath:
+    """The pricing path and the cache-hit path each warn about an unknown model on their own (openai_provider 429, 471)."""
+
+    def test_the_pricing_path_warns_by_itself_when_the_cache_rate_is_stubbed(self, price_log, monkeypatch):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        monkeypatch.setattr(provider, "_cache_hit_cost_per_1m", lambda model: 0.1)
+        provider._resolve_pricing("gpt-5.5-typo")
+        assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("gpt-5.5-typo", "its family's"))]
+
+    def test_the_cache_hit_path_warns_by_itself_for_an_unknown_model(self, price_log):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        provider._cache_hit_cost_per_1m("gpt-5.5-typo")
+        assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("gpt-5.5-typo", "its family's"))]
+
+
+class TestRemainingRepairAndCachePaths:
+    """A reasoning-effort mention in the error text repairs only a body that carries the field; repairing defaults to False; a model with a cache-write rate keeps it, and the cache-hit path names gpt-5-mini for a model with no family (openai_provider 343, 359, 432, 471)."""
+
+    def test_an_error_that_names_reasoning_effort_repairs_nothing_when_the_body_lacks_it(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        assert provider._body_after_rejected_request({"model": "gpt-5.5"}, 400, "reasoning_effort is not supported") is None
+
+    def test_the_repairing_flag_defaults_to_false(self):
+        import inspect
+
+        assert inspect.signature(op.OpenAIProvider._post_and_unwrap).parameters["repairing"].default is False
+
+    def test_a_listed_row_with_a_cache_write_rate_keeps_it(self):
+        provider = op.OpenAIProvider(api_key="sk-test", model="gpt-6-astra")  # pragma: allowlist secret
+        assert provider._resolve_pricing("gpt-6-astra").cache_write == 12.50
+        assert op.OpenAIProvider(api_key="sk-test", model="gpt-5.5")._resolve_pricing("gpt-5.5").cache_write is None  # pragma: allowlist secret
+
+    def test_the_cache_hit_path_names_gpt_five_mini_for_a_model_with_no_family(self, price_log):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        assert provider._cache_hit_cost_per_1m("zzz-unknown") == op._CACHE_HIT_COST["gpt-5-mini"]
+        assert price_log.calls == [("OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.", ("zzz-unknown", "gpt-5-mini"))]
+
+
+class TestLowestEffortQuotaAndSnapshotConstants:
+    """The lowest reasoning effort per family, the quota codes and the snapshot suffix are pinned exactly, and the suffix is anchored at the end (openai_provider 230-247)."""
+
+    def test_the_lowest_effort_table_is_exact(self):
+        assert op._LOWEST_EFFORT == {
+            "gpt-5": "minimal",
+            "gpt-5.1": "none",
+            "gpt-5.2": "none",
+            "gpt-5.4": "none",
+            "gpt-5.5": "none",
+            "gpt-5.6": "none",
+            "gpt-6": "none",
+            "gpt-6-astra": "low",
+            "gpt-6-sol": "low",
+            "gpt-6.1-sol": "low",
+            "o1": "low",
+            "o3": "low",
+            "o4": "low",
+        }
+
+    def test_the_quota_codes_are_exactly_the_two_documented_ones(self):
+        assert op._QUOTA_EXHAUSTED_CODES == frozenset({"insufficient_quota", "credit_balance_exhausted"})
+
+    def test_the_snapshot_suffix_is_anchored_at_the_end(self):
+        assert op._SNAPSHOT_SUFFIX.pattern == r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|latest)$"
+        assert op._SNAPSHOT_SUFFIX.search("gpt-5-latestx") is None
+        assert op._SNAPSHOT_SUFFIX.search("gpt-5-2026-01-15x") is None
+
+
+class TestReasoningEffortRepairNeedsTheMention:
+    """A 400 repairs reasoning_effort only when its error names that field, even when the body carries it (openai_provider 359)."""
+
+    def test_an_unrelated_400_over_a_body_with_reasoning_effort_repairs_nothing(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        assert provider._body_after_rejected_request({"reasoning_effort": "low", "model": "gpt-5.5"}, 400, "bad model") is None

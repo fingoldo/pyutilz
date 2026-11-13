@@ -1,6 +1,8 @@
+import os
 import subprocess
 import sys
 import textwrap
+from typing import Optional
 from unittest.mock import MagicMock
 import pytest
 
@@ -157,3 +159,62 @@ class TestEncodingCacheBounded:
         finally:
             mod._ENCODING_CACHE_MAX_SIZE = orig_max
             self._reset(mod)
+
+
+def _run_module_script(body: str, env_extra: Optional[dict] = None) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env.pop("PYUTILZ_TOKEN_ENCODING_CACHE_MAX_SIZE", None)
+    if env_extra:
+        env.update(env_extra)
+    return subprocess.run([sys.executable, "-c", textwrap.dedent(body)], capture_output=True, text=True, timeout=60, env=env)
+
+
+def test_the_default_encoding_is_cl100k_base_and_it_is_loaded_at_import():
+    """Run in a subprocess: the encoding is loaded at import, so the name is observed before the module is cached (openai_provider-style pin, token_counter 29)."""
+    result = _run_module_script(
+        """
+        import tiktoken
+        from unittest.mock import patch
+
+        seen = []
+
+        def fake(name):
+            seen.append(name)
+            return object()
+
+        with patch.object(tiktoken, "get_encoding", side_effect=fake):
+            import pyutilz.llm.token_counter as mod
+
+        assert seen == ["cl100k_base"], seen
+        assert mod._HAS_TIKTOKEN is True
+        print("OK")
+        """
+    )
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+
+def test_a_missing_encoding_logs_the_exact_fallback_warning_on_stderr():
+    result = _run_module_script(
+        """
+        import tiktoken
+        from unittest.mock import patch
+
+        with patch.object(tiktoken, "get_encoding", side_effect=RuntimeError("boom")):
+            import pyutilz.llm.token_counter as mod
+
+        assert mod._HAS_TIKTOKEN is False
+        print("OK")
+        """
+    )
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert "tiktoken unavailable (RuntimeError: boom) -- using len//4 fallback for token counting" in result.stderr
+
+
+def test_the_encoding_cache_size_defaults_to_256_and_reads_its_environment_variable():
+    default = _run_module_script("import pyutilz.llm.token_counter as mod\nprint(mod._ENCODING_CACHE_MAX_SIZE)\n")
+    assert default.returncode == 0 and default.stdout.strip() == "256"
+    sized = _run_module_script(
+        "import pyutilz.llm.token_counter as mod\nprint(mod._ENCODING_CACHE_MAX_SIZE)\n",
+        env_extra={"PYUTILZ_TOKEN_ENCODING_CACHE_MAX_SIZE": "7"},
+    )
+    assert sized.returncode == 0 and sized.stdout.strip() == "7"

@@ -58,6 +58,30 @@ _uncached_providers: "weakref.WeakSet[LLMProvider]" = weakref.WeakSet()
 _pending_close_tasks: "set[asyncio.Task[None]]" = set()
 
 
+def _pop_lru(cache: "OrderedDict[Any, Any]") -> "tuple[Any, int]":
+    """Drop the least recently used entry and return it with its ``sys.getrefcount``.
+
+    The count is read in this one function on purpose: CPython's count for a local depends on the bytecode
+    around the read (3.14 and 3.15 differ from 3.13 and from each other), so the threshold is measured by
+    running this same function on an object nothing else holds (``_measure_eviction_refcount_baseline``).
+    """
+    _, evicted = cache.popitem(last=False)
+    return evicted, sys.getrefcount(evicted)
+
+
+def _measure_eviction_refcount_baseline() -> int:
+    """The count ``_pop_lru`` reports for an evicted object that nothing but the cache held."""
+
+    class _Probe:
+        pass
+
+    _, baseline = _pop_lru(OrderedDict([("probe", _Probe())]))
+    return baseline
+
+
+_EVICTION_REFCOUNT_BASELINE = _measure_eviction_refcount_baseline()
+
+
 def _schedule_provider_close(provider: LLMProvider) -> None:
     """Best-effort close for a provider evicted from the LRU cache.
 
@@ -190,15 +214,15 @@ def get_llm_provider(
         instance = constructor(**kwargs)
         _provider_cache[cache_key] = instance
         if len(_provider_cache) > _PROVIDER_CACHE_MAX_SIZE:
-            _, evicted = _provider_cache.popitem(last=False)
+            evicted, evicted_refs = _pop_lru(_provider_cache)
             # Eviction is keyed on cache size, not liveness: get_llm_provider() hands out shared
             # instances and keeps no refcount, so closing unconditionally could shut the httpx
             # client of a provider a coroutine obtained earlier and is still using ("Cannot send
-            # a request, as the client has been closed" mid-batch). getrefcount's baseline here
-            # is 2 -- the local `evicted` plus the temporary argument reference -- so anything
-            # above it means someone else still holds the provider: drop the LRU entry without
-            # closing and let the WeakSet + atexit handler tear it down instead.
-            if sys.getrefcount(evicted) <= 2:
+            # a request, as the client has been closed" mid-batch). The refcount of an object that
+            # only this eviction holds is measured at import (_EVICTION_REFCOUNT_BASELINE, it differs
+            # by interpreter), so anything above it means someone else still holds the provider:
+            # drop the LRU entry without closing and let the WeakSet + atexit handler tear it down.
+            if evicted_refs <= _EVICTION_REFCOUNT_BASELINE:
                 _schedule_provider_close(evicted)
             else:
                 _uncached_providers.add(evicted)
