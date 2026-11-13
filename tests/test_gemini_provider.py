@@ -498,3 +498,42 @@ class TestGeminiLimitsAndUnknownPricing:
         assert log.calls == [
             ("Gemini pricing for %r is unknown; using the default %s per 1M. Cost estimates may be off.", ("gemma-price-unknown", (0.25, 1.5)))
         ]
+
+
+class TestGeminiLongContextTierAndSurcharge:
+    """Only the Pro rows and their versioned ids have the long-context tier, and a surcharge is tallied only above the
+    prompt threshold, per call (gemini_provider 260-285)."""
+
+    def _provider(self, model):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key", model=model)  # pragma: allowlist secret
+
+    def test_a_pro_row_and_its_versioned_id_have_the_tier_and_a_flash_row_does_not(self):
+        assert self._provider("gemini-2.5-pro")._long_context_tier() is not None
+        assert self._provider("gemini-2.5-pro-002")._long_context_tier() is not None
+        assert self._provider("gemini-2.5-flash")._long_context_tier() is None
+        assert self._provider("gemini-2.5-proish")._long_context_tier() is None
+
+    def test_the_current_pricing_carries_the_cache_rate_and_the_tier_of_its_row(self):
+        priced = self._provider("gemini-2.5-pro")._current_pricing()
+        assert priced.cache_hit == pytest.approx(0.125)
+        assert priced.long_context is not None
+
+    def test_no_surcharge_is_tallied_below_the_threshold(self):
+        provider = self._provider("gemini-2.5-pro")
+        provider._add_long_context_surcharge(100, 0, 10)
+        assert provider._long_context_calls == 0
+
+    def test_a_surcharge_is_tallied_per_call_above_the_threshold_on_pro(self):
+        provider = self._provider("gemini-2.5-pro")
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        assert provider._long_context_calls == 2
+        assert provider._long_context_surcharge_usd > 0.0
+
+    def test_a_flash_model_above_the_threshold_gets_no_surcharge(self):
+        provider = self._provider("gemini-2.5-flash")
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        assert provider._long_context_calls == 0
+        assert provider._long_context_surcharge_usd == 0.0
