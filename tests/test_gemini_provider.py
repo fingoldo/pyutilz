@@ -735,3 +735,67 @@ class TestGeminiGenerateConfig:
 
     def test_no_thinking_config_is_sent_without_a_thinking_request(self):
         assert getattr(self._config(thinking=None), "thinking_config", None) is None
+
+
+class _Feedback:
+    def __init__(self, block_reason=None, message=None):
+        self.block_reason = block_reason
+        self.block_reason_message = message
+
+
+class _ResponseWithFeedback:
+    def __init__(self, candidates, feedback=None):
+        self.candidates = candidates
+        self.prompt_feedback = feedback
+
+
+class TestGeminiSafetyBlocks:
+    """A prompt blocked before any candidate raises with its block reason and message, a response that ends on a policy finish
+    reason raises with the finish reason, and anything else passes; generate defaults to temperature 0.7, no token cap, not JSON
+    (gemini_provider 404-440)."""
+
+    def _provider(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+
+    def test_a_blocked_prompt_raises_with_its_reason_and_message(self):
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+
+        provider = self._provider()
+        response = _ResponseWithFeedback([], _Feedback("SAFETY", "policy"))
+        with pytest.raises(LLMSafetyBlockError) as info:
+            provider._raise_if_blocked(response, "STOP")
+        assert str(info.value) == "Gemini blocked the prompt (block_reason=SAFETY)"
+        assert info.value.details == {
+            "finish_reason": None,
+            "block_reason": "SAFETY",
+            "block_reason_message": "policy",
+            "safety_ratings": [],
+        }
+
+    def test_a_prompt_with_no_block_reason_is_not_refused(self):
+        provider = self._provider()
+        provider._raise_if_blocked(_ResponseWithFeedback([], _Feedback(None)), "STOP")
+
+    def test_a_response_on_a_policy_finish_reason_raises_with_it(self):
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+
+        provider = self._provider()
+        provider._last_finish_reason = "SAFETY"
+        with pytest.raises(LLMSafetyBlockError) as info:
+            provider._raise_if_blocked(_ResponseWithFeedback(["candidate"]), "SAFETY")
+        assert str(info.value) == "Gemini blocked response by safety filter (finish_reason=SAFETY)"
+        assert info.value.details == {"finish_reason": "SAFETY", "safety_ratings": []}
+
+    def test_an_ordinary_finish_reason_is_not_refused(self):
+        provider = self._provider()
+        provider._raise_if_blocked(_ResponseWithFeedback(["candidate"]), "STOP")
+
+    def test_generate_defaults_are_temperature_point_seven_no_cap_and_not_json(self):
+        import inspect
+
+        params = inspect.signature(self._provider().generate).parameters
+        assert params["temperature"].default == 0.7
+        assert params["max_tokens"].default == 0
+        assert params["json_mode"].default is False
