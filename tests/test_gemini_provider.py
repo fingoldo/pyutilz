@@ -778,7 +778,8 @@ class TestGeminiSafetyBlocks:
 
     def test_a_prompt_with_no_block_reason_is_not_refused(self):
         provider = self._provider()
-        provider._raise_if_blocked(_ResponseWithFeedback([], _Feedback(None)), "STOP")
+        # The contract is "returns None without raising"; a raise fails the test by itself, the assert pins the return value.
+        assert provider._raise_if_blocked(_ResponseWithFeedback([], _Feedback(None)), "STOP") is None
 
     def test_a_response_on_a_policy_finish_reason_raises_with_it(self):
         from pyutilz.llm.exceptions import LLMSafetyBlockError
@@ -792,7 +793,7 @@ class TestGeminiSafetyBlocks:
 
     def test_an_ordinary_finish_reason_is_not_refused(self):
         provider = self._provider()
-        provider._raise_if_blocked(_ResponseWithFeedback(["candidate"]), "STOP")
+        assert provider._raise_if_blocked(_ResponseWithFeedback(["candidate"]), "STOP") is None
 
     def test_generate_defaults_are_temperature_point_seven_no_cap_and_not_json(self):
         import inspect
