@@ -633,3 +633,61 @@ class TestGeminiJsonForwarding:
     def test_images_thinking_and_a_schema_are_forwarded_when_given(self, monkeypatch):
         *_, extra = self._calls(monkeypatch, images=["img"], thinking=False, json_schema={"type": "object"})
         assert extra == {"json_mode": True, "images": ["img"], "thinking": False, "json_schema": {"type": "object"}}
+
+
+class _UsageMeta:
+    def __init__(self, prompt, candidates, thoughts, cached):
+        self.prompt_token_count = prompt
+        self.candidates_token_count = candidates
+        self.thoughts_token_count = thoughts
+        self.cached_content_token_count = cached
+
+
+class _UsageResponse:
+    def __init__(self, usage):
+        self.usage_metadata = usage
+
+
+class TestGeminiUsageRecording:
+    """A response's usage metadata sets the per-call usage and adds to every session total, once per call; a response with no
+    metadata records nothing; a long prompt on Pro is surcharged (gemini_provider 394-402)."""
+
+    def _provider(self, model="gemini-2.5-flash"):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key", model=model)  # pragma: allowlist secret
+
+    def test_a_response_sets_the_per_call_usage_and_the_last_cached_count(self):
+        provider = self._provider()
+        provider._record_gemini_usage(_UsageResponse(_UsageMeta(1000, 200, 50, 300)))
+        assert provider._last_usage == {
+            "input_tokens": 1000,
+            "output_tokens": 200,
+            "reasoning_tokens": 50,
+            "cached_content_token_count": 300,
+        }
+        assert provider.last_cached_content_tokens == 300
+
+    def test_a_response_adds_each_count_to_the_session_totals_once(self):
+        provider = self._provider()
+        provider._record_gemini_usage(_UsageResponse(_UsageMeta(1000, 200, 50, 300)))
+        provider._record_gemini_usage(_UsageResponse(_UsageMeta(500, 100, 25, 100)))
+        assert provider._call_count == 2
+        assert provider.total_prompt_tokens == 1500
+        assert provider.total_completion_tokens == 300
+        assert provider.total_reasoning_tokens == 75
+        assert provider.total_cached_content_tokens == 400
+
+    def test_a_response_without_usage_records_nothing(self):
+        provider = self._provider()
+        provider._record_gemini_usage(_UsageResponse(None))
+        assert provider._call_count == 0
+        assert provider.total_prompt_tokens == 0
+
+    def test_a_long_prompt_on_pro_is_surcharged_and_a_flash_one_is_not(self):
+        pro = self._provider("gemini-2.5-pro")
+        pro._record_gemini_usage(_UsageResponse(_UsageMeta(250_000, 1000, 0, 0)))
+        assert pro._long_context_calls == 1
+        flash = self._provider("gemini-2.5-flash")
+        flash._record_gemini_usage(_UsageResponse(_UsageMeta(250_000, 1000, 0, 0)))
+        assert flash._long_context_calls == 0
