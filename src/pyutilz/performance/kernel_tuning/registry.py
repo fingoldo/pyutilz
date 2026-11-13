@@ -180,7 +180,8 @@ class TunerSpec:
         scenario = self.scenario_for(res_in or "host", res_out or "host")
         specs = self.scenario_specs()
         target = specs[0] if len(specs) == 1 else next(s for s in specs if tuple(s.residencies[0]) == scenario)
-        return target._choose_plain(dims)
+        choice: str = target._choose_plain(dims)
+        return choice
 
     def _choose_plain(self, dims: dict) -> str:
         """Per-host backend decision for these dims -- the one-call dispatch that
