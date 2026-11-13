@@ -557,3 +557,79 @@ class TestGeminiClientTimeoutAndCandidateCount:
 
         assert gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=0)._candidate_count == 1  # pragma: allowlist secret
         assert gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=3)._candidate_count == 3  # pragma: allowlist secret
+
+
+class TestGeminiSessionCostSummary:
+    """The session summary splits cached and uncached prompt tokens at their own rates, prices completion plus reasoning at
+    the output rate, adds the surcharge, and has the documented keys (gemini_provider 314-349)."""
+
+    def _session(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-pro")  # pragma: allowlist secret
+        provider._call_count = 4
+        provider.total_prompt_tokens = 2_000_000
+        provider.total_cached_content_tokens = 500_000
+        provider.total_completion_tokens = 100_000
+        provider.total_reasoning_tokens = 50_000
+        provider._long_context_surcharge_usd = 3.0
+        provider._long_context_calls = 2
+        return provider
+
+    def test_the_session_summary_prices_cached_and_uncached_tokens_and_the_surcharge(self):
+        summary = self._session().get_session_cost()
+        assert summary["cache_hit_tokens"] == 500_000
+        assert summary["cache_miss_tokens"] == 1_500_000
+        assert summary["input_cost_usd"] == pytest.approx(1.9375, abs=1e-12)
+        assert summary["output_cost_usd"] == pytest.approx(1.5, abs=1e-12)
+        assert summary["long_context_surcharge_usd"] == 3.0
+        assert summary["total_cost_usd"] == pytest.approx(6.4375, abs=1e-12)
+
+    def test_the_session_summary_has_its_documented_keys_and_counts(self):
+        summary = self._session().get_session_cost()
+        assert set(summary) == {
+            "calls",
+            "prompt_tokens",
+            "cache_hit_tokens",
+            "cache_miss_tokens",
+            "completion_tokens",
+            "reasoning_tokens",
+            "input_cost_usd",
+            "output_cost_usd",
+            "long_context_surcharge_usd",
+            "long_context_calls",
+            "total_cost_usd",
+        }
+        assert summary["calls"] == 4
+        assert summary["prompt_tokens"] == 2_000_000
+        assert summary["completion_tokens"] == 100_000
+        assert summary["reasoning_tokens"] == 50_000
+        assert summary["long_context_calls"] == 2
+
+
+class TestGeminiJsonForwarding:
+    """generate_json forwards images, thinking and a schema only when given, and always in json mode (gemini_provider 314-319)."""
+
+    def _calls(self, monkeypatch, **kwargs):
+        from pyutilz.llm import gemini_provider as gp
+        import asyncio
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash")  # pragma: allowlist secret
+        seen: list = []
+
+        async def spy(prompt, system, temperature, max_tokens, **extra):
+            seen.append((prompt, system, temperature, max_tokens, extra))
+            return {}
+
+        monkeypatch.setattr(provider, "_generate_json_via", spy)
+        asyncio.run(provider.generate_json("p", system="s", temperature=0.2, max_tokens=50, **kwargs))
+        return seen[0]
+
+    def test_a_plain_call_forwards_only_json_mode(self, monkeypatch):
+        prompt, system, temperature, max_tokens, extra = self._calls(monkeypatch)
+        assert (prompt, system, temperature, max_tokens) == ("p", "s", 0.2, 50)
+        assert extra == {"json_mode": True}
+
+    def test_images_thinking_and_a_schema_are_forwarded_when_given(self, monkeypatch):
+        *_, extra = self._calls(monkeypatch, images=["img"], thinking=False, json_schema={"type": "object"})
+        assert extra == {"json_mode": True, "images": ["img"], "thinking": False, "json_schema": {"type": "object"}}
