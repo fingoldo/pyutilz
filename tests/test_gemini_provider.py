@@ -691,3 +691,47 @@ class TestGeminiUsageRecording:
         flash = self._provider("gemini-2.5-flash")
         flash._record_gemini_usage(_UsageResponse(_UsageMeta(250_000, 1000, 0, 0)))
         assert flash._long_context_calls == 0
+
+
+class TestGeminiGenerateConfig:
+    """The request config carries temperature, a token cap, the system instruction, the JSON mime type and schema, and a candidate
+    count only above one, each only when set (gemini_provider 355-391)."""
+
+    def _config(self, **kwargs):
+        from pyutilz.llm import gemini_provider as gp
+
+        provider = gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=kwargs.pop("candidates", 1))  # pragma: allowlist secret
+        defaults = dict(max_tokens=None, temperature=None, system=None, json_mode=False, json_schema=None, thinking=None)
+        defaults.update(kwargs)
+        return provider._build_generate_config(**defaults)
+
+    def test_a_temperature_is_sent_only_when_given(self):
+        assert getattr(self._config(temperature=None), "temperature", None) is None
+        assert self._config(temperature=0.3).temperature == 0.3
+
+    def test_a_token_cap_is_sent_only_when_positive(self):
+        assert getattr(self._config(max_tokens=None), "max_output_tokens", None) is None
+        assert getattr(self._config(max_tokens=0), "max_output_tokens", None) is None
+        assert self._config(max_tokens=50).max_output_tokens == 50
+
+    def test_the_system_instruction_is_set_only_when_non_empty(self):
+        assert getattr(self._config(system=""), "system_instruction", None) is None
+        assert self._config(system="be terse").system_instruction == "be terse"
+
+    def test_json_mode_or_a_schema_sets_the_json_mime_type(self):
+        assert getattr(self._config(json_mode=False), "response_mime_type", None) is None
+        assert self._config(json_mode=True).response_mime_type == "application/json"
+        assert self._config(json_schema={"type": "object"}).response_mime_type == "application/json"
+
+    def test_a_wrapped_schema_is_unwrapped_only_with_its_name_or_strict_marker(self):
+        wrapped = {"name": "n", "strict": True, "schema": {"type": "object"}}
+        assert self._config(json_schema=wrapped).response_json_schema == {"type": "object"}
+        bare = {"schema": {"type": "object"}}
+        assert self._config(json_schema=bare).response_json_schema == bare
+
+    def test_a_candidate_count_is_sent_only_above_one(self):
+        assert getattr(self._config(candidates=1), "candidate_count", None) is None
+        assert self._config(candidates=3).candidate_count == 3
+
+    def test_no_thinking_config_is_sent_without_a_thinking_request(self):
+        assert getattr(self._config(thinking=None), "thinking_config", None) is None
