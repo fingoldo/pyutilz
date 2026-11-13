@@ -668,3 +668,11 @@ class TestLowestEffortQuotaAndSnapshotConstants:
         assert op._SNAPSHOT_SUFFIX.pattern == r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|latest)$"
         assert op._SNAPSHOT_SUFFIX.search("gpt-5-latestx") is None
         assert op._SNAPSHOT_SUFFIX.search("gpt-5-2026-01-15x") is None
+
+
+class TestReasoningEffortRepairNeedsTheMention:
+    """A 400 repairs reasoning_effort only when its error names that field, even when the body carries it (openai_provider 359)."""
+
+    def test_an_unrelated_400_over_a_body_with_reasoning_effort_repairs_nothing(self):
+        provider = op.OpenAIProvider(api_key="sk-test")  # pragma: allowlist secret
+        assert provider._body_after_rejected_request({"reasoning_effort": "low", "model": "gpt-5.5"}, 400, "bad model") is None
