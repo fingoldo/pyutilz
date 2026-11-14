@@ -5,6 +5,7 @@ from the package ``__init__`` to preserve the public import surface.
 """
 
 import re
+from typing import Callable
 
 from ._common import (
     Any,
@@ -567,20 +568,24 @@ def _arrow_type(dtype: object) -> object:
     return getattr(dtype, "pyarrow_dtype", None)
 
 
+def _arrow_type_matches(dtype: object, predicate: Callable[[Any], bool]) -> bool:
+    """True when ``dtype`` is a pandas ArrowDtype whose pyarrow type satisfies ``predicate``."""
+    arrow_type = _arrow_type(dtype)
+    return arrow_type is not None and predicate(arrow_type)
+
+
 def _arrow_is_integer(dtype: object) -> bool:
     """True for a pandas ArrowDtype whose pyarrow type is an integer type."""
     import pyarrow as pa
 
-    arrow_type = _arrow_type(dtype)
-    return arrow_type is not None and pa.types.is_integer(arrow_type)
+    return _arrow_type_matches(dtype, pa.types.is_integer)
 
 
 def _arrow_is_float(dtype: object) -> bool:
     """True for a pandas ArrowDtype whose pyarrow type is a floating-point type."""
     import pyarrow as pa
 
-    arrow_type = _arrow_type(dtype)
-    return arrow_type is not None and pa.types.is_floating(arrow_type)
+    return _arrow_type_matches(dtype, pa.types.is_floating)
 
 
 def ensure_dataframe_float32_convertability(
