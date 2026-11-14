@@ -465,3 +465,33 @@ def test_a_registration_logs_the_scraper_name_and_its_node_id(monkeypatch):
     monkeypatch.setattr(dist_mod.system, "get_system_info", lambda **kw: {"host_name": "h", "os_machine_guid": "g", "os_serial": "s"})
     dist_mod.register_scraper(scraper_name="s1", version="v1", app_name="app", ip="1.2.3.4")
     assert recorded == [("Registered as %s with node_id %s", ("s1", 7))]
+
+
+class TestHeartbeatSender:
+    """The heartbeat defaults to status ok and sends its statement only for a registered node (distributed 205-216)."""
+
+    def test_the_heartbeat_defaults_to_status_ok(self, monkeypatch):
+        from pyutilz.system import distributed as dist
+
+        seen: list = []
+        monkeypatch.setattr(dist, "get_heartbeat_sql", lambda status="ok", ip=None: seen.append(status) or ("", None))
+        dist.heartbeat_scraper()
+        assert seen == ["ok"]
+
+    def test_a_registered_heartbeat_executes_its_statement_and_params(self, monkeypatch):
+        from pyutilz.system import distributed as dist
+
+        executed: list = []
+        monkeypatch.setattr(dist, "get_heartbeat_sql", lambda status="ok", ip=None: ("SQL TEXT", ("p",)))
+        monkeypatch.setattr(dist.db, "safe_execute", lambda sql, params: executed.append((sql, params)))
+        dist.heartbeat_scraper(status="starting", ip="9.9.9.9")
+        assert executed == [("SQL TEXT", ("p",))]
+
+    def test_an_unregistered_heartbeat_executes_nothing(self, monkeypatch):
+        from pyutilz.system import distributed as dist
+
+        executed: list = []
+        monkeypatch.setattr(dist, "get_heartbeat_sql", lambda status="ok", ip=None: ("", None))
+        monkeypatch.setattr(dist.db, "safe_execute", lambda sql, params: executed.append(sql))
+        dist.heartbeat_scraper()
+        assert executed == []
