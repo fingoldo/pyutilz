@@ -495,3 +495,50 @@ class TestHeartbeatSender:
         monkeypatch.setattr(dist.db, "safe_execute", lambda sql, params: executed.append(sql))
         dist.heartbeat_scraper()
         assert executed == []
+
+
+class TestRegisterScraperFallbacks:
+    """Without an explicit app name or IP, both are looked up on the stack, and an IP that is still missing is read from the web
+    (distributed 124-129)."""
+
+    def _patch(self, monkeypatch, found: dict):
+        from pyutilz.system import distributed as dist
+
+        looked: list = []
+
+        def lookup(name):
+            looked.append(name)
+            return found.get(name)
+
+        monkeypatch.setattr(dist.pythonlib, "lookup_in_stack", lookup)
+        external: list = []
+        monkeypatch.setattr(dist.web, "get_external_ip", lambda: external.append(1) or "8.8.8.8")
+        monkeypatch.setattr(dist, "_resolve_node_id", lambda info, scraper_name: setattr(dist._container, "node_id", 7))
+        monkeypatch.setattr(dist.system, "get_system_info", lambda **kw: {"host_name": "h"})
+        monkeypatch.setattr(dist, "db", _RecordingDB())
+        monkeypatch.setattr(dist, "heartbeat_scraper", lambda **kw: None)
+        monkeypatch.setattr(dist, "_container", type("C", (), {"node_id": None})())
+        return dist, looked, external
+
+    def test_a_missing_app_name_and_ip_are_looked_up_on_the_stack_and_the_web_is_the_last_resort(self, monkeypatch):
+        dist, looked, external = self._patch(monkeypatch, found={"app_name": "stack-app", "ip": None})
+        dist.register_scraper(scraper_name="s1", version="v1")
+        assert looked == ["app_name", "ip"]
+        assert external == [1]
+        assert dist._container.node_id == 7
+
+    def test_a_stack_ip_is_used_without_asking_the_web(self, monkeypatch):
+        dist, looked, external = self._patch(monkeypatch, found={"app_name": "a", "ip": "10.0.0.1"})
+        dist.register_scraper(scraper_name="s1", version="v1")
+        assert external == []
+        assert m_ip_of(dist) == "10.0.0.1"
+
+    def test_an_explicit_app_name_and_ip_skip_the_lookups(self, monkeypatch):
+        dist, looked, external = self._patch(monkeypatch, found={})
+        dist.register_scraper(scraper_name="s1", version="v1", app_name="given", ip="1.1.1.1")
+        assert looked == []
+        assert external == []
+
+
+def m_ip_of(dist):
+    return dist.m_ip
