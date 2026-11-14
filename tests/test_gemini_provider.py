@@ -593,3 +593,26 @@ class TestGeminiSurchargeArithmetic:
     def test_an_estimate_above_the_threshold_uses_the_tiered_rates(self):
         # input 250000 * 1.25 * 2.0 / 1e6 = 0.625; output 1000 * 10.0 * 1.5 / 1e6 = 0.015
         assert self._pro().estimate_cost(250_000, 1000) == pytest.approx(0.64, abs=1e-12)
+
+
+def test_without_google_genai_the_module_marks_it_unavailable_and_still_imports():
+    """Run in a subprocess with google.genai blocked: the import falls back and GENAI_AVAILABLE is False (gemini_provider 35-37)."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import sys
+        sys.modules["google.genai"] = None
+        sys.modules["google"] = None
+        import pyutilz.llm.gemini_provider as gp
+        assert gp.GENAI_AVAILABLE is False, gp.GENAI_AVAILABLE
+        print("OK")
+        """
+    )
+    env = dict(os.environ)
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120, env=env)
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert "OK" in result.stdout
