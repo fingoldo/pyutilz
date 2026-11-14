@@ -332,3 +332,60 @@ def test_content_version_without_a_module_file_names_version_kwarg(monkeypatch):
     monkeypatch.setattr(inspect, "getmodule", lambda frame: None)
     with pytest.raises(ValueError, match=r"pass version="):
         _content_version(object())
+
+
+class _RecordingDB:
+    """A stand-in for the database that records each db_command and fills ``fetch_into.node_id`` on the calls named in ``yields``."""
+
+    def __init__(self, yields=()):
+        self.calls: list = []
+        self._yields = set(yields)
+
+    def db_command(self, action, table, **kwargs):
+        self.calls.append((action, table, kwargs))
+        target = kwargs.get("fetch_into")
+        if action in self._yields and target is not None:
+            target.node_id = 7
+
+
+class TestNodeIdResolution:
+    """The node row is selected by its identity fields, inserted when absent, and registration fails with its exact message when
+    neither yields an id (distributed 70-85)."""
+
+    def test_the_select_asks_for_the_identity_fields_and_returns_the_id(self, monkeypatch):
+        from pyutilz.system import distributed as dist
+
+        fake = _RecordingDB(yields=("select",))
+        monkeypatch.setattr(dist, "db", fake)
+        monkeypatch.setattr(dist, "_container", type("C", (), {})())
+        dist._resolve_node_id(info={"k": 1}, scraper_name="s")
+        action, table, kwargs = fake.calls[0]
+        assert (action, table) == ("select", "nodes")
+        assert kwargs["where_fields"] == "host_name,os_machine_guid,os_serial"
+        assert kwargs["returning"] == "id"
+        assert len(fake.calls) == 1
+
+    def test_a_missing_row_is_inserted_with_the_same_identity_fields(self, monkeypatch):
+        from pyutilz.system import distributed as dist
+
+        fake = _RecordingDB(yields=("insert",))
+        monkeypatch.setattr(dist, "db", fake)
+        monkeypatch.setattr(dist, "_container", type("C", (), {})())
+        dist._resolve_node_id(info={"k": 1}, scraper_name="s")
+        assert [c[0] for c in fake.calls] == ["select", "insert"]
+        action, table, kwargs = fake.calls[1]
+        assert table == "nodes"
+        assert kwargs["set_fields"] == "host_name,os_machine_guid,os_serial"
+        assert kwargs["returning"] == "id"
+
+    def test_no_id_from_either_call_is_refused_with_the_exact_message(self, monkeypatch):
+        from pyutilz.system import distributed as dist
+
+        fake = _RecordingDB(yields=())
+        monkeypatch.setattr(dist, "db", fake)
+        monkeypatch.setattr(dist, "_container", type("C", (), {})())
+        with pytest.raises(RuntimeError) as info:
+            dist._resolve_node_id(info={"k": 1}, scraper_name="scr")
+        assert str(info.value) == (
+            "register_scraper: nodes table returned no id for scraper 'scr' (both select and insert failed to yield one); NOT registered"
+        )
