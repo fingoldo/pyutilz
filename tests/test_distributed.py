@@ -542,3 +542,16 @@ class TestRegisterScraperFallbacks:
 
 def m_ip_of(dist):
     return dist.m_ip
+
+
+def test_the_node_resolution_receives_the_system_info_then_the_scraper_name(monkeypatch):
+    from pyutilz.system import distributed as dist
+
+    seen: list = []
+    monkeypatch.setattr(dist, "_resolve_node_id", lambda info, scraper_name: seen.append((info, scraper_name)) or setattr(dist._container, "node_id", 7))
+    monkeypatch.setattr(dist.system, "get_system_info", lambda **kw: {"host_name": "h"})
+    monkeypatch.setattr(dist, "db", _RecordingDB())
+    monkeypatch.setattr(dist, "heartbeat_scraper", lambda **kw: None)
+    monkeypatch.setattr(dist, "_container", type("C", (), {"node_id": None})())
+    dist.register_scraper(scraper_name="s1", version="v1", app_name="a", ip="1.2.3.4")
+    assert seen == [({"host_name": "h"}, "s1")]
