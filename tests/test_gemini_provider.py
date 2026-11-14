@@ -560,3 +560,36 @@ class TestGeminiClientTimeoutAndCandidateCount:
 
         assert gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=0)._candidate_count == 1  # pragma: allowlist secret
         assert gp.GeminiProvider(api_key="test-key", model="gemini-2.5-flash", candidate_count=3)._candidate_count == 3  # pragma: allowlist secret
+
+
+class TestGeminiSurchargeArithmetic:
+    """The Pro long-context surcharge is the extra input on the uncached tokens and on the cached reads, plus the extra output, at
+    the tier multipliers; estimate_cost charges the tiered rates above the threshold (gemini_provider 276-292)."""
+
+    def _pro(self):
+        from pyutilz.llm import gemini_provider as gp
+
+        return gp.GeminiProvider(api_key="test-key", model="gemini-2.5-pro")  # pragma: allowlist secret
+
+    def test_an_uncached_long_prompt_is_surcharged_on_its_input_and_output(self):
+        provider = self._pro()
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        # extra input 250000 * 1.25 * (2.0 - 1) / 1e6 = 0.3125; extra output 1000 * 10.0 * (1.5 - 1) / 1e6 = 0.005
+        assert provider._long_context_surcharge_usd == pytest.approx(0.3175, abs=1e-12)
+
+    def test_cached_reads_are_surcharged_at_the_cache_rate_and_only_the_misses_at_input(self):
+        provider = self._pro()
+        provider._add_long_context_surcharge(250_000, 100_000, 1000)
+        # miss 150000 * 1.25 * 1 / 1e6 = 0.1875; read 100000 * 0.125 * 1 / 1e6 = 0.0125; output 0.005
+        assert provider._long_context_surcharge_usd == pytest.approx(0.205, abs=1e-12)
+
+    def test_the_surcharge_accumulates_across_calls(self):
+        provider = self._pro()
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        provider._add_long_context_surcharge(250_000, 0, 1000)
+        assert provider._long_context_surcharge_usd == pytest.approx(0.635, abs=1e-12)
+        assert provider._long_context_calls == 2
+
+    def test_an_estimate_above_the_threshold_uses_the_tiered_rates(self):
+        # input 250000 * 1.25 * 2.0 / 1e6 = 0.625; output 1000 * 10.0 * 1.5 / 1e6 = 0.015
+        assert self._pro().estimate_cost(250_000, 1000) == pytest.approx(0.64, abs=1e-12)
