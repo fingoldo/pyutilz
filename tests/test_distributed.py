@@ -389,3 +389,79 @@ class TestNodeIdResolution:
         assert str(info.value) == (
             "register_scraper: nodes table returned no id for scraper 'scr' (both select and insert failed to yield one); NOT registered"
         )
+
+
+class TestRegisterScraperFlow:
+    """A first registration records the node's system info, emits the starting heartbeat and returns the id; an already registered
+    process registers nothing; a failed system query is logged and re-raised (distributed 124-172)."""
+
+    def _patch(self, monkeypatch, info=None, sysfail=None):
+        from pyutilz.system import distributed as dist
+
+        fake = _RecordingDB(yields=("select", "insert"))
+        monkeypatch.setattr(dist, "db", fake)
+        monkeypatch.setattr(dist, "_container", type("C", (), {"node_id": None})())
+        monkeypatch.setattr(dist, "heartbeats", [], raising=False)
+        beats: list = []
+        monkeypatch.setattr(dist, "heartbeat_scraper", lambda **kw: beats.append(kw))
+
+        def get_info(**kwargs):
+            if sysfail is not None:
+                raise sysfail
+            return info or {"host_name": "h", "os_machine_guid": "g", "os_serial": "s", "cpu": "x", "ram": 4}
+
+        monkeypatch.setattr(dist.system, "get_system_info", get_info)
+        return dist, fake, beats
+
+    def test_a_first_registration_records_the_node_stats_and_starts_the_heartbeat(self, monkeypatch):
+        dist, fake, beats = self._patch(monkeypatch)
+        out = dist.register_scraper(scraper_name="s1", version="v1", app_name="app", ip="1.2.3.4")
+        assert out == 7
+        insert = next(c for c in fake.calls if c[0] == "insert" and c[1] == "nodes_info")
+        kwargs = insert[2]
+        assert kwargs["set_fields"] == {"cpu", "ram", "node"}
+        assert kwargs["replace_values"] == {"node": 7}
+        assert kwargs["returning"] == ""
+        assert kwargs["jsonize"] is True
+        assert beats == [{"status": "starting", "ip": None}]
+
+    def test_an_already_registered_process_does_nothing_new(self, monkeypatch):
+        dist, fake, beats = self._patch(monkeypatch)
+        dist._container.node_id = 9
+        out = dist.register_scraper(scraper_name="s1", version="v1", app_name="app", ip="1.2.3.4")
+        assert out == 9
+        assert fake.calls == []
+        assert beats == []
+
+    def test_a_failed_system_query_is_logged_and_re_raised(self, monkeypatch):
+        from pyutilz.system import distributed as dist_mod
+
+        dist, fake, beats = self._patch(monkeypatch, sysfail=RuntimeError("no system"))
+        recorded: list = []
+        monkeypatch.setattr(dist_mod, "logger", type("L", (), {"exception": lambda self, e: recorded.append(str(e))})())
+        with pytest.raises(RuntimeError, match="no system"):
+            dist.register_scraper(scraper_name="s1", version="v1", app_name="app", ip="1.2.3.4")
+        assert recorded == ["no system"]
+        assert beats == []
+
+
+def test_a_registration_logs_the_scraper_name_and_its_node_id(monkeypatch):
+    from pyutilz.system import distributed as dist_mod
+
+    recorded: list = []
+
+    class _InfoLog:
+        def info(self, fmt, *args, **kwargs):
+            recorded.append((fmt, args))
+
+        def exception(self, e):
+            pass
+
+    fake = _RecordingDB(yields=("select", "insert"))
+    monkeypatch.setattr(dist_mod, "db", fake)
+    monkeypatch.setattr(dist_mod, "_container", type("C", (), {"node_id": None})())
+    monkeypatch.setattr(dist_mod, "logger", _InfoLog())
+    monkeypatch.setattr(dist_mod, "heartbeat_scraper", lambda **kw: None)
+    monkeypatch.setattr(dist_mod.system, "get_system_info", lambda **kw: {"host_name": "h", "os_machine_guid": "g", "os_serial": "s"})
+    dist_mod.register_scraper(scraper_name="s1", version="v1", app_name="app", ip="1.2.3.4")
+    assert recorded == [("Registered as %s with node_id %s", ("s1", 7))]
