@@ -77,6 +77,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # ``tests/test_web.py`` waved through EVERY module under system/ and web/.
     # Each is really covered by the cited file(s), verified by word-boundary
     # references to the module's own public names.
+    "performance/kernel_tuning/residency.py": "covered by tests/performance/kernel_tuning/test_residency_scenarios.py, which imports array_location, normalize_scenarios, operands_residency and scenario_suffix from this module",
 }
 
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
