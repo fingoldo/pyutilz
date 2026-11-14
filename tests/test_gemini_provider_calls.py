@@ -183,6 +183,7 @@ class TestGeminiUsageRecording:
         assert flash._long_context_calls == 0
 
 
+@pytest.mark.skipif(gemini_provider_module.types is None, reason="asserts on the real google-genai types, not installed on this Python")
 class TestGeminiGenerateConfig:
     """The request config carries temperature, a token cap, the system instruction, the JSON mime type and schema, and a candidate
     count only above one, each only when set (gemini_provider 355-391)."""

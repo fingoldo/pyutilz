@@ -545,6 +545,7 @@ class TestGeminiLongContextTierAndSurcharge:
         assert provider._long_context_surcharge_usd == 0.0
 
 
+@pytest.mark.skipif(gemini_provider_module.types is None, reason="asserts on the real google-genai types, not installed on this Python")
 class TestGeminiClientTimeoutAndCandidateCount:
     """The client's timeout is the request timeout in milliseconds, and the candidate count is at least one (gemini_provider 189, 213)."""
 
