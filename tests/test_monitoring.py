@@ -252,3 +252,84 @@ def test_monitoring_module_imports_successfully():
         assert pyutilz.monitoring is not None
     except ImportError as e:
         pytest.fail(f"Failed to import monitoring module: {e}")
+
+
+class _MonLog:
+    def __init__(self):
+        self.warnings: list = []
+
+    def warning(self, fmt, *args, **kwargs):
+        self.warnings.append((fmt, args))
+
+
+class _Resp:
+    def __init__(self, status, text=""):
+        self.status_code = status
+        self.text = text
+
+
+class TestHeartbeatAttemptAndBackoff:
+    """A heartbeat attempt warns on an unexpected status with its exact text, stays silent on 200, 403 and 429, retries only
+    429 and server errors, and the backoff doubles from the initial delay up to the cap with a 20 percent jitter (monitoring 87-126)."""
+
+    def test_the_backoff_doubles_from_the_initial_delay_and_is_capped(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon.random, "uniform", lambda a, b: 1.0)
+        assert mon._backoff_delay(1) == 5.0
+        assert mon._backoff_delay(2) == 10.0
+        assert mon._backoff_delay(3) == 20.0
+        assert mon._backoff_delay(60) == 300.0
+
+    def test_the_jitter_is_drawn_between_eighty_and_one_twenty_percent(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        drawn: list = []
+        monkeypatch.setattr(mon.random, "uniform", lambda a, b: drawn.append((a, b)) or 1.0)
+        mon._backoff_delay(1)
+        assert drawn == [(0.8, 1.2)]
+
+    def test_a_success_and_the_silent_statuses_warn_nothing(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        log = _MonLog()
+        monkeypatch.setattr(mon, "logger", log)
+        for status, expected in ((200, True), (403, True), (429, False)):
+            monkeypatch.setattr(mon.requests, "post", lambda *a, _s=status, **k: _Resp(_s))
+            assert mon._attempt("http://e", {}, None, "prov", "job") is expected
+        assert log.warnings == []
+
+    def test_an_unexpected_status_warns_with_its_exact_text_and_is_retried(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        log = _MonLog()
+        monkeypatch.setattr(mon, "logger", log)
+        monkeypatch.setattr(mon.requests, "post", lambda *a, **k: _Resp(500, "boom"))
+        assert mon._attempt("http://e", {}, None, "prov", "job") is False
+        assert log.warnings == [("Problem %s while sending heartbeat to %s on job %s: %s", (500, "prov", "job", "boom"))]
+
+    def test_a_missing_requests_package_warns_and_is_not_retried(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        log = _MonLog()
+        monkeypatch.setattr(mon, "logger", log)
+        monkeypatch.setattr(mon, "requests", None)
+        assert mon._attempt("http://e", {}, None, "prov", "job") is True
+        fmt, args = log.warnings[0]
+        assert fmt == "Error while sending heartbeat to %s on monitor %s: %s"
+        assert args[0:2] == ("prov", "job")
+
+    def test_a_request_error_logs_only_its_class_and_is_retried(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        log = _MonLog()
+        monkeypatch.setattr(mon, "logger", log)
+
+        def boom(*a, **k):
+            raise ConnectionError("https://secret-key@host/ping")
+
+        monkeypatch.setattr(mon.requests, "post", boom)
+        assert mon._attempt("http://e", {}, None, "prov", "job") is False
+        fmt, args = log.warnings[0]
+        assert fmt == "Error while sending heartbeat to %s on monitor %s: %s (message omitted: may contain the ping URL with its key)"
+        assert args == ("prov", "job", "ConnectionError")
