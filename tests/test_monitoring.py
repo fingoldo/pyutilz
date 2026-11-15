@@ -333,3 +333,88 @@ class TestHeartbeatAttemptAndBackoff:
         fmt, args = log.warnings[0]
         assert fmt == "Error while sending heartbeat to %s on monitor %s: %s (message omitted: may contain the ping URL with its key)"
         assert args == ("prov", "job", "ConnectionError")
+
+
+class _NoThread:
+    def __init__(self, target=None, name=None, daemon=None):
+        self.started = False
+
+    def start(self):
+        self.started = True
+
+    def is_alive(self):
+        return False
+
+
+class TestHeartbeatRetrierQueue:
+    """A newer failure on a stream replaces the older one, delivery forgets the stream, the queueing and give-up messages are exact,
+    and a pending item's first retry is the initial backoff (monitoring 140-200)."""
+
+    def _item(self, key=("e", "state"), provider="prov", job="job"):
+        from pyutilz.system import monitoring as mon
+
+        return mon._Pending(key, "http://e", {"a": 1}, None, provider, job)
+
+    def test_a_pending_item_first_retries_after_the_initial_backoff(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon.random, "uniform", lambda a, b: 1.0)
+        item = self._item()
+        assert item.next_at - item.first_failed_at == pytest.approx(5.0)
+        assert item.failures == 1
+
+    def test_a_newer_failure_on_the_same_stream_replaces_the_older_one(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon.threading, "Thread", _NoThread)
+        retrier = mon._HeartbeatRetrier()
+        older = self._item()
+        newer = self._item()
+        retrier.submit(older)
+        retrier.submit(newer)
+        assert list(retrier._pending.values()) == [newer]
+
+    def test_forgetting_a_stream_drops_its_pending_item_and_an_unknown_one_is_harmless(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon.threading, "Thread", _NoThread)
+        retrier = mon._HeartbeatRetrier()
+        retrier.submit(self._item(key=("a", "s")))
+        retrier.forget(("a", "s"))
+        assert retrier._pending == {}
+        retrier.forget(("never", "seen"))
+
+    def test_queueing_logs_the_provider_monitor_and_first_retry_delay(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        recorded: list = []
+
+        class _InfoLog:
+            def info(self, fmt, *args, **kwargs):
+                recorded.append((fmt, args))
+
+        monkeypatch.setattr(mon, "logger", _InfoLog())
+        monkeypatch.setattr(mon.threading, "Thread", _NoThread)
+        monkeypatch.setattr(mon.random, "uniform", lambda a, b: 1.0)
+        retrier = mon._HeartbeatRetrier()
+        item = self._item(provider="prov", job="job")
+        retrier.submit(item)
+        assert recorded == [
+            ("Heartbeat to %s on monitor %s queued for background retry (first retry in %.0fs)", ("prov", "job", item.next_at - item.first_failed_at))
+        ]
+
+    def test_giving_up_logs_the_failure_count_and_minutes(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        recorded: list = []
+
+        class _WarnLog:
+            def warning(self, fmt, *args, **kwargs):
+                recorded.append((fmt, args))
+
+        monkeypatch.setattr(mon, "logger", _WarnLog())
+        item = self._item(provider="prov", job="job")
+        item.failures = 4
+        item.first_failed_at = 0.0
+        mon._HeartbeatRetrier._log_gave_up(item, now=180.0)
+        assert recorded == [("Giving up on heartbeat to %s on monitor %s after %d failed attempts over %.0f min", ("prov", "job", 4, 3.0))]
