@@ -86,10 +86,10 @@ class S3Backend(RemoteBackend):
         if client is None:
             return None
         try:
-            import orjson
+            from pyutilz.core import jsonlib
 
             obj = client.get_object(Bucket=self.bucket, Key=self._key(fingerprint))
-            return orjson.loads(obj["Body"].read())  # type: ignore[no-any-return]  # orjson.loads returns Any by design (arbitrary JSON)
+            return jsonlib.loads(obj["Body"].read())  # type: ignore[no-any-return]  # loads returns Any by design (arbitrary JSON)
         except Exception as e:  # NoSuchKey, network, parse -- all degrade to miss
             logger.warning("S3Backend.read(%s) miss/error: %s", fingerprint, e)
             return None
@@ -100,12 +100,12 @@ class S3Backend(RemoteBackend):
         if client is None:
             return False
         try:
-            import orjson
+            from pyutilz.core import jsonlib
 
             client.put_object(
                 Bucket=self.bucket,
                 Key=self._key(fingerprint),
-                Body=orjson.dumps(payload, option=orjson.OPT_SORT_KEYS),
+                Body=jsonlib.dumps_bytes(payload, sort_keys=True),
                 ContentType="application/json",
             )
             return True

@@ -10,8 +10,6 @@ from typing import Any, Dict, Iterable, Optional, Sequence, Tuple, Union
 import math
 import re
 
-import orjson as _orjson
-
 from pyutilz.core import jsonlib
 
 # The six characters orjson emits for a real NUL inside a string. Postgres rejects a NUL in
@@ -368,12 +366,12 @@ def json_pg_dumps(obj: object, sort_keys: bool = False) -> object:
     The serialized text is handed to the adapter as-is (see :class:`_PreSerializedJson`) instead of
     being re-parsed and then re-serialized a third time at adapt time.
     """
-    option = _orjson.OPT_SORT_KEYS if sort_keys else 0
     raw: Optional[str]
     try:
-        raw = _orjson.dumps(obj, default=json_serial, option=option).decode("utf-8")
-    except TypeError:
-        # orjson refuses shapes the normalizer flattens for it (tuples -> lists, most notably), and non-str dict keys.
+        raw = jsonlib.dumps(obj, default=json_serial, sort_keys=sort_keys)
+    except (TypeError, UnicodeError):
+        # orjson refuses shapes the normalizer flattens for it (tuples -> lists, most notably), non-str dict keys and
+        # lone surrogates (the stdlib backend fails at the utf-8 encode instead): the normalizer handles them.
         raw = None
     if raw is not None and _ESCAPED_NUL not in raw:
         return _PreSerializedJson(raw)

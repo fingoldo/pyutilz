@@ -1,0 +1,4 @@
+# Used only by the free-threaded CI legs (ci.yml, `--override`). orjson, a core dependency, publishes no free-threaded
+# wheel, so the requirement is replaced by one whose marker is never true: the install drops it and jsonlib falls
+# back to the stdlib json module, which implements the same contract.
+orjson>=3; python_version < "0"

@@ -67,9 +67,9 @@ jobs:
               # macos-latest is arm64 and setup-python publishes no 3.8/3.9 build for it, so the floor
               # runs on the Intel image instead of being dropped.
               legs += [{"os": "macos-15-intel" if v in ("3.8", "3.9") else "macos-15", "python-version": v} for v in versions]
-              # Free-threaded (3.13t+) legs are not run: orjson, a core dependency, publishes no free-threaded
-              # wheel on PyPI (checked 2026-11-13, every release through 3.13.0), so the install cannot succeed.
-              # Re-add them once an orjson release ships cp31Nt wheels.
+              # Free-threaded legs (optional, continue-on-error): orjson publishes no free-threaded wheel on PyPI, so
+              # the install drops it through .github/ci/free-threaded-overrides.txt and jsonlib runs on the stdlib.
+              legs += [{"os": "ubuntu-24.04", "python-version": v, "free_threaded": True} for v in ("3.13t", "3.14t", "3.15t")]
           else:
               legs = [{"os": "ubuntu-22.04" if v == "3.8" else "ubuntu-24.04", "python-version": v} for v in ("3.8", "3.11", "3.14", "3.15")]
               legs += [{"os": "windows-2025", "python-version": "3.11"}, {"os": "macos-15", "python-version": "3.11"}]
@@ -86,6 +86,8 @@ jobs:
         shell: bash
     # Windows and macOS legs run appreciably slower than ubuntu on the same suite.
     timeout-minutes: 60
+    # Free-threaded legs are optional: a failure there is reported, not required.
+    continue-on-error: ${{ matrix.free_threaded == true }}
     strategy:
       fail-fast: false
       # Three OSes since 2026-09-02: this library carries genuinely platform-specific code
@@ -126,8 +128,11 @@ jobs:
       # that silently drifts whenever those groups change (2026-09-02 packaging audit).
       env:
         UV_SYSTEM_PYTHON: "1"
+        FREE_THREADED: ${{ matrix.free_threaded }}
       run: |
-        uv pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
+        OVERRIDE=()
+        if [ "$FREE_THREADED" = "true" ]; then OVERRIDE=(--override .github/ci/free-threaded-overrides.txt); fi
+        uv pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]" "${OVERRIDE[@]}"
         # The meta-suite imports py_ci_shared directly (value_bearing_asserts, deferred_drift,
         # gate_integrity, ...). It is deliberately NOT in [dev] - a git+https requirement in project
         # metadata makes the distribution unpublishable - so it is installed from the declared
