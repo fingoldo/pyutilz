@@ -505,3 +505,45 @@ class TestHeartbeatRetrierDelivery:
         retrier.flush(budget=0.0)
         assert calls == []
         assert retrier._pending == {item.key: item}
+
+
+class TestHeartbeatTargets:
+    """Each provider's endpoint, payload and query: healthchecks.io takes the key in the path and the data as text, cronitor.io takes
+    the state (complete at status 0, else the status) and the message as a query, and an unknown provider has no endpoint
+    (monitoring 282-322)."""
+
+    def test_healthchecks_with_a_key_puts_it_in_the_path_and_the_data_as_text(self):
+        from pyutilz.system import monitoring as mon
+
+        endpoint, data, params = mon._heartbeat_target("job1", 0, {"x": 1}, "healthchecks.io", "KEY")
+        assert endpoint == "https://hc-ping.com/KEY/job1/0"
+        assert data == "{'x': 1}"
+        assert params is None
+
+    def test_healthchecks_without_a_key_omits_it_from_the_path(self):
+        from pyutilz.system import monitoring as mon
+
+        endpoint, data, params = mon._heartbeat_target("job1", 3, None, "healthchecks.io", None)
+        assert endpoint == "https://hc-ping.com/job1/3"
+        assert data is None
+        assert params is None
+
+    def test_cronitor_reports_complete_at_status_zero_and_the_status_otherwise(self):
+        from pyutilz.system import monitoring as mon
+
+        endpoint, data, params = mon._heartbeat_target("job1", 0, None, "cronitor.io", "KEY")
+        assert endpoint == "https://cronitor.link/p/KEY/job1"
+        assert params == {"state": "complete"}
+        _, _, failing = mon._heartbeat_target("job1", 2, None, "cronitor.io", "KEY")
+        assert failing == {"state": 2}
+
+    def test_cronitor_carries_the_message_as_a_query_parameter(self):
+        from pyutilz.system import monitoring as mon
+
+        _, _, params = mon._heartbeat_target("job1", 0, {"m": 1}, "cronitor.io", "KEY")
+        assert params == {"state": "complete", "msg": "{'m': 1}"}
+
+    def test_an_unknown_provider_has_no_endpoint(self):
+        from pyutilz.system import monitoring as mon
+
+        assert mon._heartbeat_target("job1", 0, {"x": 1}, "nowhere", "KEY") == ("", {"x": 1}, None)
