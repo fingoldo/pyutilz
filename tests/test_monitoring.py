@@ -788,3 +788,88 @@ class TestMonitoredDecorator:
 
         job()
         assert logged and logged[0][0] == {"x": 1, "duration": logged[0][0]["duration"]}
+
+
+class TestMonitoringConstantsAndImports:
+    """Pins the timeouts, retry schedule and transient-status set (monitoring.py 36-95) as whole values, and loads a fresh copy
+    of the module to check the optional requests import and the exit-time executor shutdown."""
+
+    def test_the_request_timeout_and_pool_constants_are_pinned(self):
+        from pyutilz.system import monitoring as mon
+
+        assert mon.API_TIMEOUT_SEC == 15
+        assert mon.EXIT_FLUSH_BUDGET_SEC == 10.0
+        assert mon._TIMEOUT_EXECUTOR._max_workers == 10
+
+    def test_the_retry_schedule_constants_are_pinned(self):
+        from pyutilz.system import monitoring as mon
+
+        assert mon.RETRY_INITIAL_DELAY_SEC == 5.0
+        assert mon.RETRY_MAX_DELAY_SEC == 300.0
+        assert mon.RETRY_MAX_AGE_SEC == 21600.0  # six hours
+
+    def test_the_transient_statuses_are_exactly_timeouts_throttling_and_server_errors(self):
+        from pyutilz.system import monitoring as mon
+
+        assert mon._TRANSIENT_STATUSES == frozenset({408, 425, 429}) | frozenset(range(500, 600))
+        for status in (407, 409, 424, 426, 428, 430, 499, 600):
+            assert status not in mon._TRANSIENT_STATUSES
+
+    def test_the_backoff_doubles_and_is_capped(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon.random, "uniform", lambda a, b: 1.0)
+        assert mon._backoff_delay(1) == 5.0
+        assert mon._backoff_delay(2) == 10.0
+        assert mon._backoff_delay(3) == 20.0
+        assert mon._backoff_delay(10) == 300.0
+
+    def _fresh_module(self, monkeypatch, name):
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parent.parent / "src" / "pyutilz" / "system" / "monitoring.py"
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        return spec, module
+
+    def test_a_missing_requests_package_is_logged_and_leaves_requests_none(self, monkeypatch):
+        import sys
+
+        monkeypatch.setitem(sys.modules, "requests", None)
+        spec, module = self._fresh_module(monkeypatch, "monitoring_no_requests")
+        debugs: list = []
+        original_getlogger = __import__("logging").getLogger
+
+        def _capture(name=None):
+            real = original_getlogger(name)
+
+            class _Probe:
+                def debug(self, fmt, *args, **kwargs):
+                    debugs.append((fmt, args))
+
+                def __getattr__(self, attr):
+                    return getattr(real, attr)
+
+            return _Probe()
+
+        monkeypatch.setattr("logging.getLogger", _capture)
+        spec.loader.exec_module(module)
+        assert module.requests is None
+        assert debugs, "the optional-import probe must log at debug level"
+        fmt, args = debugs[0]
+        assert fmt == "requests unavailable, job_completed's heartbeat send will fail if used: %s"
+        assert len(args) == 1 and isinstance(args[0], Exception)
+
+    def test_the_exit_hook_shuts_the_executor_down_without_waiting(self, monkeypatch):
+        import atexit
+
+        registered: list = []
+        monkeypatch.setattr(atexit, "register", lambda fn, *a, **k: registered.append((fn, a, k)))
+        spec, module = self._fresh_module(monkeypatch, "monitoring_atexit")
+        spec.loader.exec_module(module)
+        shutdowns = [(fn, kwargs) for fn, _args, kwargs in registered if getattr(fn, "__name__", "") == "shutdown"]
+        assert len(shutdowns) == 1, "the shared executor must be registered for shutdown at exit"
+        fn, kwargs = shutdowns[0]
+        assert kwargs == {"wait": False}
+        module._TIMEOUT_EXECUTOR.shutdown(wait=False)
