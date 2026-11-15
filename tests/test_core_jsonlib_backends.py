@@ -1,10 +1,10 @@
 """The three ``pyutilz.core.jsonlib`` backends (orjson, msgspec, stdlib) must give the same answers.
 
 On a development machine orjson is installed, so the msgspec and stdlib branches never run in the ordinary suite.
-Each test here reloads the module with the other backends hidden from the import system, then restores it.
+Each test here executes a fresh copy of the module with the other backends hidden from the import system.
 """
 
-import importlib
+import importlib.util
 import math
 import sys
 
@@ -29,14 +29,15 @@ def jl(request, monkeypatch):
         pytest.importorskip(needed)
     for name in _HIDDEN[request.param]:
         monkeypatch.setitem(sys.modules, name, None)
-    module = importlib.reload(_primary)
-    try:
-        # The hidden set decides the backend: a mismatch means the test would silently check the wrong branch.
-        assert module.BACKEND == request.param
-        yield module
-    finally:
-        monkeypatch.undo()
-        importlib.reload(_primary)
+    # A fresh copy of the file, not registered under the package name: reloading the real module in place would rebind
+    # the objects that other test modules already imported from it (see test_no_module_reload.py).
+    spec = importlib.util.spec_from_file_location("_jsonlib_backend_probe", _primary.__file__)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # The hidden set decides the backend: a mismatch means the test would silently check the wrong branch.
+    assert module.BACKEND == request.param
+    yield module
 
 
 def test_compact_output(jl):

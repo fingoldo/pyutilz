@@ -215,3 +215,25 @@ class TestProviderCacheLRUEviction:
 
         assert first in list(factory._uncached_providers)
         assert len(_provider_cache) == 1
+
+    def test_evicted_provider_that_nothing_else_holds_is_scheduled_for_close(self):
+        """Only the cache holds the evicted provider, so its refcount is the measured baseline and it takes the close path."""
+        from pyutilz.llm import factory
+        factory._PROVIDER_CACHE_MAX_SIZE = 1
+
+        class _ClosableFakeProvider:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            async def _close(self):
+                pass
+
+        globals()["_ClosableFakeProvider"] = _ClosableFakeProvider
+        factory._PROVIDER_MODULES = dict(factory._PROVIDER_MODULES, faketest=("tests.test_llm_factory", "_ClosableFakeProvider", None))
+
+        get_llm_provider("faketest", model="m0")  # the result is not kept: nothing outside the cache refers to it
+        with patch.object(factory, "_schedule_provider_close") as scheduled:
+            get_llm_provider("faketest", model="m1")  # evicts "m0"
+
+        assert scheduled.call_count == 1
+        assert not any(isinstance(p, _ClosableFakeProvider) and p.kwargs == {"model": "m0"} for p in factory._uncached_providers)
