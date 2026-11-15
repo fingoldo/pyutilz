@@ -547,3 +547,78 @@ class TestHeartbeatTargets:
         from pyutilz.system import monitoring as mon
 
         assert mon._heartbeat_target("job1", 0, {"x": 1}, "nowhere", "KEY") == ("", {"x": 1}, None)
+
+
+class _Retrier:
+    def __init__(self):
+        self.submitted: list = []
+        self.forgotten: list = []
+
+    def submit(self, item):
+        self.submitted.append(item)
+
+    def forget(self, key):
+        self.forgotten.append(key)
+
+    def clear(self):
+        self.submitted.clear()
+        self.forgotten.clear()
+
+
+class TestJobCompletedDelivery:
+    """A job_completed send with no endpoint logs and sends nothing; a delivered send forgets its stream; a transient failure is queued for
+    retry unless retry is off; a refused one is not; and a non-blocking send goes through the executor (monitoring 325-365)."""
+
+    def _setup(self, monkeypatch, attempt_result):
+        from pyutilz.system import monitoring as mon
+
+        retrier = _Retrier()
+        monkeypatch.setattr(mon, "_RETRIER", retrier)
+        monkeypatch.setattr(mon, "_RETRY_ENABLED", True)
+        sent: list = []
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: sent.append(a) or attempt_result)
+        return mon, retrier, sent
+
+    def test_a_job_without_an_endpoint_logs_the_credentials_hint_and_sends_nothing(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        infos: list = []
+        monkeypatch.setattr(mon, "logger", type("L", (), {"info": lambda self, fmt, *a, **k: infos.append((fmt, a)), "warning": lambda self, *a, **k: None, "debug": lambda self, *a, **k: None})())
+        mon, retrier, sent = self._setup(monkeypatch, True)
+        mon.job_completed("job1", provider="nowhere")
+        assert sent == []
+        assert infos == [("No endpoint established for job %s. Check if monitoring credentials are properly configured.", ("job1",))]
+
+    def test_a_delivered_send_forgets_its_stream_and_queues_nothing(self, monkeypatch):
+        mon, retrier, sent = self._setup(monkeypatch, True)
+        mon.job_completed("job1", status=0, provider="healthchecks.io", api_key="K")
+        assert len(sent) == 1
+        assert retrier.submitted == []
+        assert retrier.forgotten == [("https://hc-ping.com/K/job1/0", "")]
+
+    def test_a_transient_failure_is_queued_for_retry(self, monkeypatch):
+        mon, retrier, sent = self._setup(monkeypatch, False)
+        mon.job_completed("job1", status=0, provider="healthchecks.io", api_key="K")
+        assert len(retrier.submitted) == 1
+        assert retrier.submitted[0].endpoint == "https://hc-ping.com/K/job1/0"
+        assert retrier.forgotten == []
+
+    def test_a_failure_is_not_queued_when_retry_is_off(self, monkeypatch):
+        mon, retrier, sent = self._setup(monkeypatch, False)
+        mon.job_completed("job1", status=0, provider="healthchecks.io", api_key="K", retry=False)
+        assert retrier.submitted == []
+
+    def test_the_stream_key_carries_the_cronitor_state(self, monkeypatch):
+        mon, retrier, sent = self._setup(monkeypatch, True)
+        mon.job_completed("job1", status=0, provider="cronitor.io", api_key="K")
+        assert retrier.forgotten == [("https://cronitor.link/p/K/job1", "complete")]
+
+    def test_a_non_blocking_send_goes_through_the_executor(self, monkeypatch):
+        mon, retrier, sent = self._setup(monkeypatch, True)
+        submitted: list = []
+        monkeypatch.setattr(mon, "_TIMEOUT_EXECUTOR", type("E", (), {"submit": lambda self, fn: submitted.append(fn)})())
+        mon.job_completed("job1", provider="healthchecks.io", api_key="K", blocking=False)
+        assert sent == []
+        assert len(submitted) == 1
+        submitted[0]()
+        assert len(sent) == 1
