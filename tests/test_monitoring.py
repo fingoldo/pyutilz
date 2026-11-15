@@ -1381,3 +1381,74 @@ class TestTimeoutWrapperLogCalls:
         _, fmt, args, _ = infos[0]
         assert fmt == "%s completed in %.2fs"
         assert args[0] == "quick" and isinstance(args[1], float) and args[1] >= 0
+
+
+class TestLogDurationMessage:
+    """log_duration logs only past its threshold, with the function name, its positional and keyword arguments, the
+    duration to two decimals, and large arguments truncated to max_arg_size (monitoring.py 500-540)."""
+
+    def _capture(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        infos: list = []
+
+        class _Logger:
+            def info(self, fmt, *args, **kwargs):
+                infos.append((fmt, args))
+
+            def debug(self, *args, **kwargs):
+                return None
+
+            def warning(self, *args, **kwargs):
+                return None
+
+            def error(self, *args, **kwargs):
+                return None
+
+        monkeypatch.setattr(mon, "logger", _Logger())
+        monkeypatch.setattr(mon, "timer", iter([0.0, 2.5]).__next__)
+        return mon, infos
+
+    def test_a_slow_call_logs_name_arguments_and_duration(self, monkeypatch):
+        mon, infos = self._capture(monkeypatch)
+
+        @mon.log_duration(threshold=1.0)
+        def compute(a, b, scale=1):
+            return a + b
+
+        assert compute(1, 2, scale=3) == 3
+        assert infos == [("%s%s took %.2f s.", ("compute", "(1, 2, scale=3)", 2.5))]
+
+    def test_a_call_with_no_arguments_logs_empty_parentheses(self, monkeypatch):
+        mon, infos = self._capture(monkeypatch)
+
+        @mon.log_duration(threshold=1.0)
+        def idle():
+            return None
+
+        idle()
+        assert infos == [("%s%s took %.2f s.", ("idle", "()", 2.5))]
+
+    def test_a_fast_call_logs_nothing(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        mon_, infos = self._capture(monkeypatch)
+        monkeypatch.setattr(mon, "timer", iter([0.0, 0.5]).__next__)
+
+        @mon.log_duration(threshold=1.0)
+        def quick():
+            return None
+
+        quick()
+        assert infos == []
+
+    def test_a_large_argument_is_truncated_in_the_middle(self, monkeypatch):
+        mon, infos = self._capture(monkeypatch)
+
+        @mon.log_duration(threshold=1.0, max_arg_size=10)
+        def take(text):
+            return None
+
+        take("x" * 30)
+        _, args = infos[0]
+        assert args[1] == "('xxxx...[truncated 22 chars]...xxxx')"
