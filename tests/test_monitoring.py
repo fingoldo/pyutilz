@@ -418,3 +418,90 @@ class TestHeartbeatRetrierQueue:
         item.first_failed_at = 0.0
         mon._HeartbeatRetrier._log_gave_up(item, now=180.0)
         assert recorded == [("Giving up on heartbeat to %s on monitor %s after %d failed attempts over %.0f min", ("prov", "job", 4, 3.0))]
+
+
+class TestHeartbeatRetrierDelivery:
+    """Due items are picked up, a late one is given up, a delivered one is forgotten with its exact log line, a failed one backs off, and
+    flush makes one attempt per item within its budget (monitoring 205-262)."""
+
+    def _item(self, first_failed_at, key=("e", "s")):
+        from pyutilz.system import monitoring as mon
+
+        item = mon._Pending(key, "http://e", {"a": 1}, None, "prov", "job")
+        item.first_failed_at = first_failed_at
+        item.next_at = first_failed_at
+        return item
+
+    def test_a_due_item_is_picked_and_a_future_one_sets_the_wait(self):
+        from pyutilz.system import monitoring as mon
+
+        retrier = mon._HeartbeatRetrier()
+        now = mon.time.monotonic()
+        due = self._item(now)
+        later = self._item(now, key=("e", "later"))
+        later.next_at = now + 30.0
+        retrier._pending = {due.key: due, later.key: later}
+        picked, soonest = retrier._next_due(now)
+        assert picked == [due]
+        assert soonest is None or soonest > 0
+
+    def test_a_pending_item_older_than_the_retry_window_is_given_up(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        recorded: list = []
+        monkeypatch.setattr(mon, "logger", type("L", (), {"warning": lambda self, *a, **k: recorded.append(a[0])})())
+        retrier = mon._HeartbeatRetrier()
+        now = mon.time.monotonic()
+        stale = self._item(now - mon.RETRY_MAX_AGE_SEC - 1)
+        retrier._pending = {stale.key: stale}
+        picked, _ = retrier._next_due(now)
+        assert picked == []
+        assert retrier._pending == {}
+        assert recorded == ["Giving up on heartbeat to %s on monitor %s after %d failed attempts over %.0f min"]
+
+    def test_a_delivered_item_is_forgotten_with_its_exact_log_line(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        infos: list = []
+        monkeypatch.setattr(mon, "logger", type("L", (), {"info": lambda self, fmt, *a, **k: infos.append((fmt, a)), "warning": lambda self, *a, **k: None})())
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: True)
+        # Bound the loop: a wrongly undelivered item must be given up within a second, not retried forever.
+        monkeypatch.setattr(mon, "RETRY_MAX_AGE_SEC", 1.0)
+        monkeypatch.setattr(mon, "_backoff_delay", lambda failures: 0.0)
+        retrier = mon._HeartbeatRetrier()
+        now = mon.time.monotonic()
+        item = self._item(now - 0.5)
+        retrier._pending = {item.key: item}
+        retrier._run()
+        assert retrier._pending == {}
+        assert infos, "a delivered heartbeat must log its delivery"
+        fmt, args = infos[0]
+        assert fmt == "Heartbeat to %s on monitor %s delivered on attempt %d after %.0fs"
+        assert args[0:3] == ("prov", "job", 2)
+        assert args[3] == pytest.approx(0.5, abs=1.0)
+
+    def test_flush_attempts_each_pending_item_once_within_its_budget(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        calls: list = []
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: calls.append(1) or True)
+        retrier = mon._HeartbeatRetrier()
+        now = mon.time.monotonic()
+        a = self._item(now, key=("e", "a"))
+        b = self._item(now, key=("e", "b"))
+        retrier._pending = {a.key: a, b.key: b}
+        retrier.flush(budget=30.0)
+        assert calls == [1, 1]
+        assert retrier._pending == {}
+
+    def test_flush_with_no_budget_attempts_nothing(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        calls: list = []
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: calls.append(1) or True)
+        retrier = mon._HeartbeatRetrier()
+        item = self._item(mon.time.monotonic())
+        retrier._pending = {item.key: item}
+        retrier.flush(budget=0.0)
+        assert calls == []
+        assert retrier._pending == {item.key: item}
