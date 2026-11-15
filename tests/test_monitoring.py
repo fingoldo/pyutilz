@@ -1294,3 +1294,90 @@ class TestRetrierRedeliveryAndFlush:
         assert retrier.pending_count() == 2
         retrier.clear()
         assert retrier.pending_count() == 0
+
+
+class TestTimeoutWrapperLogCalls:
+    """timeout_wrapper's logger calls: the exact timeout message and its arguments, the exception message with its exc_info,
+    the per-call thread name, and the duration report (monitoring.py 455-500)."""
+
+    def _recording_logger(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        calls: list = []
+
+        class _Logger:
+            def error(self, fmt, *args, **kwargs):
+                calls.append(("error", fmt, args, kwargs))
+
+            def info(self, fmt, *args, **kwargs):
+                calls.append(("info", fmt, args, kwargs))
+
+            def warning(self, *args, **kwargs):
+                return None
+
+            def debug(self, *args, **kwargs):
+                return None
+
+        monkeypatch.setattr(mon, "logger", _Logger())
+        return mon, calls
+
+    def test_a_timeout_logs_the_function_name_limit_and_time(self, monkeypatch):
+        import threading
+
+        mon, calls = self._recording_logger(monkeypatch)
+        release = threading.Event()
+
+        def slow_job():
+            release.wait(timeout=5)
+
+        wrapped = mon.timeout_wrapper(timeout=0.05)(slow_job)
+        assert wrapped() is None
+        release.set()
+        errors = [c for c in calls if c[0] == "error"]
+        assert len(errors) == 1
+        _, fmt, args, _ = errors[0]
+        assert fmt == "%s timed out after %ss at %s"
+        assert args[0] == "slow_job" and args[1] == 0.05
+        assert hasattr(args[2], "year"), "the third argument is the wall-clock time of the timeout"
+
+    def test_an_exception_logs_the_message_and_passes_the_exception_as_exc_info(self, monkeypatch):
+        mon, calls = self._recording_logger(monkeypatch)
+        boom = ValueError("bad input")
+
+        def failing_job():
+            raise boom
+
+        wrapped = mon.timeout_wrapper(timeout=5)(failing_job)
+        assert wrapped() is None
+        errors = [c for c in calls if c[0] == "error"]
+        assert len(errors) == 1
+        _, fmt, args, kwargs = errors[0]
+        assert fmt == "Error in %s: %s"
+        assert args[0] == "failing_job" and args[1] is boom
+        assert kwargs == {"exc_info": boom}
+
+    def test_the_worker_thread_is_named_after_the_function(self, monkeypatch):
+        import threading
+
+        mon, _calls = self._recording_logger(monkeypatch)
+        names: list = []
+
+        def named_job():
+            names.append(threading.current_thread().name)
+            return 1
+
+        assert mon.timeout_wrapper(timeout=5)(named_job)() == 1
+        assert names == ["timeout_wrapper-named_job"]
+
+    def test_the_duration_report_carries_the_name_and_two_decimals(self, monkeypatch):
+        mon, calls = self._recording_logger(monkeypatch)
+
+        def quick():
+            return 7
+
+        assert mon.timeout_wrapper(timeout=5, report_actual_duration=True)(quick)() == 7
+        infos = [c for c in calls if c[0] == "info"]
+        assert len(infos) == 1
+        _, fmt, args, _ = infos[0]
+        assert fmt == "%s completed in %.2fs"
+        assert args[0] == "quick" and isinstance(args[1], float) and args[1] >= 0
