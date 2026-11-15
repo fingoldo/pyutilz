@@ -1074,3 +1074,61 @@ class TestRetrierThreadAndQueue:
         mon, retrier = self._retrier_with(monkeypatch)
         with pytest.raises(TypeError, match="cannot be pickled"):
             pickle.dumps(retrier)
+
+
+class TestNextDueSchedule:
+    """_next_due decides what is due, what waits and what expired, against an explicit clock (monitoring.py 200-214)."""
+
+    def _pending(self, mon, suffix, first_failed_at, next_at):
+        key = ("https://x/" + suffix, "")
+        item = mon._Pending(key, key[0], None, None, "healthchecks.io", suffix)
+        item.first_failed_at = first_failed_at
+        item.next_at = next_at
+        return item
+
+    def test_an_item_exactly_at_the_age_limit_is_kept_and_one_past_it_is_dropped(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        gave_up: list = []
+        monkeypatch.setattr(mon._HeartbeatRetrier, "_log_gave_up", staticmethod(lambda item, now: gave_up.append(item.job_id)))
+        now = 100_000.0
+        retrier = mon._HeartbeatRetrier()
+        at_limit = self._pending(mon, "edge", now - mon.RETRY_MAX_AGE_SEC, now - 1)
+        past_limit = self._pending(mon, "old", now - mon.RETRY_MAX_AGE_SEC - 1, now - 1)
+        retrier._pending[at_limit.key] = at_limit
+        retrier._pending[past_limit.key] = past_limit
+        due, soonest = retrier._next_due(now)
+        assert due == [at_limit]
+        assert past_limit.key not in retrier._pending
+        assert gave_up == ["old"]
+
+    def test_only_items_whose_time_has_come_are_due(self):
+        from pyutilz.system import monitoring as mon
+
+        now = 1000.0
+        retrier = mon._HeartbeatRetrier()
+        ready = self._pending(mon, "ready", now, now)
+        later = self._pending(mon, "later", now, now + 10)
+        retrier._pending[ready.key] = ready
+        retrier._pending[later.key] = later
+        due, soonest = retrier._next_due(now)
+        assert due == [ready]
+
+    def test_the_wait_until_the_next_item_is_the_shortest_remaining_time(self):
+        from pyutilz.system import monitoring as mon
+
+        now = 1000.0
+        retrier = mon._HeartbeatRetrier()
+        slow = self._pending(mon, "slow", now, now + 10)
+        fast = self._pending(mon, "fast", now, now + 3)
+        retrier._pending[slow.key] = slow
+        retrier._pending[fast.key] = fast
+        due, soonest = retrier._next_due(now)
+        assert due == []
+        assert soonest == 3.0
+
+    def test_nothing_pending_means_no_wait(self):
+        from pyutilz.system import monitoring as mon
+
+        due, soonest = mon._HeartbeatRetrier()._next_due(1000.0)
+        assert due == [] and soonest is None
