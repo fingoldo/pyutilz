@@ -73,7 +73,7 @@ def _measure_eviction_refcount_baseline() -> int:
     """The count ``_pop_lru`` reports for an evicted object that nothing but the cache held."""
 
     class _Probe:
-        pass
+        """An object with no references but the one the cache holds."""
 
     _, baseline = _pop_lru(OrderedDict([("probe", _Probe())]))
     return baseline

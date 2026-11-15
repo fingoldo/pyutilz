@@ -41,6 +41,7 @@ else:
 
 
 def _reject_constant(name: str) -> Any:
+    """``json.loads`` hook that refuses NaN, Infinity and -Infinity, as orjson does."""
     raise JSONDecodeError(f"{name} is not valid JSON", name, 0)
 
 
@@ -65,6 +66,7 @@ def _sorted_mappings(obj: Any) -> Any:
 
 
 def _stdlib_dumps(obj: Any, default: Optional[Callable[[Any], Any]], sort_keys: bool, indent: bool) -> str:
+    """Serialize with the stdlib ``json`` module, in the output form of the other backends."""
     kwargs: dict[str, Any] = {
         "default": default,
         "sort_keys": sort_keys,
