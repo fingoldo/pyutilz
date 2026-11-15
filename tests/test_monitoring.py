@@ -873,3 +873,204 @@ class TestMonitoringConstantsAndImports:
         fn, kwargs = shutdowns[0]
         assert kwargs == {"wait": False}
         module._TIMEOUT_EXECUTOR.shutdown(wait=False)
+
+
+class _FakeResponse:
+    def __init__(self, status_code, text=""):
+        self.status_code = status_code
+        self.text = text
+
+
+class _FakeRequests:
+    def __init__(self, status=None, exc=None):
+        self.status = status
+        self.exc = exc
+        self.calls: list = []
+
+    def post(self, endpoint, data=None, params=None, timeout=None):
+        self.calls.append((endpoint, timeout))
+        if self.exc is not None:
+            raise self.exc
+        return _FakeResponse(self.status)
+
+
+class TestAttemptStatusAndErrors:
+    """_attempt's verdict (True = nothing left to retry, False = transient) per status, the missing-requests branch and the
+    no-message logging of a transport error (monitoring.py 96-130)."""
+
+    def _run(self, monkeypatch, fake):
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon, "requests", fake)
+        return mon._attempt("https://x/ping", None, None, "healthchecks.io", "job")
+
+    def test_delivered_and_refused_statuses_do_not_retry(self, monkeypatch):
+        for status in (200, 201, 403, 404, 409, 407):
+            assert self._run(monkeypatch, _FakeRequests(status=status)) is True, status
+
+    def test_timeouts_throttling_and_server_errors_retry(self, monkeypatch):
+        for status in (408, 425, 429, 500, 503, 599):
+            assert self._run(monkeypatch, _FakeRequests(status=status)) is False, status
+
+    def test_a_non_ok_status_other_than_the_silent_ones_is_logged_with_its_body(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        warned: list = []
+        monkeypatch.setattr(
+            mon,
+            "logger",
+            type(
+                "L",
+                (),
+                {
+                    "warning": lambda self, fmt, *a: warned.append((fmt, a)),
+                    "info": lambda self, *a, **k: None,
+                    "debug": lambda self, *a, **k: None,
+                    "error": lambda self, *a, **k: None,
+                },
+            )(),
+        )
+        self._run(monkeypatch, _FakeRequests(status=500))
+        assert warned and warned[0][1][0] == 500 and "job" in warned[0][1]
+
+    def test_a_silent_status_is_not_logged(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        warned: list = []
+        monkeypatch.setattr(
+            mon,
+            "logger",
+            type(
+                "L",
+                (),
+                {
+                    "warning": lambda self, *a, **k: warned.append(a),
+                    "info": lambda self, *a, **k: None,
+                    "debug": lambda self, *a, **k: None,
+                    "error": lambda self, *a, **k: None,
+                },
+            )(),
+        )
+        for status in (200, 403, 429):
+            self._run(monkeypatch, _FakeRequests(status=status))
+        assert warned == []
+
+    def test_a_missing_requests_package_is_not_retried_and_says_why(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        warned: list = []
+        monkeypatch.setattr(
+            mon,
+            "logger",
+            type(
+                "L",
+                (),
+                {
+                    "warning": lambda self, fmt, *a: warned.append(a),
+                    "info": lambda self, *a, **k: None,
+                    "debug": lambda self, *a, **k: None,
+                    "error": lambda self, *a, **k: None,
+                },
+            )(),
+        )
+        monkeypatch.setattr(mon, "requests", None)
+        assert mon._attempt("https://x/ping", None, None, "healthchecks.io", "job") is True
+        assert warned and "requires requests" in str(warned[0][-1])
+
+    def test_a_transport_error_is_retried_and_logged_by_class_name_only(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        warned: list = []
+        monkeypatch.setattr(
+            mon,
+            "logger",
+            type(
+                "L",
+                (),
+                {
+                    "warning": lambda self, fmt, *a: warned.append(a),
+                    "info": lambda self, *a, **k: None,
+                    "debug": lambda self, *a, **k: None,
+                    "error": lambda self, *a, **k: None,
+                },
+            )(),
+        )
+        ping_url = "https://hc-ping.com/PLACEHOLDER-PING-KEY/job"
+        assert self._run(monkeypatch, _FakeRequests(exc=OSError(ping_url))) is False
+        assert warned and warned[0][-1] == "OSError"
+        assert not any(ping_url in str(part) for part in warned[0])
+
+    def test_the_timeout_is_passed_to_requests(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        fake = _FakeRequests(status=200)
+        monkeypatch.setattr(mon, "requests", fake)
+        mon._attempt("https://x/ping", None, None, "healthchecks.io", "job")
+        assert fake.calls == [("https://x/ping", mon.API_TIMEOUT_SEC)]
+
+
+class TestRetrierThreadAndQueue:
+    """The retrier's own thread: named, daemon, started on submit, reused while alive, woken by forget, and refuses pickling
+    (monitoring.py 165-185)."""
+
+    def _retrier_with(self, monkeypatch, delay=60.0):
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon, "_backoff_delay", lambda failures: delay)
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: False)
+        return mon, mon._HeartbeatRetrier()
+
+    def _item(self, mon, key_suffix="a"):
+        key = ("https://x/" + key_suffix, "")
+        return mon._Pending(key, key[0], None, None, "healthchecks.io", key_suffix), key
+
+    def test_submit_starts_one_named_daemon_thread(self, monkeypatch):
+        mon, retrier = self._retrier_with(monkeypatch)
+        item, key = self._item(mon)
+        retrier.submit(item)
+        thread = retrier._thread
+        assert thread is not None and thread.is_alive()
+        assert thread.name == "heartbeat-retry"
+        assert thread.daemon is True
+        retrier.forget(key)
+
+    def test_a_second_submit_reuses_the_live_thread(self, monkeypatch):
+        mon, retrier = self._retrier_with(monkeypatch)
+        first, key1 = self._item(mon, "a")
+        second, key2 = self._item(mon, "b")
+        retrier.submit(first)
+        thread = retrier._thread
+        retrier.submit(second)
+        assert retrier._thread is thread
+        retrier.forget(key1)
+        retrier.forget(key2)
+
+    def test_forget_wakes_the_waiting_thread_so_it_exits_promptly(self, monkeypatch):
+        mon, retrier = self._retrier_with(monkeypatch, delay=60.0)
+        item, key = self._item(mon)
+        retrier.submit(item)
+        thread = retrier._thread
+        retrier.forget(key)
+        thread.join(timeout=3.0)
+        assert not thread.is_alive(), "forget must notify the retry thread; it was left sleeping out its 60s backoff"
+        assert retrier._thread is None
+
+    def test_a_pending_item_is_attempted_again_once_due(self, monkeypatch):
+        import threading
+
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon, "_backoff_delay", lambda failures: 0.01)
+        attempted = threading.Event()
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: attempted.set() or True)
+        retrier = mon._HeartbeatRetrier()
+        item, key = self._item(mon)
+        retrier.submit(item)
+        assert attempted.wait(timeout=3.0), "the retry thread never re-sent the pending heartbeat"
+
+    def test_a_retrier_refuses_to_be_pickled(self, monkeypatch):
+        import pickle
+
+        mon, retrier = self._retrier_with(monkeypatch)
+        with pytest.raises(TypeError, match="cannot be pickled"):
+            pickle.dumps(retrier)
