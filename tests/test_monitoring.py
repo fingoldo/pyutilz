@@ -1785,3 +1785,61 @@ class TestSurvivorGapsFromSweep:
 
         configure(a=1, b=2)
         assert infos[0][1] == "(a=1, b=2)"
+
+
+class TestRetryTimingAndExpiryWakeups:
+    """The pause before a redelivery is real, an expired item wakes a waiting caller at once, and wait_idle honours a short
+    budget (monitoring.py 225-273)."""
+
+    def test_a_failed_redelivery_waits_out_its_backoff_before_the_next_attempt(self, monkeypatch):
+        import threading
+        import time
+
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon, "_backoff_delay", lambda failures: 0.3 if failures >= 2 else 0.01)
+        stamps: list = []
+        done = threading.Event()
+        outcomes = iter([False, True])
+
+        def _fake(*args, **kwargs):
+            stamps.append(time.monotonic())
+            result = next(outcomes)
+            if result:
+                done.set()
+            return result
+
+        monkeypatch.setattr(mon, "_attempt", _fake)
+        retrier = mon._HeartbeatRetrier()
+        key = ("https://x/gap", "complete")
+        retrier.submit(mon._Pending(key, key[0], None, None, "healthchecks.io", "gap"))
+        assert done.wait(timeout=5)
+        assert len(stamps) == 2
+        assert stamps[1] - stamps[0] >= 0.25
+
+    def test_an_item_that_expires_wakes_a_waiting_caller_promptly(self, monkeypatch):
+        import time
+
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon, "_backoff_delay", lambda failures: 0.3)
+        monkeypatch.setattr(mon, "_attempt", lambda *args, **kwargs: False)
+        retrier = mon._HeartbeatRetrier()
+        key = ("https://x/expire", "complete")
+        item = mon._Pending(key, key[0], None, None, "healthchecks.io", "expire")
+        retrier.submit(item)
+        item.first_failed_at = time.monotonic() - mon.RETRY_MAX_AGE_SEC - 1
+        started = time.monotonic()
+        assert retrier.wait_idle(timeout=5.0) is True
+        assert time.monotonic() - started < 2.0
+
+    def test_wait_idle_with_a_short_budget_still_returns_true_once_cleared(self):
+        import threading
+
+        from pyutilz.system import monitoring as mon
+
+        retrier = mon._HeartbeatRetrier()
+        key = ("https://x/short", "complete")
+        retrier._pending[key] = mon._Pending(key, key[0], None, None, "healthchecks.io", "short")
+        threading.Timer(0.1, retrier.clear).start()
+        assert retrier.wait_idle(timeout=0.5) is True
