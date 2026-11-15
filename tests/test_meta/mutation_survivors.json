@@ -267,5 +267,14 @@
   "src/pyutilz/system/distributed.py::2cc81e6df796::operator: >= becomes >": "equivalent: the Python 3.9+ and older branches compute the same md5 digest of the module file; the branch only chooses how the flag is passed.",
   "src/pyutilz/system/distributed.py::684363d5f346::constant: 3 becomes 4": "equivalent: the Python 3.9+ and older branches compute the same md5 digest of the module file; the branch only chooses how the flag is passed.",
   "src/pyutilz/system/distributed.py::114af8d71835::constant: 9 becomes 10": "equivalent: the Python 3.9+ and older branches compute the same md5 digest of the module file; the branch only chooses how the flag is passed.",
-  "src/pyutilz/system/distributed.py::146a43ad59cb::logic: False becomes True": "equivalent: usedforsecurity only declares the digest a content tag and does not change its value, so True and False give the same version string."
+  "src/pyutilz/system/distributed.py::146a43ad59cb::logic: False becomes True": "equivalent: usedforsecurity only declares the digest a content tag and does not change its value, so True and False give the same version string.",
+  "src/pyutilz/system/monitoring.py::d2fc10288b60::arguments transposed: RETRY_MAX_DELAY_SEC <-> RETRY_INITIAL_DELAY_SEC * (2 ** max(0, failures - 1))": "equivalent: min() is commutative, so swapping the capped and uncapped terms returns the same delay",
+  "src/pyutilz/system/monitoring.py::a1fd9417a5ba::arguments transposed: 0 <-> failures - 1": "equivalent: max() is commutative, so swapping 0 and failures - 1 returns the same exponent",
+  "src/pyutilz/system/monitoring.py::6c10f0916d50::arguments transposed: soonest <-> wait": "equivalent: min() is commutative, so swapping the two waits returns the same shortest wait",
+  "src/pyutilz/system/monitoring.py::f47357ea6fa5::deleted a statement-level call": "equivalent in outcome: without the timed wait the retry thread only polls more often; the same items are sent, only idle CPU use changes",
+  "src/pyutilz/system/monitoring.py::88241bb4838c::logic: continue becomes break": "equivalent: after break the remaining due items are picked up again on the next pass with no wait, so they are attempted in the same order",
+  "src/pyutilz/system/monitoring.py::219b97a3a2ae::deleted a statement-level call": "equivalent: a delivered send that empties the queue leaves the retry thread through the empty-queue exit, which also notifies",
+  "src/pyutilz/system/monitoring.py::4902d25bab16::operator: <= becomes <": "equivalent: same boundary as 260:29; exactly zero remaining on a monotonic clock is not reachable in practice",
+  "src/pyutilz/system/monitoring.py::684ef270364d::logic: break becomes continue": "equivalent: once remaining is not positive every later item also finds no time left, so flush makes no further attempt either way",
+  "src/pyutilz/system/monitoring.py::c2f03c9cbb29::arguments transposed: API_TIMEOUT_SEC <-> remaining": "equivalent: min() is commutative, so the order of the timeout arguments does not change the value"
 }
