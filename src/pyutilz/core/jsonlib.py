@@ -75,11 +75,8 @@ def _stdlib_dumps(obj: Any, default: Optional[Callable[[Any], Any]], sort_keys: 
     if indent:
         kwargs["indent"] = 2
         kwargs["separators"] = (",", ": ")
-    try:
-        return _json.dumps(obj, **kwargs)
-    except ValueError:
-        # allow_nan=False refuses NaN/Infinity: replace them with null, as the other backends do.
-        return _json.dumps(_without_non_finite(obj), **kwargs)
+    # allow_nan=False refuses NaN/Infinity, so they are replaced with null up front, as the other backends do natively.
+    return _json.dumps(_without_non_finite(obj), **kwargs)
 
 
 def loads(data: Union[bytes, bytearray, memoryview, str]) -> Any:
