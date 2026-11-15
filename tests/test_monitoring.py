@@ -622,3 +622,169 @@ class TestJobCompletedDelivery:
         assert len(submitted) == 1
         submitted[0]()
         assert len(sent) == 1
+
+
+def _quiet_logger(sink=None):
+    """A stand-in logger whose info() records its arguments into sink (or discards them)."""
+
+    class _Logger:
+        def info(self, *args, **kwargs):
+            if sink is not None:
+                sink.append(args)
+
+        def warning(self, *args, **kwargs):
+            return None
+
+        def debug(self, *args, **kwargs):
+            return None
+
+        def error(self, *args, **kwargs):
+            return None
+
+    return _Logger()
+
+
+class TestMonitoredDecorator:
+    """monitored() times the call, adds the duration to a dict result (None becomes {}), refuses a non-dict/non-None result,
+    skips the heartbeat for a falsy result when should_have_data is set, and reports via job_completed with the job id
+    or the function name (monitoring.py 385-455)."""
+
+    def _record(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        calls: list = []
+        monkeypatch.setattr(mon, "job_completed", lambda **kw: calls.append(kw))
+        monkeypatch.setattr(mon, "logger", _quiet_logger())
+        return mon, calls
+
+    def test_a_dict_result_gets_the_duration_and_is_reported(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+        monkeypatch.setattr(mon, "timer", iter([10.0, 12.5]).__next__)
+
+        @mon.monitored(job_id="nightly", status=0, provider="healthchecks.io", api_key="K")
+        def job():
+            return {"rows": 3}
+
+        assert job() == {"rows": 3, "duration": 2.5}
+        assert calls == [{"job_id": "nightly", "status": 0, "data": {"rows": 3, "duration": 2.5}, "provider": "healthchecks.io", "api_key": "K"}]
+
+    def test_none_becomes_an_empty_dict_carrying_the_duration(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+        monkeypatch.setattr(mon, "timer", iter([1.0, 1.0001]).__next__)
+
+        @mon.monitored()
+        def job():
+            return None
+
+        assert job() == {"duration": 0.0001}
+        assert calls[0]["data"] == {"duration": 0.0001}
+
+    def test_the_duration_is_rounded_to_the_requested_digits(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+        monkeypatch.setattr(mon, "timer", iter([0.0, 1.23456]).__next__)
+
+        @mon.monitored(duration_rounding=2)
+        def job():
+            return {}
+
+        assert job() == {"duration": 1.23}
+
+    def test_no_duration_field_leaves_the_result_untouched(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+
+        @mon.monitored(duration_field="")
+        def job():
+            return {"a": 1}
+
+        assert job() == {"a": 1}
+        assert calls[0]["data"] == {"a": 1}
+
+    def test_a_custom_duration_field_name_is_used(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+        monkeypatch.setattr(mon, "timer", iter([0.0, 2.0]).__next__)
+
+        @mon.monitored(duration_field="elapsed")
+        def job():
+            return {}
+
+        assert job() == {"elapsed": 2.0}
+
+    def test_should_have_data_skips_the_heartbeat_for_a_falsy_result(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+
+        @mon.monitored(should_have_data=True)
+        def job():
+            return {}
+
+        assert job() == {}
+        assert calls == []
+
+    def test_should_have_data_still_reports_a_truthy_result(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+
+        @mon.monitored(should_have_data=True)
+        def job():
+            return {"n": 1}
+
+        job()
+        assert len(calls) == 1
+
+    def test_without_should_have_data_a_falsy_result_is_still_reported(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+
+        @mon.monitored()
+        def job():
+            return {}
+
+        job()
+        assert len(calls) == 1
+
+    def test_a_non_dict_result_raises_assertion_error_and_sends_nothing(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+
+        @mon.monitored()
+        def job():
+            return [1, 2]
+
+        with pytest.raises(AssertionError, match="expected None or dict result, got list"):
+            job()
+        assert calls == []
+
+    def test_the_job_id_defaults_to_the_function_name(self, monkeypatch):
+        mon, calls = self._record(monkeypatch)
+
+        @mon.monitored()
+        def my_nightly_job():
+            return {}
+
+        my_nightly_job()
+        assert calls[0]["job_id"] == "my_nightly_job"
+
+    def test_log_data_false_does_not_log_the_result(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        mon_, calls = self._record(monkeypatch)
+        logged: list = []
+        monkeypatch.setattr(mon, "logger", _quiet_logger(logged))
+
+        @mon.monitored(log_data=False)
+        def job():
+            return {"x": 1}
+
+        job()
+        assert logged == []
+        assert len(calls) == 1
+
+    def test_log_data_true_logs_the_result(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        mon_, calls = self._record(monkeypatch)
+        logged: list = []
+        monkeypatch.setattr(mon, "logger", _quiet_logger(logged))
+
+        @mon.monitored()
+        def job():
+            return {"x": 1}
+
+        job()
+        assert logged and logged[0][0] == {"x": 1, "duration": logged[0][0]["duration"]}
