@@ -368,7 +368,7 @@ def json_pg_dumps(obj: object, sort_keys: bool = False) -> object:
     """
     raw: Optional[str]
     try:
-        raw = jsonlib.dumps(obj, default=json_serial, sort_keys=sort_keys)
+        raw = jsonlib.dumps_bytes(obj, default=json_serial, sort_keys=sort_keys).decode("utf-8")
     except (TypeError, UnicodeError):
         # orjson refuses shapes the normalizer flattens for it (tuples -> lists, most notably), non-str dict keys and
         # lone surrogates (the stdlib backend fails at the utf-8 encode instead): the normalizer handles them.
