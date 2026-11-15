@@ -277,3 +277,86 @@ def test_applyfunc_parallel_returns_list_when_return_dataframe_false():
     # but its contents are exactly the per-chunk results, list-like end to end.
     assert not isinstance(result, pd.DataFrame)
     assert list(result) == [[1, 2], [3, 4]]
+
+
+class TestChunking:
+    """The three chunking helpers in parallel.py: exact chunk bounds (including the short last chunk), the rejection of a
+    non-positive size with its message, empty input, and the cleanup warning when a temp directory cannot be checked."""
+
+    def test_split_into_chunks_gives_exact_chunks_with_a_short_last_one(self):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        assert list(split_list_into_chunks(list(range(10)), 3)) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+
+    def test_split_into_chunks_keeps_an_exact_multiple_without_an_empty_tail(self):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        assert list(split_list_into_chunks([1, 2, 3, 4], 2)) == [[1, 2], [3, 4]]
+
+    def test_a_chunk_size_of_one_gives_singletons(self):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        assert list(split_list_into_chunks(["a", "b"], 1)) == [["a"], ["b"]]
+
+    def test_a_chunk_size_larger_than_the_list_gives_one_chunk(self):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        assert list(split_list_into_chunks([1, 2, 3], 10)) == [[1, 2, 3]]
+
+    def test_an_empty_list_gives_no_chunks(self):
+        from pyutilz.system.parallel import split_list_into_chunks, split_list_into_chunks_indices
+
+        assert list(split_list_into_chunks([], 3)) == []
+        assert list(split_list_into_chunks_indices([], 3)) == []
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_a_non_positive_chunk_size_is_refused_with_its_value_in_the_message(self, bad):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        with pytest.raises(ValueError, match=f"split_list_into_chunks: chunk_size must be >= 1, got {bad}"):
+            list(split_list_into_chunks([1, 2], bad))
+
+    def test_the_index_bounds_are_exact_and_the_last_right_bound_is_clipped(self):
+        from pyutilz.system.parallel import split_list_into_chunks_indices
+
+        assert list(split_list_into_chunks_indices(list(range(10)), 3)) == [(0, 3), (3, 6), (6, 9), (9, 10)]
+        assert list(split_list_into_chunks_indices(list(range(4)), 4)) == [(0, 4)]
+        assert list(split_list_into_chunks_indices(list(range(5)), 2)) == [(0, 2), (2, 4), (4, 5)]
+
+    @pytest.mark.parametrize("bad", [0, -2])
+    def test_the_index_helper_refuses_a_non_positive_size_with_its_value(self, bad):
+        from pyutilz.system.parallel import split_list_into_chunks_indices
+
+        with pytest.raises(ValueError, match=f"split_list_into_chunks_indices: chunk_size must be >= 1, got {bad}"):
+            list(split_list_into_chunks_indices([1, 2], bad))
+
+    def test_the_nchunks_helper_refuses_zero_with_its_value(self):
+        from pyutilz.system.parallel import split_list_into_nchunks_indices
+
+        with pytest.raises(ValueError, match="split_list_into_nchunks_indices: nchunks must be >= 1, got 0"):
+            list(split_list_into_nchunks_indices([1, 2], 0))
+
+    def test_more_chunks_than_items_are_capped_at_one_item_each(self):
+        from pyutilz.system.parallel import split_list_into_nchunks_indices
+
+        assert list(split_list_into_nchunks_indices(list(range(3)), 10)) == [(0, 1), (1, 2), (2, 3)]
+
+    def test_nchunks_splits_as_evenly_as_it_can(self):
+        from pyutilz.system.parallel import split_list_into_nchunks_indices
+
+        assert list(split_list_into_nchunks_indices(list(range(10)), 3)) == [(0, 3), (3, 6), (6, 10)]
+
+    def test_a_failed_temp_directory_check_is_logged_with_its_path_and_error(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        warned: list = []
+        monkeypatch.setattr(parallel, "logger", type("L", (), {"warning": lambda self, fmt, *a, **k: warned.append((fmt, a)), "info": lambda self, *a, **k: None, "debug": lambda self, *a, **k: None, "error": lambda self, *a, **k: None})())
+        monkeypatch.setattr(parallel, "_TEMP_DIRS", ["/tmp/some-dir"])
+        boom = OSError("permission denied")
+
+        def _exists(path):
+            raise boom
+
+        monkeypatch.setattr(parallel.os.path, "exists", _exists)
+        parallel._cleanup_temp_dirs()
+        assert warned == [("Failed to cleanup temp directory %s: %s", ("/tmp/some-dir", boom))]
