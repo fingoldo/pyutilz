@@ -1132,3 +1132,165 @@ class TestNextDueSchedule:
 
         due, soonest = mon._HeartbeatRetrier()._next_due(1000.0)
         assert due == [] and soonest is None
+
+
+class TestRetrierRedeliveryAndFlush:
+    """The retry thread re-sends each pending heartbeat with its own endpoint/data/params/provider/job id, drops one that was
+    replaced while its request was in flight without stopping the batch, and flush() re-sends within the budget and never
+    raises. wait_idle()/pending_count()/clear() report and reset the queue (monitoring.py 214-300)."""
+
+    def _item(self, mon, suffix, data="payload", params=None):
+        key = ("https://x/" + suffix, "complete")
+        return mon._Pending(key, key[0], data, params, "healthchecks.io", suffix), key
+
+    def test_the_retry_thread_resends_with_the_items_own_arguments_in_order(self, monkeypatch):
+        import threading
+
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon, "_backoff_delay", lambda failures: 0.01)
+        seen: list = []
+        done = threading.Event()
+
+        def _fake(*args, **kwargs):
+            seen.append(args)
+            done.set()
+            return True
+
+        monkeypatch.setattr(mon, "_attempt", _fake)
+        retrier = mon._HeartbeatRetrier()
+        item, key = self._item(mon, "order", data="payload", params={"state": "complete"})
+        retrier.submit(item)
+        assert done.wait(timeout=3.0)
+        assert seen == [("https://x/order", "payload", {"state": "complete"}, "healthchecks.io", "order")]
+
+    def test_a_failed_redelivery_is_attempted_again_and_success_clears_it(self, monkeypatch):
+        import threading
+
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon, "_backoff_delay", lambda failures: 0.01)
+        outcomes = iter([False, True])
+        attempts: list = []
+        done = threading.Event()
+
+        def _fake(*args, **kwargs):
+            attempts.append(args[-1])
+            result = next(outcomes)
+            if result:
+                done.set()
+            return result
+
+        monkeypatch.setattr(mon, "_attempt", _fake)
+        retrier = mon._HeartbeatRetrier()
+        item, key = self._item(mon, "again")
+        retrier.submit(item)
+        assert done.wait(timeout=3.0)
+        assert attempts == ["again", "again"]
+        assert retrier.wait_idle(timeout=3.0)
+        assert retrier.pending_count() == 0
+
+    def test_an_item_replaced_during_its_request_is_left_alone_and_the_batch_continues(self, monkeypatch):
+        import threading
+
+        from pyutilz.system import monitoring as mon
+
+        monkeypatch.setattr(mon, "_backoff_delay", lambda failures: 0.01)
+        attempted: list = []
+        second_done = threading.Event()
+        retrier = mon._HeartbeatRetrier()
+        first, key_a = self._item(mon, "a")
+        second, key_b = self._item(mon, "b")
+        replacement, _ = self._item(mon, "a")
+
+        def _fake(endpoint, data, params, provider, job_id, **kwargs):
+            attempted.append(job_id)
+            if job_id == "a" and attempted.count("a") == 1:
+                retrier.submit(replacement)
+                return False
+            if job_id == "b":
+                second_done.set()
+            return False
+
+        monkeypatch.setattr(mon, "_attempt", _fake)
+        retrier._pending[key_a] = first
+        retrier._pending[key_b] = second
+        retrier.submit(first)
+        assert second_done.wait(timeout=3.0), "a replaced item must not stop the rest of the batch"
+        retrier.forget(key_b)
+        with retrier._cv:
+            assert retrier._pending.get(key_a) is replacement
+
+    def test_flush_gives_each_pending_heartbeat_one_attempt_within_the_budget(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        calls: list = []
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: calls.append((a[-1], k["timeout"])) or True)
+        retrier = mon._HeartbeatRetrier()
+        item, key = self._item(mon, "flush")
+        retrier._pending[key] = item
+        retrier.flush(budget=100.0)
+        assert calls and calls[0][0] == "flush" and calls[0][1] == mon.API_TIMEOUT_SEC
+        assert retrier.pending_count() == 0
+
+    def test_flush_passes_only_the_remaining_budget_as_timeout(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        calls: list = []
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: calls.append(k["timeout"]) or False)
+        retrier = mon._HeartbeatRetrier()
+        item, key = self._item(mon, "tight")
+        retrier._pending[key] = item
+        retrier.flush(budget=2.0)
+        assert len(calls) == 1
+        assert 0 < calls[0] <= 2.0
+
+    def test_flush_with_no_budget_attempts_nothing(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        calls: list = []
+        monkeypatch.setattr(mon, "_attempt", lambda *a, **k: calls.append(1) or True)
+        retrier = mon._HeartbeatRetrier()
+        item, key = self._item(mon, "none")
+        retrier._pending[key] = item
+        retrier.flush(budget=0.0)
+        assert calls == []
+        assert retrier.pending_count() == 1
+
+    def test_flush_never_raises_and_logs_the_failure_at_debug(self, monkeypatch):
+        from pyutilz.system import monitoring as mon
+
+        def _boom(*a, **k):
+            raise RuntimeError("interpreter going down")
+
+        debugs: list = []
+        monkeypatch.setattr(mon, "_attempt", _boom)
+        monkeypatch.setattr(mon, "logger", type("L", (), {"debug": lambda self, fmt, *a: debugs.append((fmt, a)), "info": lambda self, *a, **k: None, "warning": lambda self, *a, **k: None, "error": lambda self, *a, **k: None})())
+        retrier = mon._HeartbeatRetrier()
+        item, key = self._item(mon, "boom")
+        retrier._pending[key] = item
+        retrier.flush()
+        assert debugs and debugs[0][0] == "heartbeat flush at exit failed: %s"
+        assert "interpreter going down" in str(debugs[0][1][0])
+
+    def test_wait_idle_is_false_while_pending_and_true_once_empty(self):
+        from pyutilz.system import monitoring as mon
+
+        retrier = mon._HeartbeatRetrier()
+        item, key = self._item(mon, "idle")
+        retrier._pending[key] = item
+        assert retrier.wait_idle(timeout=0.05) is False
+        retrier.clear()
+        assert retrier.pending_count() == 0
+        assert retrier.wait_idle(timeout=0.05) is True
+
+    def test_clear_drops_everything_and_wakes_the_waiters(self):
+        from pyutilz.system import monitoring as mon
+
+        retrier = mon._HeartbeatRetrier()
+        for suffix in ("x", "y"):
+            item, key = self._item(mon, suffix)
+            retrier._pending[key] = item
+        assert retrier.pending_count() == 2
+        retrier.clear()
+        assert retrier.pending_count() == 0
