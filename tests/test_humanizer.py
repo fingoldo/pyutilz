@@ -921,3 +921,26 @@ def test_a_filler_opener_needs_a_space_after_the_sentence_end():
 
     assert strip_ai_patterns("Done.Basically, we ship.") == "Done.Basically, we ship."
     assert strip_ai_patterns("Done. Basically, we ship.") == "Done. We ship."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "xMoreover, we stay.",
+        "xAdditionally we stay.",
+        "xConsequently we stay.",
+        "xNevertheless we stay.",
+        "This underscores itsimportance here.",
+        "xAs an AI, ship it.",
+    ],
+)
+def test_a_transition_or_hedge_rule_does_not_fire_glued_or_without_its_spacing(text):
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns(text) == text
+
+
+def test_the_as_an_ai_phrase_keeps_its_language_model_words_when_they_are_not_separated():
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns("We, as an AIlanguage model, ship it.") == "We, language model, ship it."
