@@ -276,5 +276,16 @@
   "src/pyutilz/system/monitoring.py::219b97a3a2ae::deleted a statement-level call": "equivalent: a delivered send that empties the queue leaves the retry thread through the empty-queue exit, which also notifies",
   "src/pyutilz/system/monitoring.py::4902d25bab16::operator: <= becomes <": "equivalent: same boundary as 260:29; exactly zero remaining on a monotonic clock is not reachable in practice",
   "src/pyutilz/system/monitoring.py::684ef270364d::logic: break becomes continue": "equivalent: once remaining is not positive every later item also finds no time left, so flush makes no further attempt either way",
-  "src/pyutilz/system/monitoring.py::c2f03c9cbb29::arguments transposed: API_TIMEOUT_SEC <-> remaining": "equivalent: min() is commutative, so the order of the timeout arguments does not change the value"
+  "src/pyutilz/system/monitoring.py::c2f03c9cbb29::arguments transposed: API_TIMEOUT_SEC <-> remaining": "equivalent: min() is commutative, so the order of the timeout arguments does not change the value",
+  "src/pyutilz/system/parallel.py::aea54656eaf2::arguments transposed: left + chunk_size <-> t": "equivalent: min() is commutative, so swapping the chunk end and the list length returns the same bound",
+  "src/pyutilz/system/parallel.py::2157cb8e5dc6::arguments transposed: 1 <-> min(nchunks, total_length)": "equivalent: max() is commutative, so swapping 1 and the clipped count returns the same count",
+  "src/pyutilz/system/parallel.py::c01da1489ab5::arguments transposed: nchunks <-> total_length": "equivalent: min() is commutative, so swapping the chunk count and the list length returns the same count",
+  "src/pyutilz/system/parallel.py::118e8a46351c::constant: 0 becomes 1": "equivalent: adding the same constant to every starting load does not change which worker the heap picks next",
+  "src/pyutilz/system/parallel.py::129a01aa8019::deleted a statement-level call": "equivalent: the starting loads are already ascending by worker index, which is a valid heap without heapify",
+  "src/pyutilz/system/parallel.py::ec8fe7c3e3c4::operator: > becomes >=": "equivalent: a zero count is already rejected by the truthiness test before this comparison, so >= 0 changes nothing",
+  "src/pyutilz/system/parallel.py::d0c30ffa0f84::arguments transposed: 1 <-> min(detected if detected and detected > 0 else 1, len(iterable))": "equivalent: max() is commutative, so swapping 1 and the clipped worker count returns the same count",
+  "src/pyutilz/system/parallel.py::0f2e58edca7d::arguments transposed: detected if detected and detected > 0 else 1 <-> len(iterable)": "equivalent: min() is commutative, so swapping the detected count and the item count returns the same value",
+  "src/pyutilz/system/parallel.py::8fa0e228e782::operator: > becomes >=": "equivalent: a zero count is already rejected by the truthiness test before this comparison",
+  "src/pyutilz/system/parallel.py::a62ac816d3db::constant: 0 becomes 1": "equivalent: with a detected count of one the expression yields one either way",
+  "src/pyutilz/system/parallel.py::0a781c978b92::deleted a statement-level call": "equivalent: joblib.dump rewrites the file itself, so the explicit unlink only removes a file that dump would overwrite anyway"
 }
