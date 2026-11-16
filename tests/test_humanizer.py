@@ -835,3 +835,26 @@ def test_each_hedging_or_filler_opener_is_removed_and_the_capital_restored(text,
     from pyutilz.text.humanizer import strip_ai_patterns
 
     assert strip_ai_patterns(text) == expected
+
+
+@pytest.mark.parametrize(
+    "char",
+    [
+        "\U0001f300", "\U0001f680", "\U0001f900", "\U0001fa00", "\U0001fa70",
+        "\u2715", "\U0001f1e6", "\u20e3", "\ufe0f", "\u200d",
+        "\u231a", "\u23e9", "\u23f8", "\u25aa", "\u25b6", "\u25c0", "\u25fb",
+        "\u2934", "\u2b05", "\u2b1b", "\u2b50", "\u2b55", "\u3030", "\u303d",
+        "\u3297", "\u3299",
+    ],
+)
+def test_each_emoji_range_is_stripped_by_its_own_representative(char):
+    from pyutilz.text.humanizer import strip_emojis
+
+    assert strip_emojis(f"a{char}b") == "ab"
+
+
+@pytest.mark.parametrize("mark", ["\u2713", "\u2714"])
+def test_the_checkmarks_that_a_checklist_uses_are_kept(mark):
+    from pyutilz.text.humanizer import strip_emojis
+
+    assert strip_emojis(f"{mark} done") == f"{mark} done"
