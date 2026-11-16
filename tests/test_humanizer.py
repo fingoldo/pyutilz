@@ -496,3 +496,247 @@ class TestTheFirstCharacterKeepsItsCapital:
     def test_an_untouched_sentence_is_returned_unchanged(self):
         text = "Normal sentence, nothing to strip."
         assert strip_ai_patterns(text) == text
+
+
+class _Script:
+    """A stand-in for random.Random that returns the values a test queues, in order, and checks each choice is legal."""
+
+    def __init__(self, *values):
+        self._values = list(values)
+
+    def _next(self):
+        return self._values.pop(0)
+
+    def choice(self, seq):
+        value = self._next()
+        assert value in seq, (value, seq)
+        return value
+
+    def randint(self, lo, hi):
+        value = self._next()
+        assert lo <= value <= hi, (value, lo, hi)
+        return value
+
+    def choices(self, population, weights=None, k=1):
+        return [self._next()]
+
+
+class TestTablesAndAdjacencyPinned:
+    """The keyboard neighbour tables are pinned whole, the typo weights sum to one, and the case of an adjacent key follows
+    the typed character (humanizer.py 22-52, 53-65, 300-317)."""
+
+    def test_the_qwerty_neighbour_table_is_pinned_whole(self):
+        from pyutilz.text import humanizer as h
+
+        assert h._QWERTY_ADJACENT == {
+            "q": "wa", "w": "qeas", "e": "wrds", "r": "etdf", "t": "ryfg",
+            "y": "tugh", "u": "yijh", "i": "uojk", "o": "iplk", "p": "ol",
+            "a": "qwsz", "s": "wedxza", "d": "erfcxs", "f": "rtgvcd",
+            "g": "tyhbvf", "h": "yujnbg", "j": "uikmnh", "k": "iolmj",
+            "l": "opk",
+            "z": "asx", "x": "zsdc", "c": "xdfv", "v": "cfgb",
+            "b": "vghn", "n": "bhjm", "m": "njk",
+        }  # fmt: skip
+
+    def test_the_yцукен_neighbour_table_is_pinned_whole(self):
+        from pyutilz.text import humanizer as h
+
+        assert h._YCUKEN_ADJACENT == {
+            "й": "цф", "ц": "йуфыв", "у": "цквыа", "к": "уеапр",
+            "е": "кнпро", "н": "егрол", "г": "нщолд", "ш": "щзлдж",
+            "щ": "гшздж", "з": "шщжхэ", "х": "зэж", "ъ": "хэ",
+            "ф": "йцыя", "ы": "цуфвач", "в": "укыапс", "а": "кевпрм",
+            "п": "еналри", "р": "нгпоит", "о": "гшрлдь", "л": "щгодж",
+            "д": "шщлжэб", "ж": "зхдэю", "э": "хъжю",
+            "я": "фыч", "ч": "ыясв", "с": "вчмап", "м": "аспи",
+            "и": "прмт", "т": "ориьб", "ь": "олтбю", "б": "лдьюж",
+            "ю": "джэб",
+        }  # fmt: skip
+
+    def test_the_typo_weights_are_pinned_and_sum_to_one(self):
+        from pyutilz.text import humanizer as h
+
+        assert h._TYPO_TYPES == [
+            ("adjacent_key", 0.30),
+            ("transpose", 0.20),
+            ("double_letter", 0.15),
+            ("skip_letter", 0.10),
+            ("extra_space", 0.10),
+            ("missing_space_comma", 0.10),
+            ("missing_space_period", 0.05),
+        ]
+        assert abs(sum(w for _, w in h._TYPO_TYPES) - 1.0) < 1e-12
+
+    def test_an_upper_case_letter_gets_upper_case_neighbours(self):
+        from pyutilz.text.humanizer import _get_adjacent
+
+        assert _get_adjacent("Q") == "WA"
+        assert _get_adjacent("й") == "цф"
+        assert _get_adjacent("Й") == "ЦФ"
+        assert _get_adjacent("1") is None
+
+
+class TestTypoBranchesWithScriptedChoices:
+    """Each character and spacing typo, driven by queued choices so the exact edit is known (humanizer.py 320-447)."""
+
+    def test_a_long_word_is_the_only_target_when_the_first_and_last_words_are_skipped(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        words = [(0, "start"), (6, "there"), (12, "end")]
+        assert _pick_word_for_typo(words, (), _Script((6, "there"))) == (6, "there")
+
+    def test_a_word_shorter_than_the_minimum_is_never_a_target(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        words = [(0, "aa"), (3, "bbbb"), (8, "ccccc"), (14, "dd")]
+        assert _pick_word_for_typo(words, (), _Script((8, "ccccc"))) == (8, "ccccc")
+
+    def test_a_capitalised_word_is_skipped_but_an_all_capitals_word_is_not(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        words = [(0, "start"), (6, "Hello"), (12, "WORLD"), (18, "end")]
+        assert _pick_word_for_typo(words, (), _Script((12, "WORLD"))) == (12, "WORLD")
+
+    def test_a_protected_word_is_skipped_and_an_unprotected_neighbour_is_used(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        words = [(0, "start"), (6, "alphabet"), (15, "middle"), (22, "end")]
+        assert _pick_word_for_typo(words, [(6, 14)], _Script((15, "middle"))) == (15, "middle")
+
+    def test_no_eligible_word_means_no_target(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        assert _pick_word_for_typo([(0, "a"), (2, "b"), (4, "c")], (), random.Random(0)) is None
+
+    def test_an_adjacent_key_typo_replaces_one_letter_with_a_neighbour(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        out, pos, delta = _apply_char_typo("hello there world", "adjacent_key", (), _Script((6, "there"), 0, "y"))
+        assert out == "hello yhere world"
+        assert (pos, delta) == (6, 0)
+
+    def test_a_transposition_swaps_two_inner_letters(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        out, pos, delta = _apply_char_typo("hello there world", "transpose", (), _Script((6, "there"), 2))
+        assert out == "hello three world"
+        assert (pos, delta) == (6, 0)
+
+    def test_a_double_letter_repeats_an_inner_letter(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        out, pos, delta = _apply_char_typo("hello there world", "double_letter", (), _Script((6, "there"), 1))
+        assert out == "hello thhere world"  # codespell:ignore thhere
+        assert (pos, delta) == (6, 1)
+
+    def test_a_skipped_letter_drops_an_inner_letter(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        out, pos, delta = _apply_char_typo("hello there world", "skip_letter", (), _Script((6, "there"), 2))
+        assert out == "hello thre world"  # codespell:ignore thre
+        assert (pos, delta) == (6, -1)
+
+    def test_an_unknown_typo_kind_leaves_the_text_alone(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        assert _apply_char_typo("hello there world", "mystery", (), _Script((6, "there"))) == ("hello there world", 0, 0)
+
+    def test_an_extra_space_doubles_one_inter_word_gap(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("a b c", "extra_space", (), _Script(3)) == ("a b  c", 3, 1)
+
+    def test_a_missing_space_after_a_comma_is_removed(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("one, two", "missing_space_comma", (), _Script(3)) == ("one,two", 4, -1)
+
+    def test_a_missing_space_after_a_sentence_end_is_removed_before_a_capital(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("Done. Next", "missing_space_period", (), _Script(4)) == ("Done.Next", 5, -1)
+
+    def test_a_space_typo_with_nothing_to_hit_leaves_the_text_alone(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("oneword", "extra_space", (), random.Random(0)) == ("oneword", 0, 0)
+        assert _apply_space_typo("no comma here", "missing_space_comma", (), random.Random(0)) == ("no comma here", 0, 0)
+
+
+class TestDashesQuotesAndEmojiExactly:
+    """fix_dashes and strip_emojis, pinned on exact outputs (humanizer.py 235-315)."""
+
+    def test_an_em_dash_becomes_a_spaced_hyphen(self):
+        from pyutilz.text.humanizer import fix_dashes
+
+        assert fix_dashes("a—b") == "a - b"
+
+    def test_an_en_dash_becomes_a_spaced_hyphen(self):
+        from pyutilz.text.humanizer import fix_dashes
+
+        assert fix_dashes("a–b") == "a - b"
+
+    def test_a_dash_padded_by_spaces_is_collapsed_to_one_spaced_hyphen(self):
+        from pyutilz.text.humanizer import fix_dashes
+
+        assert fix_dashes("a — b") == "a - b"
+        assert fix_dashes("a -- b") == "a - b"
+
+    def test_each_smart_quote_becomes_its_ascii_form(self):
+        from pyutilz.text.humanizer import fix_dashes
+
+        assert fix_dashes("“q”") == '"q"'
+        assert fix_dashes("it’s ‘fine’") == "it's 'fine'"
+
+    def test_layout_spaces_with_no_dash_are_left_alone(self):
+        from pyutilz.text.humanizer import fix_dashes
+
+        assert fix_dashes("col1    col2") == "col1    col2"
+
+    def test_an_emoji_is_removed_and_the_ends_are_trimmed(self):
+        from pyutilz.text.humanizer import strip_emojis
+
+        assert strip_emojis("Hi \U0001f600 there") == "Hi  there"
+        assert strip_emojis("done \U0001f680") == "done"
+
+
+class TestCapitalAndPipelineBehaviour:
+    """strip_ai_patterns restores a capital only when the text started with one, and humanize keeps the typo count, the
+    spans and the warning exactly (humanizer.py 182-233, 449-563)."""
+
+    def test_a_removed_opener_recapitalises_the_text_when_it_started_capitalised(self):
+        from pyutilz.text.humanizer import strip_ai_patterns
+
+        assert strip_ai_patterns("It is worth noting that we shipped it.") == "We shipped it."
+
+    def test_a_text_that_started_lower_case_is_not_capitalised(self):
+        from pyutilz.text.humanizer import strip_ai_patterns
+
+        assert strip_ai_patterns("it is worth noting that we shipped it.") == "we shipped it."
+
+    def test_a_vocabulary_downgrade_at_the_start_is_recapitalised(self):
+        from pyutilz.text.humanizer import strip_ai_patterns
+
+        assert strip_ai_patterns("Robust pipelines matter.") == "Solid pipelines matter."
+
+    def test_zero_typos_returns_the_cleaned_text_without_touching_words(self):
+        from pyutilz.text.humanizer import humanize
+
+        assert humanize("We leverage tools — safely.", typo_count=0) == "We use tools - safely."
+
+    def test_a_span_that_cleaning_removed_is_reported_once_and_the_rest_still_applies(self, caplog):
+        import logging
+
+        from pyutilz.text.humanizer import humanize
+
+        text = "It is worth noting that alpha."
+        with caplog.at_level(logging.WARNING, logger="pyutilz.text.humanizer"):
+            out = humanize(text, typo_count=0, protected_spans=[(6, 23)])
+        assert out == "Alpha."
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings == ["humanize(): 1 protected span(s) not found after cleaning -- NOT protected from typo injection: ['worth noting that']"]
+
+    def test_an_empty_span_is_ignored(self):
+        from pyutilz.text.humanizer import humanize
+
+        assert humanize("Alpha beta", typo_count=0, protected_spans=[(3, 3)]) == "Alpha beta"
