@@ -858,3 +858,66 @@ def test_the_checkmarks_that_a_checklist_uses_are_kept(mark):
     from pyutilz.text.humanizer import strip_emojis
 
     assert strip_emojis(f"{mark} done") == f"{mark} done"
+
+
+_GLUED_NEGATIVES = [
+    "xIt is important to note that tests stay.",
+    "xIn conclusion, tests stay.",
+    "xTo summarize, tests stay.",
+    "xstands as a testament to care.",
+    "This underscores itsimportance here.",
+    "xdelve into data stay.",
+    "xdelve deeper and stay.",
+    "xleverage tools and stay.",
+    "xutilize tools and stay.",
+    "xfacilitate work and stay.",
+    "xstreamline work and stay.",
+    "xcomprehensive tests stay.",
+    "xensure that tests stay.",
+    "xensure tests stay.",
+    "xpivotal change stays.",
+    "xseamless flow stays.",
+    "xmeticulous review stays.",
+    "xcutting edge tool stays.",
+    "We xFurthermore, we stay.",
+    "xI'm thrilled to help and stay.",
+    "xI'd love to help and stay.",
+    "xI bring 10 years of work and stay.",
+    "This plays avital role here.",
+    "xplays a vital role here and stay.",
+]
+
+
+@pytest.mark.parametrize("text", _GLUED_NEGATIVES)
+def test_a_rule_does_not_fire_inside_a_glued_word_or_a_broken_phrase(text):
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns(text) == text
+
+
+def test_a_double_space_before_the_number_is_not_a_bring_years_phrase():
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns("I bring  years of work.") == "I bring years of work."
+    assert strip_ai_patterns("I bring years of work.") == "I bring years of work."
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Great question. We ship.", "We ship."),
+        ("Excellent question. We ship.", "We ship."),
+        ("Good question. We ship.", "We ship."),
+    ],
+)
+def test_each_question_praise_opener_is_removed(text, expected):
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns(text) == expected
+
+
+def test_a_filler_opener_needs_a_space_after_the_sentence_end():
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns("Done.Basically, we ship.") == "Done.Basically, we ship."
+    assert strip_ai_patterns("Done. Basically, we ship.") == "Done. We ship."
