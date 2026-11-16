@@ -655,7 +655,6 @@ DEP002 = [
     "bandit",
     "mkdocs-material",
     "fake-useragent",
-    "py-ci-shared",  # invoked as `python -m py_ci_shared.*` CLI/pre-commit-hook commands, never `import py_ci_shared`
 ]
 
 # DEP001 (import missing from declared deps): 35 findings from the 2026-07-09 full triage (run
