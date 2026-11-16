@@ -810,6 +810,13 @@ root = "."
 baseline_path = "tests/test_meta/_complexity_baseline.json"
 limit = 20
 
+# Hard from day one (owner decision 2026-11-16): a finding fails the build.
+[tool.py_ci_shared.gates.required_call_kwargs]
+root = "."
+
+[tool.py_ci_shared.gates.deprecated_docstring_without_warn]
+root = "."
+
 [tool.py_ci_shared.secret_shapes]
 bearer_token = { pattern = "[Bb]earer [A-Za-z0-9._~+/-]{32,}=*", min_length = 40, note = "a bearer token literal: revoke it, git history is not rewritten" }
 
