@@ -721,6 +721,13 @@ class TestBoundariesDefaultsAndLogs:
         assert indices == [[3], [0, 1, 2]]
         assert values == [[9], [1, 5, 2]]
 
+    def test_the_n_cores_warning_points_at_the_caller(self):
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        with pytest.warns(DeprecationWarning) as record:
+            applyfunc_parallel([(1,)], lambda x: x, n_cores=1, return_dataframe=False, use_threads=True)
+        assert record[0].filename == __file__
+
     def test_a_single_worker_takes_everything_even_when_the_core_count_is_larger(self, monkeypatch):
         from pyutilz.system import parallel
 
@@ -821,9 +828,9 @@ class TestBoundariesDefaultsAndLogs:
         def named(x):
             return x
 
-        applyfunc_parallel([(1,), (2,)], named, n_jobs=2, return_dataframe=False, use_threads=True)
+        applyfunc_parallel([(1,), (2,), (3,)], named, n_jobs=2, return_dataframe=False, use_threads=True)
         start = [a for fmt, a in infos if fmt.startswith("Applying of")]
-        assert start == [("named", 2, 2)]
+        assert start == [("named", 2, 3)]
         messages = [fmt for fmt, _ in infos]
         assert "Function applied." in messages
         assert messages.index("Function applied.") > messages.index("Applying of %s started, n_jobs=%s, nchunks=%s...")
