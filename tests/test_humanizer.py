@@ -740,3 +740,98 @@ class TestCapitalAndPipelineBehaviour:
         from pyutilz.text.humanizer import humanize
 
         assert humanize("Alpha beta", typo_count=0, protected_spans=[(3, 3)]) == "Alpha beta"
+
+
+_AI_PATTERN_REPLACEMENTS = [
+    ("We think it's worth noting that tests pass.", "We think tests pass."),
+    ("We think it is important to note that tests pass.", "We think tests pass."),
+    ("We have, in conclusion, tests.", "We have, tests."),
+    ("We did, to summarize, the tests.", "We did, the tests."),
+    ("This stands as a testament to care.", "This shows to care."),
+    ("This underscores its importance here.", "This matters here."),
+    ("We, as an AI, ship it.", "We, ship it."),
+    ("We delve into data.", "We look into data."),
+    ("We delve deeper.", "We dig deeper."),
+    ("We leverage tools.", "We use tools."),
+    ("We utilize tools.", "We use tools."),
+    ("We facilitate work.", "We help with work."),
+    ("We streamline work.", "We simplify work."),
+    ("We need comprehensive tests.", "We need thorough tests."),
+    ("We ensure that tests pass.", "We make sure tests pass."),
+    ("We ensure tests pass.", "We make sure tests pass."),
+    ("A pivotal change.", "A key change."),
+    ("A seamless flow.", "A smooth flow."),
+    ("A robust design.", "A solid design."),
+    ("A meticulous review.", "A careful review."),
+    ("This innovative idea.", "This new idea."),
+    ("A cutting-edge tool.", "A modern tool."),
+    ("A cutting edge tool.", "A modern tool."),
+    ("Tests pass. Furthermore, we ship.", "Tests pass. Also, we ship."),
+    ("Tests pass. Moreover, we ship.", "Tests pass. Also, we ship."),
+    ("Tests pass. Additionally we ship.", "Tests pass. Also, we ship."),
+    ("Tests pass. Consequently we ship.", "Tests pass. So, we ship."),
+    ("Tests pass. Nevertheless we ship.", "Tests pass. Still, we ship."),
+    ("I'm thrilled to help.", "I'm glad to help."),
+    ("I'd love to help.", "I'd like to help."),
+    ("I bring 10 years of experience.", "I have 10 years of experience."),
+    ("This plays a vital role here.", "This is important here."),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), _AI_PATTERN_REPLACEMENTS)
+def test_each_filler_vocabulary_and_transition_rule_gives_its_exact_replacement(text, expected):
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The nonrobust path stays.",
+        "The undelve plan stays.",
+        "The reensure plan stays.",
+        "The noncomprehensive plan stays.",
+        "The noninnovative plan stays.",
+        "The unpivotal plan stays.",
+        "They delveinto data and stay.",
+        "We ensurethat tests stay.",
+        "I bring years of work and stay.",
+        "WIt's worth noting that tests stay.",
+    ],
+)
+def test_a_word_inside_a_longer_word_or_a_glued_phrase_is_never_rewritten(text):
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns(text) == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Use the loop (more idiomatic) here.", "Use the loop here."),
+        ("Use it (which is cleaner).", "Use it."),
+        ("Use it (cleaner way).", "Use it."),
+        ("Use it (more idiomatic approach) now.", "Use it now."),
+        ("Use it (the robust variant ships in 3.12).", "Use it (the solid variant ships in 3.12)."),
+    ],
+)
+def test_a_parenthetical_self_justification_is_removed_only_when_it_is_nothing_else(text, expected):
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Sure thing! We ship.", "We ship."),
+        ("Happy to help. We ship.", "We ship."),
+        ("Basically, we ship.", "We ship."),
+        ("Fundamentally, we ship.", "We ship."),
+    ],
+)
+def test_each_hedging_or_filler_opener_is_removed_and_the_capital_restored(text, expected):
+    from pyutilz.text.humanizer import strip_ai_patterns
+
+    assert strip_ai_patterns(text) == expected
