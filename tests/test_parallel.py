@@ -585,7 +585,7 @@ class TestTensorFlowGpuSelection:
         experimental = types.SimpleNamespace(
             list_physical_devices=lambda kind: list(gpus),
             set_visible_devices=_set,
-            list_logical_devices=lambda kind: [f"logical-{g}" for g in gpus],
+            list_logical_devices=lambda kind: ["logical-0"],
         )
         tf = types.SimpleNamespace(config=types.SimpleNamespace(experimental=experimental))
         monkeypatch.setitem(sys.modules, "tensorflow", tf)
@@ -632,7 +632,7 @@ class TestTensorFlowGpuSelection:
         parallel.set_tf_gpu(1)
         assert calls == [("g1", "GPU")]
         assert errors == []
-        assert infos == [("%s Physical GPUs, %s Logical GPU", (2, 2))]
+        assert infos == [("%s Physical GPUs, %s Logical GPU", (2, 1))]
 
     def test_a_failure_to_set_visibility_is_logged_not_raised(self, monkeypatch):
         parallel, errors, infos = self._recorder(monkeypatch)
@@ -675,3 +675,220 @@ class TestMemMapArrayBehaviour:
         gc.collect()
         again = parallel.mem_map_array(np.full(3, 7.0), "gap_shared_a")
         assert np.array_equal(again, np.full(3, 7.0))
+
+
+class TestBoundariesDefaultsAndLogs:
+    """Single-item boundaries, the one-worker and default-argument paths, the backend-name check, the log lines and their
+    arguments, the warning location, and the shared memory-map directory bookkeeping (parallel.py 46-316)."""
+
+    def _log_recorder(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        infos: list = []
+        errors: list = []
+        monkeypatch.setattr(
+            parallel,
+            "logger",
+            type(
+                "L",
+                (),
+                {
+                    "info": lambda self, fmt, *a, **k: infos.append((fmt, a)),
+                    "error": lambda self, fmt, *a, **k: errors.append((fmt, a)),
+                    "warning": lambda self, fmt, *a, **k: errors.append((fmt, a)),
+                    "debug": lambda self, *a, **k: None,
+                },
+            )(),
+        )
+        return parallel, infos, errors
+
+    def test_a_step_of_one_is_a_valid_split(self):
+        import numpy as np
+
+        from pyutilz.system.parallel import split_array
+
+        assert split_array(np.zeros(3), 1) == [(0, 1), (1, 2), (2, 3)]
+
+    def test_a_single_chunk_request_gives_one_chunk(self):
+        from pyutilz.system.parallel import split_list_into_nchunks_indices
+
+        assert list(split_list_into_nchunks_indices([1, 2], 1)) == [(0, 2)]
+
+    def test_the_least_loaded_worker_takes_the_next_largest_item_and_each_worker_keeps_input_order(self):
+        from pyutilz.system.parallel import distribute_work
+
+        values, indices = distribute_work([1, 5, 2, 9], n_jobs=2)
+        assert indices == [[3], [0, 1, 2]]
+        assert values == [[9], [1, 5, 2]]
+
+    def test_a_single_worker_takes_everything_even_when_the_core_count_is_larger(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        monkeypatch.setattr(parallel, "cpu_count_physical", lambda: 4)
+        values, _indices = parallel.distribute_work([1, 2, 3], n_jobs=1)
+        assert len(values) == 1
+
+    def test_the_deprecation_warning_points_at_the_caller(self):
+        from pyutilz.system.parallel import distribute_work
+
+        with pytest.warns(DeprecationWarning) as record:
+            distribute_work([1, 2], nworkers=2)
+        assert record[0].filename == __file__
+
+    def test_physical_core_count_of_one_is_kept_and_not_replaced_by_the_fallback(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=True: 1)
+        assert parallel.cpu_count_physical(fallback=5) == 1
+
+    def test_parallel_run_defaults_to_minus_one_workers_and_keeps_it_without_real_cores(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+
+        class _FakeParallel(_Recorder):
+            def __init__(self, **kwargs):
+                super().__init__(made, **kwargs)
+
+            def __call__(self, jobs):
+                return list(jobs)
+
+        monkeypatch.setattr(parallel, "Parallel", _FakeParallel)
+        parallel.parallel_run(["a"], prefer_real_cores=False)
+        assert made[0].kwargs["n_jobs"] == -1
+
+    def test_a_single_worker_is_kept_even_when_real_cores_are_preferred(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+
+        class _FakeParallel(_Recorder):
+            def __init__(self, **kwargs):
+                super().__init__(made, **kwargs)
+
+            def __call__(self, jobs):
+                return list(jobs)
+
+        monkeypatch.setattr(parallel, "Parallel", _FakeParallel)
+        monkeypatch.setattr(parallel, "cpu_count_physical", lambda: 3)
+        parallel.parallel_run(["a"], n_jobs=1)
+        assert made[0].kwargs["n_jobs"] == 1
+
+    def test_only_the_dask_backend_is_entered_as_a_parallel_backend_context(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+        entered: list = []
+
+        class _FakeParallel(_Recorder):
+            def __init__(self, **kwargs):
+                super().__init__(made, **kwargs)
+
+            def __call__(self, jobs):
+                return list(jobs)
+
+        class _Context:
+            def __init__(self, name):
+                entered.append(name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(parallel, "Parallel", _FakeParallel)
+        monkeypatch.setattr(parallel, "parallel_backend", _Context)
+        parallel.parallel_run(["a"], n_jobs=2, backend="loky")
+        assert entered == []
+        assert made[0].kwargs["backend"] == "loky"
+
+    def test_the_pool_is_sized_by_physical_cores_and_the_logical_flag_defaults_to_false(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        asked: list = []
+        made: list = []
+        monkeypatch.setattr(parallel, "ThreadPool", lambda **kwargs: _Recorder(made, **kwargs))
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=True: asked.append(logical) or 8)
+        parallel.applyfunc_parallel([(1,), (2,)], lambda x: x, return_dataframe=False, use_threads=True)
+        assert asked == [False]
+
+    def test_the_start_and_end_messages_carry_the_function_name_and_counts(self, monkeypatch):
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        parallel, infos, errors = self._log_recorder(monkeypatch)
+
+        def named(x):
+            return x
+
+        applyfunc_parallel([(1,), (2,)], named, n_jobs=2, return_dataframe=False, use_threads=True)
+        start = [a for fmt, a in infos if fmt.startswith("Applying of")]
+        assert start == [("named", 2, 2)]
+        messages = [fmt for fmt, _ in infos]
+        assert "Function applied." in messages
+        assert messages.index("Function applied.") > messages.index("Applying of %s started, n_jobs=%s, nchunks=%s...")
+
+    def test_a_callable_without_a_name_is_called_function_in_the_log(self, monkeypatch):
+        import functools
+
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        parallel, infos, errors = self._log_recorder(monkeypatch)
+        applyfunc_parallel([(1,)], functools.partial(lambda a, b: a + b, 0), n_jobs=1, return_dataframe=False, use_threads=True)
+        start = [a for fmt, a in infos if fmt.startswith("Applying of")]
+        assert start[0][0] == "function"
+
+    def test_concatenated_results_are_logged_after_the_frames_are_joined(self, monkeypatch):
+        import pandas as pd
+
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        parallel, infos, errors = self._log_recorder(monkeypatch)
+        out = applyfunc_parallel([(1,)], lambda x: pd.DataFrame({"v": [x]}), n_jobs=1, use_threads=True)
+        assert list(out["v"]) == [1]
+        messages = [fmt for fmt, _ in infos]
+        assert "Results Concatenated." in messages
+
+    def test_the_gpu_queries_ask_for_the_gpu_kind(self, monkeypatch):
+        import sys
+        import types
+
+        from pyutilz.system import parallel
+
+        kinds: list = []
+        experimental = types.SimpleNamespace(
+            list_physical_devices=lambda kind: kinds.append(("physical", kind)) or ["g0"],
+            set_visible_devices=lambda device, kind: kinds.append(("set", kind)),
+            list_logical_devices=lambda kind: kinds.append(("logical", kind)) or ["l0"],
+        )
+        monkeypatch.setitem(sys.modules, "tensorflow", types.SimpleNamespace(config=types.SimpleNamespace(experimental=experimental)))
+        parallel.set_tf_gpu(0)
+        assert kinds == [("physical", "GPU"), ("set", "GPU"), ("logical", "GPU")]
+
+    def test_a_new_memory_map_directory_is_created_once_and_registered_for_cleanup(self, monkeypatch):
+        import numpy as np
+
+        from pyutilz.system import parallel
+
+        infos: list = []
+        monkeypatch.setattr(parallel, "_MEM_MAP_DIR", None)
+        monkeypatch.setattr(parallel, "_TEMP_DIRS", [])
+        monkeypatch.setattr(
+            parallel,
+            "logger",
+            type("L", (), {"info": lambda self, fmt, *a, **k: infos.append((fmt, a)), "debug": lambda self, *a, **k: None, "warning": lambda self, *a, **k: None, "error": lambda self, *a, **k: None})(),
+        )
+        parallel.mem_map_array(np.zeros(2), "gap_new_dir")
+        assert parallel._MEM_MAP_DIR is not None
+        assert parallel._TEMP_DIRS == [parallel._MEM_MAP_DIR]
+        created = [a for fmt, a in infos if fmt.startswith("mem_map_array: created")]
+        assert created == [(parallel._MEM_MAP_DIR,)]
+
+    def test_cleanup_removes_directories_while_ignoring_their_own_errors(self, monkeypatch, tmp_path):
+        from pyutilz.system import parallel
+
+        seen: list = []
+        monkeypatch.setattr(parallel.shutil, "rmtree", lambda path, **kwargs: seen.append((path, kwargs)))
+        monkeypatch.setattr(parallel, "_TEMP_DIRS", [str(tmp_path)])
+        parallel._cleanup_temp_dirs()
+        assert seen == [(str(tmp_path), {"ignore_errors": True})]
