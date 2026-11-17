@@ -1133,3 +1133,43 @@ class TestTypoEngineBoundariesAndArguments:
         for seed in range(60):
             out = introduce_typos(text, count=6, rng=random.Random(seed), protected_spans=protected)
             assert "foxtrot" in out, seed
+
+
+class TestRemainingSurvivorsOfTheSweep:
+    """The last survivors the sweep found in the opener removal, the recapitalisation, the proper-noun rule, the play-role
+    phrase, the underscore phrase and the seeded typo run (humanizer.py 190, 226, 349, 80, 108, 473)."""
+
+    def test_an_opener_removal_keeps_the_text_before_it(self):
+        from pyutilz.text.humanizer import strip_ai_patterns
+
+        assert strip_ai_patterns("Done. Certainly, we ship.") == "Done. We ship."
+
+    def test_a_removed_opener_recapitalises_only_when_the_first_letter_is_lower_case(self):
+        from pyutilz.text.humanizer import strip_ai_patterns
+
+        assert strip_ai_patterns("It is worth noting that iPhone works.") == "IPhone works."
+
+    def test_a_capitalised_word_is_the_only_candidate_once_a_proper_noun_is_skipped(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        rec = _Recorder((12, "WORLD"))
+        assert _pick_word_for_typo([(0, "start"), (6, "Hello"), (12, "WORLD"), (18, "end")], (), rec) == (12, "WORLD")
+        assert rec.seqs == [[(12, "WORLD")]]
+
+    def test_the_play_role_phrase_needs_its_spacing(self):
+        from pyutilz.text.humanizer import strip_ai_patterns
+
+        assert strip_ai_patterns("This playsa vital role here.") == "This playsa vital role here."
+
+    def test_the_underscore_phrase_needs_a_word_boundary_before_it(self):
+        from pyutilz.text.humanizer import strip_ai_patterns
+
+        assert strip_ai_patterns("xunderscores its importance here.") == "xunderscores its importance here."
+
+    def test_a_seeded_run_is_reproducible_to_the_character(self):
+        import random
+
+        from pyutilz.text.humanizer import introduce_typos
+
+        out = introduce_typos("alpha bravo charlie delta echo foxtrot golf hotel", count=3, rng=random.Random(7))
+        assert out == "alpha brao charile delta echo coxtrot golf hotel"  # codespell:ignore brao,charile,coxtrot
