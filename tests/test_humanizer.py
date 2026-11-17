@@ -944,3 +944,192 @@ def test_the_as_an_ai_phrase_keeps_its_language_model_words_when_they_are_not_se
     from pyutilz.text.humanizer import strip_ai_patterns
 
     assert strip_ai_patterns("We, as an AIlanguage model, ship it.") == "We, language model, ship it."
+
+
+class _Recorder(_Script):
+    """_Script that also records the bounds of every randint call and the candidate list of every choice call."""
+
+    def __init__(self, *values):
+        super().__init__(*values)
+        self.ranges: list = []
+        self.seqs: list = []
+
+    def randint(self, lo, hi):
+        self.ranges.append((lo, hi))
+        return super().randint(lo, hi)
+
+    def choice(self, seq):
+        self.seqs.append(list(seq))
+        return super().choice(seq)
+
+
+class TestTypoEngineBoundariesAndArguments:
+    """Protected-range overlap at its edges, the word picker's first, last and capital rules, each character typo's draw
+    range and resulting word, the spacing typos' protected checks, and the defaults of introduce_typos and humanize
+    (humanizer.py 320-561)."""
+
+    def test_protected_overlap_is_strict_at_both_edges(self):
+        from pyutilz.text.humanizer import _is_protected
+
+        assert _is_protected(5, 5, [(0, 5)]) is False
+        assert _is_protected(0, 5, [(5, 9)]) is False
+        assert _is_protected(4, 2, [(0, 5)]) is True
+
+    def test_the_first_and_the_last_word_are_both_skipped_by_the_picker(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        assert _pick_word_for_typo([(0, "alpha"), (6, "bravo")], (), random.Random(0)) is None
+        assert _pick_word_for_typo([(0, "start"), (6, "abc1def"), (14, "end")], (), random.Random(0)) is None
+
+    def test_the_last_word_is_skipped_even_when_it_is_long_enough(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        words = [(0, "start"), (6, "there"), (12, "bravo")]
+        for seed in range(20):
+            assert _pick_word_for_typo(words, (), random.Random(seed)) == (6, "there")
+
+    def test_a_capital_inside_a_word_does_not_make_it_a_proper_noun(self):
+        from pyutilz.text.humanizer import _pick_word_for_typo
+
+        assert _pick_word_for_typo([(0, "start"), (6, "aBcdef"), (13, "end")], (), _Script((6, "aBcdef"))) == (6, "aBcdef")
+        assert _pick_word_for_typo([(0, "start"), (6, "HEllo"), (12, "end")], (), _Script((6, "HEllo"))) == (6, "HEllo")
+
+    def test_a_real_word_is_targeted_even_after_leading_space(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        for seed in range(10):
+            out, _pos, _delta = _apply_char_typo(" alpha bravo charlie", "skip_letter", (), random.Random(seed))
+            parts = out.split()
+            assert parts[0] == "alpha" and parts[2] == "charlie"
+
+    def test_no_target_gives_the_text_and_zero_offsets(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        assert _apply_char_typo("a b c", "skip_letter", (), random.Random(0)) == ("a b c", 0, 0)
+
+    def test_a_word_of_letters_with_no_keyboard_neighbour_is_left_alone(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        assert _apply_char_typo("hi ąęįųū yo", "adjacent_key", (), random.Random(0)) == ("hi ąęįųū yo", 0, 0)
+
+    def test_an_adjacent_key_typo_only_draws_from_letters_that_have_neighbours(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        for seed in range(20):
+            out, _pos, _delta = _apply_char_typo("start аbcdef end", "adjacent_key", (), random.Random(seed))
+            assert out != "start аbcdef end"
+
+    @pytest.mark.parametrize(
+        ("index", "expected"),
+        [(1, "tehre"), (2, "three"), (3, "theer")],  # codespell:ignore tehre,theer
+    )
+    def test_a_transposition_swaps_the_letters_at_the_drawn_inner_position(self, index, expected):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        rec = _Recorder((6, "there"), index)
+        out, pos, delta = _apply_char_typo("hello there world", "transpose", (), rec)
+        assert out == f"hello {expected} world"
+        assert (pos, delta) == (6, 0)
+        assert rec.ranges == [(1, 3)]
+
+    @pytest.mark.parametrize(
+        ("index", "expected"),
+        [(1, "thhere"), (2, "theere"), (3, "therre")],  # codespell:ignore thhere,theere
+    )
+    def test_a_double_letter_repeats_the_drawn_inner_letter(self, index, expected):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        rec = _Recorder((6, "there"), index)
+        out, pos, delta = _apply_char_typo("hello there world", "double_letter", (), rec)
+        assert out == f"hello {expected} world"
+        assert (pos, delta) == (6, 1)
+        assert rec.ranges == [(1, 3)]
+
+    @pytest.mark.parametrize(
+        ("index", "expected"),
+        [(1, "tere"), (2, "thre"), (3, "thee")],  # codespell:ignore thre
+    )
+    def test_a_skipped_letter_is_one_of_the_inner_letters(self, index, expected):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        rec = _Recorder((6, "there"), index)
+        out, pos, delta = _apply_char_typo("hello there world", "skip_letter", (), rec)
+        assert out == f"hello {expected} world"
+        assert (pos, delta) == (6, -1)
+        assert rec.ranges == [(1, 3)]
+
+    def test_an_extra_space_is_never_placed_on_a_protected_gap_or_beside_one(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("a b c", "extra_space", ((1, 2),), _Script(3)) == ("a b  c", 3, 1)
+        assert _apply_space_typo("a b c", "extra_space", ((4, 5),), _Script(3)) == ("a b  c", 3, 1)
+
+    def test_a_comma_space_is_removed_only_where_it_is_unprotected(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("a, b, c", "missing_space_comma", ((3, 4),), _Script(1)) == ("a,b, c", 2, -1)
+        assert _apply_space_typo("a, b, c", "missing_space_comma", ((3, 4),), _Script(4)) == ("a, b,c", 5, -1)
+
+    def test_a_period_space_is_removed_only_where_it_is_unprotected(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("Go. Ok. Yes", "missing_space_period", ((3, 4),), _Script(6)) == ("Go. Ok.Yes", 7, -1)
+        assert _apply_space_typo("Go. Ok. Yes", "missing_space_period", ((4, 5),), _Script(2)) == ("Go.Ok. Yes", 3, -1)
+
+    def test_no_period_or_comma_to_hit_leaves_the_text_alone(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("no period here", "missing_space_period", (), random.Random(0)) == ("no period here", 0, 0)
+        assert _apply_space_typo("no comma here", "missing_space_comma", (), random.Random(0)) == ("no comma here", 0, 0)
+
+    def test_an_unknown_spacing_typo_leaves_the_text_alone(self):
+        from pyutilz.text.humanizer import _apply_space_typo
+
+        assert _apply_space_typo("abc", "bogus", (), random.Random(0)) == ("abc", 0, 0)
+
+    def test_introduce_typos_makes_one_typo_by_default(self):
+        from pyutilz.text.humanizer import introduce_typos
+
+        text = "alpha bravo charlie delta echo foxtrot golf hotel"
+        for seed in range(10):
+            assert introduce_typos(text, rng=random.Random(seed)) == introduce_typos(text, count=1, rng=random.Random(seed))
+
+    def test_a_missing_period_space_chosen_by_the_typo_kind_is_applied(self):
+        from pyutilz.text.humanizer import introduce_typos
+
+        assert introduce_typos("Go. Ok.", count=1, rng=_Script("missing_space_period", 2)) == "Go.Ok."
+
+    def test_humanize_makes_one_typo_by_default_and_with_an_explicit_count_of_one(self):
+        from pyutilz.text.humanizer import humanize
+
+        assert humanize("Go. Ok.", typo_count=1, rng=_Script("missing_space_period", 2)) == "Go.Ok."
+
+    def test_humanize_default_typo_count_is_one(self):
+        from pyutilz.text.humanizer import humanize
+
+        text = "alpha bravo charlie delta echo foxtrot golf hotel"
+        for seed in range(10):
+            assert humanize(text, rng=random.Random(seed)) == humanize(text, typo_count=1, rng=random.Random(seed))
+
+    def test_a_long_lost_snippet_is_reported_by_its_first_sixty_characters(self, caplog):
+        import logging
+
+        from pyutilz.text.humanizer import humanize
+
+        text = "It is worth noting that " + "q" * 70
+        with caplog.at_level(logging.WARNING, logger="pyutilz.text.humanizer"):
+            humanize(text, typo_count=0, protected_spans=[(0, len(text))])
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(messages) == 1
+        assert repr(text[:60]) in messages[0]
+        assert repr(text[:61]) not in messages[0]
+
+    def test_a_protected_word_is_never_damaged_by_later_length_changing_typos(self):
+        from pyutilz.text.humanizer import introduce_typos
+
+        text = "alpha bravo charlie delta echo foxtrot golf hotel"
+        protected = [(31, 38)]
+        assert text[31:38] == "foxtrot"
+        for seed in range(60):
+            out = introduce_typos(text, count=6, rng=random.Random(seed), protected_spans=protected)
+            assert "foxtrot" in out, seed
