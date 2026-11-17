@@ -360,3 +360,45 @@ class TestBasicsSweepSurvivors:
 
         assert slugify("_abc_") == "abc"
         assert slugify("-abc-") == "abc"
+
+
+class TestBasicsRecheckSurvivors:
+    """What the basics re-check still found: an explicit None start for find_between, None for each token default in
+    parse_tokens, the exact text of the missing-end warning, a single-letter capital after a lower-case one in
+    underscorize_variable, and rpad of an empty string (basics.py 35, 60-71, 89, 164)."""
+
+    def test_a_none_start_index_means_the_start_of_the_text(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abc", "", "c", idx1=None) == "ab"
+
+    def test_a_none_start_token_uses_the_clock_default(self):
+        from pyutilz.text.strings.basics import parse_tokens
+
+        assert parse_tokens("x [%clk 0:05] y", start_token=None) == ["0:05"]
+
+    def test_a_none_end_token_uses_the_closing_bracket(self):
+        from pyutilz.text.strings.basics import parse_tokens
+
+        assert parse_tokens("x [%clk 0:05] y", end_token=None) == ["0:05"]
+
+    def test_the_missing_end_warning_names_only_the_text_up_to_the_start_token(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.basics import parse_tokens
+
+        with caplog.at_level(logging.WARNING):
+            assert parse_tokens("[%clk 1:00 tail") == []
+        assert "found in [%clk " in caplog.text
+        assert "1:00" not in caplog.text
+
+    def test_a_capital_after_a_lower_case_letter_gets_an_underscore(self):
+        from pyutilz.text.strings.basics import underscorize_variable
+
+        assert underscorize_variable("aBc") == "a_bc"
+
+    def test_rpad_of_an_empty_string_stays_empty_by_default(self):
+        from pyutilz.text.strings.basics import rpad
+
+        assert rpad("") == ""
+        assert rpad("abc", 5) == "abc.."
