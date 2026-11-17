@@ -435,3 +435,24 @@ class TestJsonutilsRecheckSurvivors:
         from pyutilz.text.strings.jsonutils import json_pg_dumps
 
         assert json_pg_dumps({1: "x", "a": "\x00"})._raw == '{"1":"x","a":""}'
+
+
+class TestPreSerializedAdapterSurvivors:
+    """The psycopg2 adapter: it is its own ISQLQuote adapter and offers nothing for other protocols, a quoted ASCII
+    literal comes out verbatim, and a non-ASCII byte in the text shows as the replacement character in str()
+    (jsonutils.py 329-348)."""
+
+    def test_the_adapter_answers_only_for_the_sql_quote_protocol(self):
+        from psycopg2.extensions import ISQLQuote
+
+        obj = jsonutils.json_pg_dumps({"a": "b"})
+        assert obj.__conform__(ISQLQuote) is obj
+        assert obj.__conform__(str) is None
+
+    def test_an_ascii_document_is_quoted_verbatim(self):
+        obj = jsonutils.json_pg_dumps({"a": "b"})
+        assert obj.getquoted() == b'\'{"a":"b"}\''
+
+    def test_a_non_ascii_byte_shows_as_the_replacement_character_in_str(self):
+        obj = jsonutils.json_pg_dumps({"a": "\u00e9"})
+        assert str(obj) == '\'{"a":"\ufffd"}\''
