@@ -1173,3 +1173,26 @@ class TestRemainingSurvivorsOfTheSweep:
 
         out = introduce_typos("alpha bravo charlie delta echo foxtrot golf hotel", count=3, rng=random.Random(7))
         assert out == "alpha brao charile delta echo coxtrot golf hotel"  # codespell:ignore brao,charile,coxtrot
+
+
+class TestProtectedWindowsFollowTheEdits:
+    """A protected span that lies after a length-changing typo moves with the text, and a span that ends exactly at the edit
+    point is not stretched (humanizer.py 478-484). Checked through the gap positions an extra-space typo may still use."""
+
+    _TEXT = "alpha bravo charlie delta echoes foxtrot end"
+
+    def test_a_protected_span_after_an_edit_moves_with_the_text(self):
+        from pyutilz.text.humanizer import introduce_typos
+
+        rec = _Recorder("skip_letter", (6, "bravo"), 2, "extra_space", 18)
+        out = introduce_typos(self._TEXT, count=2, rng=rec, protected_spans=((12, 19),))
+        assert rec.seqs[1] == [5, 10, 18, 24, 31, 39]
+        assert out == "alpha brvo charlie  delta echoes foxtrot end"
+
+    def test_a_span_that_ends_exactly_at_the_edit_point_is_not_stretched(self):
+        from pyutilz.text.humanizer import introduce_typos
+
+        rec = _Recorder("skip_letter", (6, "bravo"), 2, "extra_space", 18)
+        out = introduce_typos(self._TEXT, count=2, rng=rec, protected_spans=((4, 6),))
+        assert rec.seqs[1] == [10, 18, 24, 31, 39]
+        assert out == "alpha brvo charlie  delta echoes foxtrot end"
