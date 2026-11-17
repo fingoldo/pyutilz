@@ -261,3 +261,125 @@ class TestSkippedFunctionDoesNotEndTheLoop:
             b_val = 3
 
         assert jsonutils.jsonize_atrtributes(_Holder(), skip_functions=True) == {"b_val": 3}
+
+
+class TestJsonutilsSweepSurvivors:
+    """The survivors of the jsonutils sweep: the strip and skip-functions arguments carried into nested mappings and
+    sequences, the default skip of builtins, the debug notes for an attribute that raises or has no length, the warning
+    of remove_json_defaults with its truncated object text, the NUL removal, the default sort order, and the verbose and
+    indices defaults of the list helpers (jsonutils.py 95-435)."""
+
+    def test_nested_strings_keep_their_spaces_when_strip_is_off(self):
+        from pyutilz.text.strings import jsonutils
+
+        assert jsonutils.jsonize_atrtributes({"a": " x "}, strip=False) == {"a": " x "}
+        assert jsonutils.jsonize_atrtributes([" x "], strip=False) == [" x "]
+
+    def test_strings_are_stripped_by_default_at_the_top_level_too(self):
+        from pyutilz.text.strings import jsonutils
+
+        assert jsonutils.jsonize_atrtributes(" x ") == "x"
+        assert jsonutils.jsonize_atrtributes(" x ", strip=False) == " x "
+
+    def test_builtin_functions_are_dropped_by_default(self):
+        from pyutilz.text.strings import jsonutils
+
+        class _Holder:
+            helper = len
+            kept = 1
+
+        result = jsonutils.jsonize_atrtributes(_Holder())
+        assert "helper" not in result
+        assert result["kept"] == 1
+
+    def test_an_attribute_that_raises_is_skipped_with_a_debug_note(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        class _Holder:
+            @property
+            def bad(self):
+                raise ValueError("boom")
+
+            ok = 1
+
+        with caplog.at_level(logging.DEBUG):
+            result = jsonutils.jsonize_atrtributes(_Holder())
+        assert result == {"ok": 1}
+        assert "Failed to jsonize attribute 'bad' of" in caplog.text
+        assert "boom" in caplog.text
+
+    def test_a_value_without_a_length_is_kept_with_a_debug_note(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        with caplog.at_level(logging.DEBUG):
+            jsonutils.remove_json_empty_attributes({"n": 5, "e": []}, ["n", "e"])
+        assert "Attribute n has no len(), skipping empty-check:" in caplog.text
+
+    def test_defaults_are_removed_silently_by_default(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        obj = {"a": 1, "b": 2}
+        with caplog.at_level(logging.WARNING):
+            jsonutils.remove_json_defaults(obj, {"a": 1})
+        assert obj == {"b": 2}
+        assert caplog.text == ""
+
+    def test_a_non_default_value_is_warned_about_with_its_truncated_object(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        obj = {"aaaaaaaaaa": 1, "bb": 2}
+        with caplog.at_level(logging.WARNING):
+            jsonutils.remove_json_defaults(obj, {"aaaaaaaaaa": 2}, warn_if_not_default=True, obj_id="X")
+        assert obj == {"aaaaaaaaaa": 1, "bb": 2}
+        assert "aaaaaaaaaa field not equals 2 in object {'aaaaaaaaaa': 1, 'b X" in caplog.text
+
+    def test_a_nul_character_is_removed_from_a_string_value(self):
+        from pyutilz.text.strings.jsonutils import _normalize_for_pg_json
+
+        assert _normalize_for_pg_json("a\x00b") == "ab"
+
+    def test_json_keys_are_not_sorted_by_default(self):
+        from pyutilz.text.strings.jsonutils import json_pg_dumps
+
+        assert json_pg_dumps({"b": 1, "a": 2})._raw == '{"b":1,"a":2}'
+
+    def test_a_missing_attribute_is_not_warned_about_by_default(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.jsonutils import get_jsonlist_property
+
+        with caplog.at_level(logging.WARNING):
+            assert get_jsonlist_property([{"a": 1}, {"b": 2}], "a") == [1]
+        assert "No a field" not in caplog.text
+
+    def test_a_missing_attribute_is_warned_about_when_asked(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.jsonutils import get_jsonlist_property
+
+        with caplog.at_level(logging.WARNING):
+            assert get_jsonlist_property([{"a": 1}, {"b": 2}], "a", verbose=True) == [1]
+        assert "No a field for element {'b': 2}" in caplog.text
+
+    def test_the_multi_property_helper_returns_indices_by_default(self):
+        from pyutilz.text.strings.jsonutils import get_jsonlist_properties
+
+        result = get_jsonlist_properties([{"id": 1, "n": "a"}], ["id"])
+        assert isinstance(result, tuple)
+
+    def test_the_multi_property_helper_warns_about_a_missing_property_when_verbose(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.jsonutils import get_jsonlist_properties
+
+        with caplog.at_level(logging.WARNING):
+            get_jsonlist_properties([{"id": 1}, {"n": "x"}], ["id"], verbose=True)
+        assert "No id field for element {'n': 'x'}" in caplog.text
