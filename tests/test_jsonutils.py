@@ -227,7 +227,8 @@ class TestFastSerializationPath:
         def _slow(*args, **kwargs):
             raise AssertionError("the slow path must not run for a NUL-free document")
 
-        monkeypatch.setattr(jsonutils.jsonlib, "dumps", _slow)
+        # The fast path serializes with jsonlib.dumps too, so the detector is the normalizer, which only the slow path calls.
+        monkeypatch.setattr(jsonutils, "_normalize_for_pg_json", _slow)
         assert jsonutils.json_pg_dumps({"a": "b"}).adapted == {"a": "b"}
 
 
