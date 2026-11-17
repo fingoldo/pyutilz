@@ -1224,3 +1224,46 @@ class TestOpenSurvivorsOfTheHumanizerRecheck:
         assert rec.seqs[1] == [1, 2, 3, 4, 5]
         assert out == "start ąvcdef end"
         assert (pos, delta) == (6, 0)
+
+
+class TestHumanizeSpanRemappingExactly:
+    """What humanize hands to introduce_typos: the cursor starts at zero, a repeated snippet claims its next occurrence,
+    a snippet found only through the global fallback keeps its position, and nothing is lost when the cursor search fails
+    but the fallback succeeds (humanizer.py 540-556)."""
+
+    def _capture(self, monkeypatch):
+        from pyutilz.text import humanizer as h
+
+        seen: list = []
+
+        def _fake(text, count=1, rng=None, protected_spans=()):
+            seen.append(list(protected_spans))
+            return text
+
+        monkeypatch.setattr(h, "introduce_typos", _fake)
+        return h, seen
+
+    def test_the_first_occurrence_is_claimed_from_the_start_of_the_text(self, monkeypatch):
+        h, seen = self._capture(monkeypatch)
+        h.humanize("aa", typo_count=1, protected_spans=[(0, 1)])
+        assert seen == [[(0, 1)]]
+
+    def test_a_repeated_snippet_claims_its_next_occurrence_after_the_first(self, monkeypatch):
+        h, seen = self._capture(monkeypatch)
+        h.humanize("aaa", typo_count=1, protected_spans=[(0, 1), (0, 1)])
+        assert seen == [[(0, 1), (1, 2)]]
+
+    def test_a_snippet_found_only_by_the_fallback_keeps_its_earlier_position(self, monkeypatch):
+        h, seen = self._capture(monkeypatch)
+        import logging
+
+        records: list = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        logging.getLogger("pyutilz.text.humanizer").addHandler(handler)
+        try:
+            h.humanize("ab", typo_count=1, protected_spans=[(0, 1), (0, 2)])
+        finally:
+            logging.getLogger("pyutilz.text.humanizer").removeHandler(handler)
+        assert seen == [[(0, 1), (0, 2)]]
+        assert not [r for r in records if r.levelno >= logging.WARNING]
