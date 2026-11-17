@@ -23,7 +23,7 @@ permissions:
 # workflow, script now lives in the shared py_ci_shared package instead of scripts/ here.
 jobs:
   black:
-    uses: fingoldo/py-ci-shared/.github/workflows/black-filtered.yml@71b7a72ae24d8579e5f2048e26845351b0430a0e  # after v1.23.11  # pragma: allowlist secret
+    uses: fingoldo/py-ci-shared/.github/workflows/black-filtered.yml@6cde3dc7ea7d8b36fb8273a5acb9dc96cf70caa5  # v1.23.12  # pragma: allowlist secret
     with:
-      py-ci-shared-ref: 71b7a72ae24d8579e5f2048e26845351b0430a0e  # after v1.23.11  # pragma: allowlist secret
+      py-ci-shared-ref: 6cde3dc7ea7d8b36fb8273a5acb9dc96cf70caa5  # v1.23.12  # pragma: allowlist secret
       check-path: "."
