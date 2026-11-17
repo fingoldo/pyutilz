@@ -291,8 +291,11 @@
   "src/pyutilz/text/humanizer.py::0598f7091173::regex widened: one-or-more became zero-or-more": "equivalent: the replacement drops the whitespace whether it is one character or a run, so one-or-more and zero-or-more give the same text",
   "src/pyutilz/text/humanizer.py::a517b0e1d09c::operator: += becomes =": "equivalent: opener_removals is assigned and accumulated but never read again, so overwriting it instead of adding has no effect",
   "src/pyutilz/text/humanizer.py::bbfcc4a4288c::regex widened: one-or-more became zero-or-more": "equivalent: the pattern is two spaces then zero-or-more spaces; a single space replaced by one space is the identity, so the text is the same",
-  "src/pyutilz/text/humanizer.py::5c69013fef8b::constant: 0 becomes 1": "equivalent: unreachable, as 391:25",
+  "src/pyutilz/text/humanizer.py::5c69013fef8b::constant: 0 becomes 1": "equivalent: unreachable, the transpose branch is never reached for a word shorter than three letters",
   "src/pyutilz/text/humanizer.py::3811a3ce7a69::operator: < becomes <=": "equivalent: unreachable, the picker only returns words of at least five letters, so the transpose branch never sees a word shorter than three",
   "src/pyutilz/text/humanizer.py::49edfc54aba6::constant: 3 becomes 4": "equivalent: unreachable, as 390:21",
-  "src/pyutilz/text/humanizer.py::6558fb1c8baa::operator: > becomes >=": "equivalent: an empty span has an empty snippet, which the next check skips anyway"
+  "src/pyutilz/text/humanizer.py::6558fb1c8baa::operator: > becomes >=": "equivalent: an empty span has an empty snippet, which the next check skips anyway",
+  "src/pyutilz/text/humanizer.py::e4e9e5cb0a5b::logic: continue becomes break": "equivalent: empty spans are filtered out before the loop, so no snippet is empty and this continue is never taken",
+  "src/pyutilz/text/humanizer.py::5ffa435e02ea::operator: > becomes >=": "equivalent: with a count of zero introduce_typos makes no edit and draws nothing from the generator",
+  "src/pyutilz/text/humanizer.py::ec6363531db5::operator: + becomes -": "equivalent: unreachable, a protected span that contains the edit point would overlap the edited word, which is then never a target"
 }
