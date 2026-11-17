@@ -123,3 +123,80 @@ class TestEncryptionModes:
         out: dict = {}
         read_config_file(ini_path, out, section="MAIN", encryption="base64")
         assert out == {"note": "not base64 at all!"}
+
+
+class TestConfigFilesSweepSurvivors:
+    """The survivors of the configfiles sweep: the deprecated "xor" mode name, the default MAIN section, the messages logged
+    for a bad section, a failed write and the undecodable or non-literal values, and the empty-list default of the variable
+    names (configfiles.py 14-181)."""
+
+    def test_the_deprecated_xor_mode_still_decodes_base64(self, tmp_path):
+        import base64
+
+        from pyutilz.text.strings.configfiles import read_config_file
+
+        path = tmp_path / "old.ini"
+        path.write_text("[S]\nk = " + base64.b64encode(b"hello").decode() + "\n", encoding="utf-8")
+        out: dict = {}
+        assert read_config_file(str(path), out, section="S", encryption="xor") is True
+        assert out == {"k": "hello"}
+
+    def test_the_default_section_of_a_write_is_main(self, tmp_path):
+        from pyutilz.text.strings.configfiles import write_config_file
+
+        path = tmp_path / "default.ini"
+        assert write_config_file(str(path), {"a": 1}, encryption=None) is True
+        assert "[MAIN]" in path.read_text(encoding="utf-8")
+
+    def test_a_non_string_section_is_refused_and_logged_with_its_type(self, tmp_path, caplog):
+        import logging
+
+        from pyutilz.text.strings.configfiles import read_config_file
+
+        path = tmp_path / "x.ini"
+        path.write_text("[S]\nk = 1\n", encoding="utf-8")
+        with caplog.at_level(logging.ERROR):
+            assert read_config_file(str(path), {}, section=5) is None
+        assert "section must be str or None, got int" in caplog.text
+
+    def test_a_failed_write_is_logged_with_the_error_text(self, tmp_path, caplog):
+        import logging
+
+        from pyutilz.text.strings.configfiles import write_config_file
+
+        target = tmp_path / "missing_dir" / "x.ini"
+        with caplog.at_level(logging.ERROR):
+            assert write_config_file(str(target), {"a": 1}) is None
+        assert "No such file or directory" in caplog.text
+
+    def test_a_value_that_is_not_base64_is_kept_with_a_debug_note(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.configfiles import _maybe_b64_decode
+
+        with caplog.at_level(logging.DEBUG):
+            assert _maybe_b64_decode("abc", "key", "base64") == "abc"
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any(m.startswith("Value for key is not base64-encoded, using raw string: ") for m in messages)
+
+    def test_a_value_that_is_not_a_literal_is_kept_with_a_debug_note(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.configfiles import _literal_or_raw
+
+        with caplog.at_level(logging.DEBUG):
+            assert _literal_or_raw("not a literal", "key") == "not a literal"
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any(m.startswith("Value for key is not a Python literal, keeping as string: ") for m in messages)
+
+    def test_no_variable_list_means_every_key_of_the_object(self):
+        from pyutilz.text.strings.configfiles import _normalize_variables
+
+        assert _normalize_variables([], {"a": 1, "b": 2}) == ["a", "b"]
+        assert _normalize_variables(None, {"a": 1}) == ["a"]
+
+    def test_a_non_list_of_variables_is_refused_with_its_type(self):
+        from pyutilz.text.strings.configfiles import _normalize_variables
+
+        with pytest.raises(AssertionError, match="expected list of variables, got int"):
+            _normalize_variables(5, {})
