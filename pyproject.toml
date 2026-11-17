@@ -441,7 +441,7 @@ pythonpath = ["src"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --strict-markers -ra --timeout=120"
+addopts = "-v --tb=short --strict-markers -ra --timeout=120 --durations=200 -p no:cacheprovider"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "xdist_group: keeps the marked tests on one xdist worker, so the code-audit scan memo they share is hit",
