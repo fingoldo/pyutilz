@@ -1196,3 +1196,31 @@ class TestProtectedWindowsFollowTheEdits:
         out = introduce_typos(self._TEXT, count=2, rng=rec, protected_spans=((4, 6),))
         assert rec.seqs[1] == [10, 18, 24, 31, 39]
         assert out == "alpha brvo charlie  delta echoes foxtrot end"
+
+
+class TestOpenSurvivorsOfTheHumanizerRecheck:
+    """Survivors still open after the last re-check: a span that starts at a space after the edited word must move with the
+    text on its start alone; the underscore phrase needs its spacing; and an adjacent-key draw only sees letters that have
+    neighbours (humanizer.py 80, 379, 483)."""
+
+    def test_a_span_starting_after_a_space_moves_its_start_with_the_edit(self):
+        from pyutilz.text.humanizer import introduce_typos
+
+        rec = _Recorder("skip_letter", (6, "bravo"), 2, "extra_space", 18)
+        out = introduce_typos("alpha bravo charlie delta echoes foxtrot end", count=2, rng=rec, protected_spans=((11, 19),))
+        assert rec.seqs[1] == [5, 18, 24, 31, 39]
+        assert out == "alpha brvo charlie  delta echoes foxtrot end"
+
+    def test_the_underscore_phrase_needs_its_spacing_after_the_verb(self):
+        from pyutilz.text.humanizer import strip_ai_patterns
+
+        assert strip_ai_patterns("This underscoresits importance here.") == "This underscoresits importance here."
+
+    def test_an_adjacent_key_draw_only_considers_letters_with_neighbours(self):
+        from pyutilz.text.humanizer import _apply_char_typo
+
+        rec = _Recorder((6, "ąbcdef"), 1, "v")
+        out, pos, delta = _apply_char_typo("start ąbcdef end", "adjacent_key", (), rec)
+        assert rec.seqs[1] == [1, 2, 3, 4, 5]
+        assert out == "start ąvcdef end"
+        assert (pos, delta) == (6, 0)
