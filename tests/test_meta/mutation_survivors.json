@@ -298,5 +298,12 @@
   "src/pyutilz/text/humanizer.py::e4e9e5cb0a5b::logic: continue becomes break": "equivalent: empty spans are filtered out before the loop, so no snippet is empty and this continue is never taken",
   "src/pyutilz/text/humanizer.py::5ffa435e02ea::operator: > becomes >=": "equivalent: with a count of zero introduce_typos makes no edit and draws nothing from the generator",
   "src/pyutilz/text/humanizer.py::ec6363531db5::operator: + becomes -": "equivalent: unreachable, a protected span that contains the edit point would overlap the edited word, which is then never a target",
-  "src/pyutilz/text/humanizer.py::d86b77e576bc::operator: >= becomes >": "equivalent: unreachable, a protected span that starts at the edit point would overlap the edited word or the separator the typo uses, so no edit can have that point as its start"
+  "src/pyutilz/text/humanizer.py::d86b77e576bc::operator: >= becomes >": "equivalent: unreachable, a protected span that starts at the edit point would overlap the edited word or the separator the typo uses, so no edit can have that point as its start",
+  "src/pyutilz/text/strings/basics.py::8dd5d5f677eb::arguments transposed: 0 <-> len(s) + p1": "equivalent: max() is commutative, so swapping 0 and len(s) + p1 returns the same start",
+  "src/pyutilz/text/strings/basics.py::f5e61268183c::constant: 0 becomes 1": "equivalent: p1 is reassigned by the search before it is read, so its initial value does not matter",
+  "src/pyutilz/text/strings/basics.py::f83cdb076ecb::operator: < becomes <=": "equivalent: p2 is an index found after the start token, so it is never zero and the comparison with zero behaves the same",
+  "src/pyutilz/text/strings/basics.py::d49b8751fca3::constant: 0 becomes 1": "equivalent: same as 70:14, the end index is never zero",
+  "src/pyutilz/text/strings/basics.py::684ef270364d::logic: break becomes continue": "equivalent: after a missing end token the restart searches from -1, and a start token longer than one character cannot begin at the last character, so nothing new is found",
+  "src/pyutilz/text/strings/basics.py::279e8199a8fa::operator: > becomes >=": "equivalent: the length of new is never negative, and when it is zero the else branch takes the same path",
+  "src/pyutilz/text/strings/basics.py::ec4d4b7a5c56::operator: += becomes =": "equivalent: new is empty here, so assigning and appending give the same result"
 }
