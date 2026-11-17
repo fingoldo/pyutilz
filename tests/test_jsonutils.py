@@ -456,3 +456,35 @@ class TestPreSerializedAdapterSurvivors:
     def test_a_non_ascii_byte_shows_as_the_replacement_character_in_str(self):
         obj = jsonutils.json_pg_dumps({"a": "\u00e9"})
         assert str(obj) == '\'{"a":"\ufffd"}\''
+
+
+class TestDepthLimitIdentity:
+    """A container within the depth limit is rebuilt, one past it is returned as the same object, and a missing starting
+    level counts as zero (jsonutils.py 95, 124)."""
+
+    def test_a_level_within_the_limit_is_rebuilt_and_the_next_one_is_kept_as_is(self):
+        data = {"a": {"b": {"c": 1}}}
+        result = jsonutils.jsonize_atrtributes(data, max_recursion_level=1)
+        assert result["a"] is not data["a"]
+        assert result["a"]["b"] is data["a"]["b"]
+
+    def test_a_missing_starting_level_is_rebuilt_at_a_zero_limit(self):
+        data = {"x": 1}
+        result = jsonutils.jsonize_atrtributes(data, recursion_level=None, max_recursion_level=0)
+        assert result == {"x": 1}
+        assert result is not data
+
+
+class TestObjectAttributeDepth:
+    """An object's attribute that is a mapping is one level below the object, so it is rebuilt at the limit of one
+    (jsonutils.py 95)."""
+
+    def test_a_mapping_held_by_an_attribute_is_rebuilt_one_level_below_the_object(self):
+        class _Holder:
+            pass
+
+        holder = _Holder()
+        holder.inner = {"k": {"j": 1}}
+        result = jsonutils.jsonize_atrtributes(holder, max_recursion_level=1)
+        assert result["inner"] is not holder.inner
+        assert result["inner"]["k"] is holder.inner["k"]
