@@ -383,3 +383,55 @@ class TestJsonutilsSweepSurvivors:
         with caplog.at_level(logging.WARNING):
             get_jsonlist_properties([{"id": 1}, {"n": "x"}], ["id"], verbose=True)
         assert "No id field for element {'n': 'x'}" in caplog.text
+
+
+class TestJsonutilsRecheckSurvivors:
+    """What the jsonutils re-check still found: the recursion level passed down and its default when None, the debug text
+    of an attribute that raises (the object is the holder, not the error), the default of warn_if_not_default, and
+    non-string keys serialized with a NUL in another value (jsonutils.py 95, 105, 124, 248, 378)."""
+
+    def test_each_level_of_nesting_is_one_deeper_than_the_last(self):
+        from pyutilz.text.strings import jsonutils
+
+        data = {"a": {"b": {"c": 1}}}
+        result = jsonutils.jsonize_atrtributes(data, max_recursion_level=1)
+        assert result["a"] == {"b": data["a"]["b"]}
+        assert result["a"]["b"] is data["a"]["b"]
+
+    def test_a_missing_starting_level_counts_as_zero(self):
+        from pyutilz.text.strings import jsonutils
+
+        class _In:
+            x = 1
+
+        assert jsonutils.jsonize_atrtributes(_In(), recursion_level=None, max_recursion_level=0) == {"x": 1}
+
+    def test_a_failing_attribute_is_named_with_its_holder_not_the_error(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        class _Holder:
+            @property
+            def bad(self):
+                raise ValueError("boom")
+
+        with caplog.at_level(logging.DEBUG):
+            jsonutils.jsonize_atrtributes(_Holder())
+        assert "'bad' of <" in caplog.text
+
+    def test_a_non_default_value_is_not_warned_about_unless_asked(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        obj = {"a": 1}
+        with caplog.at_level(logging.WARNING):
+            jsonutils.remove_json_defaults(obj, {"a": 2})
+        assert obj == {"a": 1}
+        assert caplog.text == ""
+
+    def test_non_string_keys_are_serialized_and_a_nul_in_a_value_is_removed(self):
+        from pyutilz.text.strings.jsonutils import json_pg_dumps
+
+        assert json_pg_dumps({1: "x", "a": "\x00"})._raw == '{"1":"x","a":""}'
