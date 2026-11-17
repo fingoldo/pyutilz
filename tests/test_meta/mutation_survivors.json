@@ -305,5 +305,6 @@
   "src/pyutilz/text/strings/basics.py::d49b8751fca3::constant: 0 becomes 1": "equivalent: same as 70:14, the end index is never zero",
   "src/pyutilz/text/strings/basics.py::684ef270364d::logic: break becomes continue": "equivalent: after a missing end token the restart searches from -1, and a start token longer than one character cannot begin at the last character, so nothing new is found",
   "src/pyutilz/text/strings/basics.py::279e8199a8fa::operator: > becomes >=": "equivalent: the length of new is never negative, and when it is zero the else branch takes the same path",
-  "src/pyutilz/text/strings/basics.py::ec4d4b7a5c56::operator: += becomes =": "equivalent: new is empty here, so assigning and appending give the same result"
+  "src/pyutilz/text/strings/basics.py::ec4d4b7a5c56::operator: += becomes =": "equivalent: new is empty here, so assigning and appending give the same result",
+  "src/pyutilz/text/strings/jsonutils.py::4f47be27b449::constant: emptied a string": "equivalent: replacing the empty string with the empty string returns the text unchanged, so the NUL check has no observable effect on this line"
 }
