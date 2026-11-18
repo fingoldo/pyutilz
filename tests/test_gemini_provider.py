@@ -823,3 +823,66 @@ class TestBatchExceptionClassificationSurvivors:
         p = _make_provider()
         assert p._classify_batch_exception(ValueError("boom")) is None
         assert p._classify_batch_exception(RuntimeError("boom")) is None
+
+
+class TestGenerateConfigSurvivors:
+    """_build_generate_config sends only the options the caller set: sampling, output cap, system text, JSON constraints,
+    candidate count, cached content and thinking, and leaves each out when it is absent (gemini_provider.py 353-382)."""
+
+    def _build(self, monkeypatch, **overrides):
+        from pyutilz.llm import gemini_provider as gp
+
+        monkeypatch.setattr(gp.types, "GenerateContentConfig", lambda **kw: dict(kw))
+        monkeypatch.setattr(gp.types, "ThinkingConfig", lambda **kw: {"tc": kw})
+        monkeypatch.setattr(gp, "gemini_thinking_config", lambda thinking, model: None)
+        p = _make_provider()
+        p._candidate_count = overrides.pop("candidate_count", 1)
+        p._cached_content = overrides.pop("cached_content", None)
+        args = dict(max_tokens=0, temperature=0.7, system=None, json_mode=False, json_schema=None, thinking=None)
+        args.update(overrides)
+        return p._build_generate_config(**args)
+
+    def test_a_default_call_sends_only_temperature_and_empty_system_and_mime(self, monkeypatch):
+        cfg = self._build(monkeypatch)
+        assert cfg == {"temperature": 0.7, "system_instruction": None, "response_mime_type": None}
+
+    def test_an_absent_temperature_is_left_to_the_model(self, monkeypatch):
+        assert "temperature" not in self._build(monkeypatch, temperature=None)
+
+    def test_a_positive_output_cap_is_sent_and_a_zero_or_absent_one_is_not(self, monkeypatch):
+        assert self._build(monkeypatch, max_tokens=128)["max_output_tokens"] == 128
+        assert "max_output_tokens" not in self._build(monkeypatch, max_tokens=0)
+        assert "max_output_tokens" not in self._build(monkeypatch, max_tokens=None)
+
+    def test_a_system_text_is_sent_as_the_system_instruction(self, monkeypatch):
+        assert self._build(monkeypatch, system="be brief")["system_instruction"] == "be brief"
+        assert self._build(monkeypatch, system="")["system_instruction"] is None
+
+    def test_json_mode_or_a_schema_asks_for_json_output(self, monkeypatch):
+        assert self._build(monkeypatch, json_mode=True)["response_mime_type"] == "application/json"
+        assert self._build(monkeypatch, json_schema={"type": "object"})["response_mime_type"] == "application/json"
+
+    def test_a_named_schema_sends_its_inner_schema(self, monkeypatch):
+        inner = {"type": "object", "properties": {"a": {"type": "string"}}}
+        cfg = self._build(monkeypatch, json_schema={"name": "Out", "schema": inner})
+        assert cfg["response_json_schema"] == inner
+
+    def test_more_than_one_candidate_is_sent_and_one_is_left_to_the_default(self, monkeypatch):
+        assert self._build(monkeypatch, candidate_count=3)["candidate_count"] == 3
+        assert "candidate_count" not in self._build(monkeypatch, candidate_count=1)
+
+    def test_cached_content_is_referenced_only_when_set(self, monkeypatch):
+        assert self._build(monkeypatch, cached_content="cache/1")["cached_content"] == "cache/1"
+        assert "cached_content" not in self._build(monkeypatch)
+
+    def test_thinking_settings_become_a_thinking_config_only_when_given(self, monkeypatch):
+        from pyutilz.llm import gemini_provider as gp
+
+        monkeypatch.setattr(gp.types, "GenerateContentConfig", lambda **kw: dict(kw))
+        monkeypatch.setattr(gp.types, "ThinkingConfig", lambda **kw: {"tc": kw})
+        monkeypatch.setattr(gp, "gemini_thinking_config", lambda thinking, model: {"thinking_budget": 512})
+        p = _make_provider()
+        p._candidate_count = 1
+        p._cached_content = None
+        cfg = p._build_generate_config(max_tokens=0, temperature=0.7, system=None, json_mode=False, json_schema=None, thinking=True)
+        assert cfg["thinking_config"] == {"tc": {"thinking_budget": 512}}
