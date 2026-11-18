@@ -178,7 +178,9 @@ class TestCollectFrames:
         assert sorted(fnames) == sorted(str(two_csvs / n) for n in ("a.csv", "b.csv"))
 
     def test_an_excluded_name_is_skipped_entirely(self, two_csvs):
-        lst, fnames = self._collect(two_csvs, exclude="b")
+        # The exclude pattern is matched against the whole path, and a runner's temp directory has random letters in it: "b" alone can
+        # match the folder and drop both files, so the pattern names the file.
+        lst, fnames = self._collect(two_csvs, exclude="b.csv")
         assert [os.path.basename(f) for f in fnames] == ["a.csv"]
         assert len(lst) == 1
 
