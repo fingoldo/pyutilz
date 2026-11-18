@@ -718,3 +718,65 @@ class TestSessionCostArithmeticSurvivors:
         assert summary["total_cost_usd"] == pytest.approx(0.6 * 2.0 + 0.4 * 0.5 + 0.5 * 8.0 + 0.25)
         assert summary["calls"] == 7
         assert summary["long_context_calls"] == 2
+
+
+class TestUsageRecordingSurvivors:
+    """_record_gemini_usage folds one response's usage into the last-call record and the running totals, counts the call,
+    passes input, cached and output-plus-reasoning on to the surcharge, and does nothing without usage metadata
+    (gemini_provider.py 384-404)."""
+
+    def test_one_response_is_recorded_as_the_last_call_and_added_to_the_totals(self):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        recorded: list = []
+        p._add_long_context_surcharge = lambda *args: recorded.append(args)
+        usage = SimpleNamespace(prompt_token_count=100, candidates_token_count=50, thoughts_token_count=10, cached_content_token_count=40)
+        p._record_gemini_usage(SimpleNamespace(usage_metadata=usage))
+        assert p._last_usage == {"input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 10, "cached_content_token_count": 40}
+        assert p.last_cached_content_tokens == 40
+        assert p.total_cached_content_tokens == 40
+        assert p._call_count == 1
+        assert p.total_prompt_tokens == 100
+        assert p.total_completion_tokens == 50
+        assert p.total_reasoning_tokens == 10
+        assert recorded == [(100, 40, 60)]
+
+    def test_totals_accumulate_across_responses(self):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        p._add_long_context_surcharge = lambda *args: None
+        p._record_gemini_usage(
+            SimpleNamespace(
+                usage_metadata=SimpleNamespace(prompt_token_count=100, candidates_token_count=50, thoughts_token_count=10, cached_content_token_count=40)
+            )
+        )
+        p._record_gemini_usage(
+            SimpleNamespace(
+                usage_metadata=SimpleNamespace(prompt_token_count=30, candidates_token_count=5, thoughts_token_count=0, cached_content_token_count=5)
+            )
+        )
+        assert p.last_cached_content_tokens == 5
+        assert p.total_cached_content_tokens == 45
+        assert p._call_count == 2
+        assert p.total_prompt_tokens == 130
+        assert p.total_completion_tokens == 55
+
+    def test_a_response_without_usage_metadata_changes_nothing(self):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        before = (p._call_count, p.total_prompt_tokens, p._last_usage if hasattr(p, "_last_usage") else None)
+        p._record_gemini_usage(SimpleNamespace(usage_metadata=None))
+        p._record_gemini_usage(SimpleNamespace())
+        assert (p._call_count, p.total_prompt_tokens, p._last_usage if hasattr(p, "_last_usage") else None) == before
+
+    def test_missing_counts_are_recorded_as_zero(self):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        p._add_long_context_surcharge = lambda *args: None
+        p._record_gemini_usage(SimpleNamespace(usage_metadata=SimpleNamespace()))
+        assert p._last_usage == {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0, "cached_content_token_count": 0}
+        assert p._call_count == 1
