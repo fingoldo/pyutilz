@@ -10,6 +10,14 @@ test. Refresh with ``--refresh-code-audit-baseline`` after a deliberate
 change, or add a narrow, commented exclusion in the ``exclude_dirs``
 passed below for a confirmed false positive.
 
+2026-11-18: five ``credential_shaped_log_arg`` entries are baselined after review, all LLM token COUNTS or a delimiter, not secrets:
+``max_tokens`` and ``reasoning_tokens`` (``llm/anthropic_provider.py``), ``input_tokens``/``max_tokens`` (``llm/base.py``),
+``total_prompt_tokens``/``total_completion_tokens`` (``llm/openai_compat.py``) and ``end_token``, the text delimiter, in
+``text/strings/basics.py``. The rule matches the segment ``token``/``tokens`` in a name, which cannot tell a count from a credential;
+py-ci-shared is changed to skip count-shaped names, and these entries go stale and are dropped on the pin bump that picks it up.
+The sixth finding of that run, ``bare_except`` on ``llm/openai_compat.py``, was real and is fixed: the handler now names
+``(Exception, asyncio.CancelledError, GeneratorExit)`` instead of ``BaseException``, and still lets KeyboardInterrupt through.
+
 2026-09-03, five-direction audit wave (packaging / docs / core-dev-system / data-stats /
 db-web-cloud-llm-text). The baseline is keyed ``check::file:line``, so the bulk of the delta is
 line shift from the batch. Diffed per ``(check, file)`` pair instead of per key: 41 pairs where

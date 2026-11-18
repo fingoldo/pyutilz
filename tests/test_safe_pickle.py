@@ -265,17 +265,28 @@ class TestPayloadLocks:
         t1 = _threading.Thread(target=holder)
         t1.start()
         holding.wait(5)
+        key = _os.path.normcase(_os.path.abspath(p))
+        trying = _threading.Event()
+
+        class _SignalOnEnter:
+            """The entry's real lock, which sets ``trying`` the moment a second caller tries to enter it: its refcount is already 2 by then."""
+
+            def __init__(self, real):
+                self._real = real
+
+            def __enter__(self):
+                trying.set()
+                return self._real.__enter__()
+
+            def __exit__(self, *exc):
+                return self._real.__exit__(*exc)
+
+        entry = sp._path_locks[key]
+        entry.lock = _SignalOnEnter(entry.lock)
         t2 = _threading.Thread(target=waiter)
         t2.start()
-        waiting.wait(5)
-        import time as _time
-
-        for _ in range(200):
-            entry = sp._path_locks.get(_os.path.normcase(_os.path.abspath(p)))
-            if entry is not None and entry.refcount == 2:
-                break
-            _time.sleep(0.01)
-        observed = sp._path_locks[_os.path.normcase(_os.path.abspath(p))].refcount
+        assert trying.wait(5)
+        observed = sp._path_locks[key].refcount
         release.set()
         t1.join(5)
         t2.join(5)

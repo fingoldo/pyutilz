@@ -494,7 +494,9 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
                     self._track_streaming_usage(latest_usage)
                 self._raise_for_stream_finish("".join(box["streamed_text"]))
                 return
-            except BaseException as exc:
+            # Exception, plus the two non-Exception ways an attempt ends early: a cancellation (the caller's timeout or watchdog) and the
+            # generator being closed by a consumer that stops reading. KeyboardInterrupt and SystemExit are deliberately not caught.
+            except (Exception, asyncio.CancelledError, GeneratorExit) as exc:
                 # Only the stream-open / pre-first-token phase is safely
                 # retryable. After we've yielded content, re-raise so the
                 # caller doesn't receive duplicated tokens. A cancellation (the caller's own timeout or stall
