@@ -807,3 +807,19 @@ class TestEstimateCostThresholdSurvivors:
         base = 200_001 / 1_000_000 * in_rate
         assert p.estimate_cost(200_001, 0) == pytest.approx(sum(price_call(p._current_pricing(), 200_001, 0)))
         assert p.estimate_cost(200_001, 0) != pytest.approx(base)
+
+
+class TestBatchExceptionClassificationSurvivors:
+    """A safety-block exception is tagged for batch callers; any other exception, including a base-class exception that is
+    not a safety block, is not tagged (gemini_provider.py 597-604)."""
+
+    def test_a_safety_block_is_tagged_as_a_safety_block(self):
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+
+        p = _make_provider()
+        assert p._classify_batch_exception(LLMSafetyBlockError("blocked")) == {"error_type": "safety_block"}
+
+    def test_an_ordinary_exception_is_not_tagged(self):
+        p = _make_provider()
+        assert p._classify_batch_exception(ValueError("boom")) is None
+        assert p._classify_batch_exception(RuntimeError("boom")) is None
