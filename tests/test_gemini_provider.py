@@ -674,3 +674,47 @@ class TestRaiseIfBlockedSurvivors:
         p = _make_provider()
         response = SimpleNamespace(candidates=[SimpleNamespace()])
         p._raise_if_blocked(response, "STOP")
+
+
+class TestSessionCostArithmeticSurvivors:
+    """get_session_cost splits the prompt into cache hits and misses (hits capped at the prompt size), prices each part,
+    adds reasoning to the output, and reports the surcharge and its call count (gemini_provider.py 322-351)."""
+
+    def _priced(self, **tokens):
+        p = _make_provider()
+        p.model_name = "m"
+        p._get_pricing = lambda: (2.0, 8.0)
+        p._CACHE_HIT_COST = {"m": 0.5}
+        p.total_prompt_tokens = tokens.get("prompt", 1_000_000)
+        p.total_cached_content_tokens = tokens.get("cached", 400_000)
+        p.total_completion_tokens = tokens.get("completion", 500_000)
+        p.total_reasoning_tokens = tokens.get("reasoning", 0)
+        p._call_count = tokens.get("calls", 3)
+        p._long_context_surcharge_usd = tokens.get("surcharge", 0.0)
+        p._long_context_calls = tokens.get("long_calls", 0)
+        return p
+
+    def test_cache_hits_are_priced_at_the_cache_rate_and_the_rest_at_the_input_rate(self):
+        summary = self._priced().get_session_cost()
+        assert summary["cache_hit_tokens"] == 400_000
+        assert summary["cache_miss_tokens"] == 600_000
+        assert summary["input_cost_usd"] == pytest.approx(0.6 * 2.0 + 0.4 * 0.5)
+        assert summary["output_cost_usd"] == pytest.approx(0.5 * 8.0)
+        assert summary["total_cost_usd"] == pytest.approx(0.6 * 2.0 + 0.4 * 0.5 + 0.5 * 8.0)
+
+    def test_cached_tokens_never_exceed_the_prompt(self):
+        summary = self._priced(cached=2_000_000).get_session_cost()
+        assert summary["cache_hit_tokens"] == 1_000_000
+        assert summary["cache_miss_tokens"] == 0
+        assert summary["input_cost_usd"] == pytest.approx(1.0 * 0.5)
+
+    def test_reasoning_tokens_are_billed_as_output(self):
+        summary = self._priced(reasoning=250_000).get_session_cost()
+        assert summary["output_cost_usd"] == pytest.approx((500_000 + 250_000) / 1_000_000 * 8.0)
+
+    def test_the_long_context_surcharge_is_added_to_the_total_and_both_counts_are_reported(self):
+        summary = self._priced(surcharge=0.25, calls=7, long_calls=2).get_session_cost()
+        assert summary["long_context_surcharge_usd"] == pytest.approx(0.25)
+        assert summary["total_cost_usd"] == pytest.approx(0.6 * 2.0 + 0.4 * 0.5 + 0.5 * 8.0 + 0.25)
+        assert summary["calls"] == 7
+        assert summary["long_context_calls"] == 2
