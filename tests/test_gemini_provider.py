@@ -655,7 +655,7 @@ class TestRaiseIfBlockedSurvivors:
         p._last_finish_reason = marker
         p.last_safety_ratings = ["r2"]
         response = SimpleNamespace(candidates=[SimpleNamespace()])
-        with pytest.raises(LLMSafetyBlockError, match=f"finish_reason={marker}") as exc:
+        with pytest.raises(LLMSafetyBlockError, match=rf"Gemini blocked response by safety filter \(finish_reason={marker}\)") as exc:
             p._raise_if_blocked(response, marker)
         assert exc.value.details == {"finish_reason": marker, "safety_ratings": ["r2"]}
 
