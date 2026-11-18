@@ -886,3 +886,37 @@ class TestGenerateConfigSurvivors:
         p._cached_content = None
         cfg = p._build_generate_config(max_tokens=0, temperature=0.7, system=None, json_mode=False, json_schema=None, thinking=True)
         assert cfg["thinking_config"] == {"tc": {"thinking_budget": 512}}
+
+
+class TestSessionCostDefaultsAndKeysSurvivors:
+    """get_session_cost with exact tolerance on the per-million prices, the keys of its token counts, and the defaults used
+    when the surcharge or the long-context call count was never recorded (gemini_provider.py 329-349)."""
+
+    def _priced(self):
+        p = _make_provider()
+        p.model_name = "m"
+        p._get_pricing = lambda: (2.0, 8.0)
+        p._CACHE_HIT_COST = {"m": 0.5}
+        p.total_prompt_tokens = 1_000_000
+        p.total_cached_content_tokens = 400_000
+        p.total_completion_tokens = 500_000
+        p.total_reasoning_tokens = 250_000
+        p._call_count = 3
+        return p
+
+    def test_the_per_million_arithmetic_is_exact(self):
+        summary = self._priced().get_session_cost()
+        assert summary["input_cost_usd"] == pytest.approx(0.6 * 2.0 + 0.4 * 0.5, rel=1e-9)
+        assert summary["output_cost_usd"] == pytest.approx(0.75 * 8.0, rel=1e-9)
+
+    def test_the_token_counts_are_reported_under_their_names(self):
+        summary = self._priced().get_session_cost()
+        assert summary["prompt_tokens"] == 1_000_000
+        assert summary["completion_tokens"] == 500_000
+        assert summary["reasoning_tokens"] == 250_000
+
+    def test_a_missing_surcharge_and_call_count_default_to_zero(self):
+        p = self._priced()
+        summary = p.get_session_cost()
+        assert summary["long_context_surcharge_usd"] == 0.0
+        assert summary["long_context_calls"] == 0
