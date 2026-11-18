@@ -616,3 +616,61 @@ def test_without_google_genai_the_module_marks_it_unavailable_and_still_imports(
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120, env=env)
     assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
     assert "OK" in result.stdout
+
+
+class TestRaiseIfBlockedSurvivors:
+    """The safety check on a response: a prompt blocked before any candidate raises with its reason and details, a
+    response without a block reason passes, and each blocking finish reason (or one containing it) raises with the finish
+    reason in its details, while an ordinary finish passes (gemini_provider.py 406-432)."""
+
+    def test_a_prompt_blocked_before_any_candidate_raises_with_its_reason_and_details(self):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        p.last_safety_ratings = ["r1"]
+        p._last_finish_reason = "PROMPT"
+        feedback = SimpleNamespace(block_reason="SAFETY", block_reason_message="unsafe prompt")
+        response = SimpleNamespace(candidates=[], prompt_feedback=feedback)
+        with pytest.raises(LLMSafetyBlockError, match=r"Gemini blocked the prompt \(block_reason=SAFETY\)") as exc:
+            p._raise_if_blocked(response, "")
+        assert exc.value.details == {
+            "finish_reason": "PROMPT",
+            "block_reason": "SAFETY",
+            "block_reason_message": "unsafe prompt",
+            "safety_ratings": ["r1"],
+        }
+
+    def test_a_response_with_no_candidates_and_no_block_reason_passes(self):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        response = SimpleNamespace(candidates=[], prompt_feedback=SimpleNamespace(block_reason=None))
+        p._raise_if_blocked(response, "")
+
+    @pytest.mark.parametrize("marker", ["SAFETY", "BLOCK", "PROHIBITED_CONTENT", "RECITATION", "SPII"])
+    def test_each_blocking_finish_reason_raises_with_the_finish_reason_in_its_details(self, marker):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        p._last_finish_reason = marker
+        p.last_safety_ratings = ["r2"]
+        response = SimpleNamespace(candidates=[SimpleNamespace()])
+        with pytest.raises(LLMSafetyBlockError, match=f"finish_reason={marker}") as exc:
+            p._raise_if_blocked(response, marker)
+        assert exc.value.details == {"finish_reason": marker, "safety_ratings": ["r2"]}
+
+    def test_a_finish_reason_that_only_contains_a_blocking_word_still_raises(self):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        p._last_finish_reason = "BLOCKED_BY_SAFETY_FILTER"
+        response = SimpleNamespace(candidates=[SimpleNamespace()])
+        with pytest.raises(LLMSafetyBlockError):
+            p._raise_if_blocked(response, "BLOCKED_BY_SAFETY_FILTER")
+
+    def test_an_ordinary_finish_reason_passes(self):
+        from types import SimpleNamespace
+
+        p = _make_provider()
+        response = SimpleNamespace(candidates=[SimpleNamespace()])
+        p._raise_if_blocked(response, "STOP")
