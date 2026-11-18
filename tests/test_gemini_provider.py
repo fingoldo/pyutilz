@@ -780,3 +780,30 @@ class TestUsageRecordingSurvivors:
         p._record_gemini_usage(SimpleNamespace(usage_metadata=SimpleNamespace()))
         assert p._last_usage == {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0, "cached_content_token_count": 0}
         assert p._call_count == 1
+
+
+class TestEstimateCostThresholdSurvivors:
+    """estimate_cost prices at the base rate up to and including the long-context threshold, switches to the tier above it,
+    and a model without a tier always uses the base rate (gemini_provider.py 286-291)."""
+
+    def test_a_model_without_a_long_context_tier_is_priced_at_the_base_rate(self):
+        p = _make_provider()
+        p.model_name = "gemini-2.5-flash"
+        in_rate, out_rate = p._get_pricing()
+        assert p.estimate_cost(1_000_000, 1_000_000) == pytest.approx(in_rate + out_rate)
+
+    def test_the_threshold_itself_is_still_priced_at_the_base_rate(self):
+        p = _make_provider()
+        p.model_name = "gemini-2.5-pro"
+        in_rate, _out_rate = p._get_pricing()
+        assert p.estimate_cost(200_000, 0) == pytest.approx(200_000 / 1_000_000 * in_rate)
+
+    def test_one_token_above_the_threshold_is_priced_at_the_tier(self):
+        from pyutilz.llm.gemini_provider import price_call
+
+        p = _make_provider()
+        p.model_name = "gemini-2.5-pro"
+        in_rate, _out_rate = p._get_pricing()
+        base = 200_001 / 1_000_000 * in_rate
+        assert p.estimate_cost(200_001, 0) == pytest.approx(sum(price_call(p._current_pricing(), 200_001, 0)))
+        assert p.estimate_cost(200_001, 0) != pytest.approx(base)
