@@ -126,3 +126,45 @@ class TestExecute:
         result = execute("query($id: ID!){ node(id: $id) }", variables={"id": "1"})
         assert result == {"data": "ok"}
         mock_client.graphql.assert_called_once_with("query($id: ID!){ node(id: $id) }", variables={"id": "1"})
+
+
+class TestGraphqlSweepSurvivors:
+    """The survivors of the graphql sweep: a failing client is logged with its exception, the schema query sends the
+    introspection text, and a reformatted multi-line query keeps its line breaks (graphql.py 28-40, 155-169)."""
+
+    def test_a_failing_client_is_logged_with_its_exception_and_gives_an_empty_result(self, caplog):
+        import logging
+
+        class _Broken:
+            def graphql(self, query, variables=None):
+                raise ValueError("endpoint refused")
+
+        connect(_Broken())
+        try:
+            with caplog.at_level(logging.ERROR):
+                assert execute("{ a }") == {}
+        finally:
+            connect(None)
+        assert "endpoint refused" in caplog.text
+
+    def test_the_schema_query_sends_the_introspection_text(self):
+        from pyutilz.web.graphql import query_schema
+
+        sent: list = []
+
+        class _Recording:
+            def graphql(self, query, variables=None):
+                sent.append(query)
+                return None
+
+        connect(_Recording())
+        try:
+            assert query_schema() == {}
+        finally:
+            connect(None)
+        assert len(sent) == 1
+        assert "query IntrospectionQuery" in sent[0]
+        assert "__schema" in sent[0]
+
+    def test_a_multi_line_query_keeps_its_line_breaks_when_reformatted(self):
+        assert beautify_gql_query("query {\n  a\n}") == "query {\na\n}"

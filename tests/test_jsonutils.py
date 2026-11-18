@@ -227,7 +227,8 @@ class TestFastSerializationPath:
         def _slow(*args, **kwargs):
             raise AssertionError("the slow path must not run for a NUL-free document")
 
-        monkeypatch.setattr(jsonutils.jsonlib, "dumps", _slow)
+        # The fast path serializes with jsonlib.dumps too, so the detector is the normalizer, which only the slow path calls.
+        monkeypatch.setattr(jsonutils, "_normalize_for_pg_json", _slow)
         assert jsonutils.json_pg_dumps({"a": "b"}).adapted == {"a": "b"}
 
 
@@ -260,3 +261,230 @@ class TestSkippedFunctionDoesNotEndTheLoop:
             b_val = 3
 
         assert jsonutils.jsonize_atrtributes(_Holder(), skip_functions=True) == {"b_val": 3}
+
+
+class TestJsonutilsSweepSurvivors:
+    """The survivors of the jsonutils sweep: the strip and skip-functions arguments carried into nested mappings and
+    sequences, the default skip of builtins, the debug notes for an attribute that raises or has no length, the warning
+    of remove_json_defaults with its truncated object text, the NUL removal, the default sort order, and the verbose and
+    indices defaults of the list helpers (jsonutils.py 95-435)."""
+
+    def test_nested_strings_keep_their_spaces_when_strip_is_off(self):
+        from pyutilz.text.strings import jsonutils
+
+        assert jsonutils.jsonize_atrtributes({"a": " x "}, strip=False) == {"a": " x "}
+        assert jsonutils.jsonize_atrtributes([" x "], strip=False) == [" x "]
+
+    def test_strings_are_stripped_by_default_at_the_top_level_too(self):
+        from pyutilz.text.strings import jsonutils
+
+        assert jsonutils.jsonize_atrtributes(" x ") == "x"
+        assert jsonutils.jsonize_atrtributes(" x ", strip=False) == " x "
+
+    def test_builtin_functions_are_dropped_by_default(self):
+        from pyutilz.text.strings import jsonutils
+
+        class _Holder:
+            helper = len
+            kept = 1
+
+        result = jsonutils.jsonize_atrtributes(_Holder())
+        assert "helper" not in result
+        assert result["kept"] == 1
+
+    def test_an_attribute_that_raises_is_skipped_with_a_debug_note(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        class _Holder:
+            @property
+            def bad(self):
+                raise ValueError("boom")
+
+            ok = 1
+
+        with caplog.at_level(logging.DEBUG):
+            result = jsonutils.jsonize_atrtributes(_Holder())
+        assert result == {"ok": 1}
+        assert "Failed to jsonize attribute 'bad' of" in caplog.text
+        assert "boom" in caplog.text
+
+    def test_a_value_without_a_length_is_kept_with_a_debug_note(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        with caplog.at_level(logging.DEBUG):
+            jsonutils.remove_json_empty_attributes({"n": 5, "e": []}, ["n", "e"])
+        assert "Attribute n has no len(), skipping empty-check:" in caplog.text
+
+    def test_defaults_are_removed_silently_by_default(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        obj = {"a": 1, "b": 2}
+        with caplog.at_level(logging.WARNING):
+            jsonutils.remove_json_defaults(obj, {"a": 1})
+        assert obj == {"b": 2}
+        assert caplog.text == ""
+
+    def test_a_non_default_value_is_warned_about_with_its_truncated_object(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        obj = {"aaaaaaaaaa": 1, "bb": 2}
+        with caplog.at_level(logging.WARNING):
+            jsonutils.remove_json_defaults(obj, {"aaaaaaaaaa": 2}, warn_if_not_default=True, obj_id="X")
+        assert obj == {"aaaaaaaaaa": 1, "bb": 2}
+        assert "aaaaaaaaaa field not equals 2 in object {'aaaaaaaaaa': 1, 'b X" in caplog.text
+
+    def test_a_nul_character_is_removed_from_a_string_value(self):
+        from pyutilz.text.strings.jsonutils import _normalize_for_pg_json
+
+        assert _normalize_for_pg_json("a\x00b") == "ab"
+
+    def test_json_keys_are_not_sorted_by_default(self):
+        from pyutilz.text.strings.jsonutils import json_pg_dumps
+
+        assert json_pg_dumps({"b": 1, "a": 2})._raw == '{"b":1,"a":2}'
+
+    def test_a_missing_attribute_is_not_warned_about_by_default(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.jsonutils import get_jsonlist_property
+
+        with caplog.at_level(logging.WARNING):
+            assert get_jsonlist_property([{"a": 1}, {"b": 2}], "a") == [1]
+        assert "No a field" not in caplog.text
+
+    def test_a_missing_attribute_is_warned_about_when_asked(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.jsonutils import get_jsonlist_property
+
+        with caplog.at_level(logging.WARNING):
+            assert get_jsonlist_property([{"a": 1}, {"b": 2}], "a", verbose=True) == [1]
+        assert "No a field for element {'b': 2}" in caplog.text
+
+    def test_the_multi_property_helper_returns_indices_by_default(self):
+        from pyutilz.text.strings.jsonutils import get_jsonlist_properties
+
+        result = get_jsonlist_properties([{"id": 1, "n": "a"}], ["id"])
+        assert isinstance(result, tuple)
+
+    def test_the_multi_property_helper_warns_about_a_missing_property_when_verbose(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.jsonutils import get_jsonlist_properties
+
+        with caplog.at_level(logging.WARNING):
+            get_jsonlist_properties([{"id": 1}, {"n": "x"}], ["id"], verbose=True)
+        assert "No id field for element {'n': 'x'}" in caplog.text
+
+
+class TestJsonutilsRecheckSurvivors:
+    """What the jsonutils re-check still found: the recursion level passed down and its default when None, the debug text
+    of an attribute that raises (the object is the holder, not the error), the default of warn_if_not_default, and
+    non-string keys serialized with a NUL in another value (jsonutils.py 95, 105, 124, 248, 378)."""
+
+    def test_each_level_of_nesting_is_one_deeper_than_the_last(self):
+        from pyutilz.text.strings import jsonutils
+
+        data = {"a": {"b": {"c": 1}}}
+        result = jsonutils.jsonize_atrtributes(data, max_recursion_level=1)
+        assert result["a"] == {"b": data["a"]["b"]}
+        assert result["a"]["b"] is data["a"]["b"]
+
+    def test_a_missing_starting_level_counts_as_zero(self):
+        from pyutilz.text.strings import jsonutils
+
+        class _In:
+            x = 1
+
+        assert jsonutils.jsonize_atrtributes(_In(), recursion_level=None, max_recursion_level=0) == {"x": 1}
+
+    def test_a_failing_attribute_is_named_with_its_holder_not_the_error(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        class _Holder:
+            @property
+            def bad(self):
+                raise ValueError("boom")
+
+        with caplog.at_level(logging.DEBUG):
+            jsonutils.jsonize_atrtributes(_Holder())
+        assert "'bad' of <" in caplog.text
+
+    def test_a_non_default_value_is_not_warned_about_unless_asked(self, caplog):
+        import logging
+
+        from pyutilz.text.strings import jsonutils
+
+        obj = {"a": 1}
+        with caplog.at_level(logging.WARNING):
+            jsonutils.remove_json_defaults(obj, {"a": 2})
+        assert obj == {"a": 1}
+        assert caplog.text == ""
+
+    def test_non_string_keys_are_serialized_and_a_nul_in_a_value_is_removed(self):
+        from pyutilz.text.strings.jsonutils import json_pg_dumps
+
+        assert json_pg_dumps({1: "x", "a": "\x00"})._raw == '{"1":"x","a":""}'
+
+
+class TestPreSerializedAdapterSurvivors:
+    """The psycopg2 adapter: it is its own ISQLQuote adapter and offers nothing for other protocols, a quoted ASCII
+    literal comes out verbatim, and a non-ASCII byte in the text shows as the replacement character in str()
+    (jsonutils.py 329-348)."""
+
+    def test_the_adapter_answers_only_for_the_sql_quote_protocol(self):
+        from psycopg2.extensions import ISQLQuote
+
+        obj = jsonutils.json_pg_dumps({"a": "b"})
+        assert obj.__conform__(ISQLQuote) is obj
+        assert obj.__conform__(str) is None
+
+    def test_an_ascii_document_is_quoted_verbatim(self):
+        obj = jsonutils.json_pg_dumps({"a": "b"})
+        assert obj.getquoted() == b'\'{"a":"b"}\''
+
+    def test_a_non_ascii_byte_shows_as_the_replacement_character_in_str(self):
+        obj = jsonutils.json_pg_dumps({"a": "\u00e9"})
+        assert str(obj) == '\'{"a":"\ufffd"}\''
+
+
+class TestDepthLimitIdentity:
+    """A container within the depth limit is rebuilt, one past it is returned as the same object, and a missing starting
+    level counts as zero (jsonutils.py 95, 124)."""
+
+    def test_a_level_within_the_limit_is_rebuilt_and_the_next_one_is_kept_as_is(self):
+        data = {"a": {"b": {"c": 1}}}
+        result = jsonutils.jsonize_atrtributes(data, max_recursion_level=1)
+        assert result["a"] is not data["a"]
+        assert result["a"]["b"] is data["a"]["b"]
+
+    def test_a_missing_starting_level_is_rebuilt_at_a_zero_limit(self):
+        data = {"x": 1}
+        result = jsonutils.jsonize_atrtributes(data, recursion_level=None, max_recursion_level=0)
+        assert result == {"x": 1}
+        assert result is not data
+
+
+class TestObjectAttributeDepth:
+    """An object's attribute that is a mapping is one level below the object, so it is rebuilt at the limit of one
+    (jsonutils.py 95)."""
+
+    def test_a_mapping_held_by_an_attribute_is_rebuilt_one_level_below_the_object(self):
+        class _Holder:
+            pass
+
+        holder = _Holder()
+        holder.inner = {"k": {"j": 1}}
+        result = jsonutils.jsonize_atrtributes(holder, max_recursion_level=1)
+        assert result["inner"] is not holder.inner
+        assert result["inner"]["k"] is holder.inner["k"]

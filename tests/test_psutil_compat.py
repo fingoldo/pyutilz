@@ -195,3 +195,11 @@ def test_get_cpu_freq_asks_psutil_for_total_not_per_cpu_by_default():
 
     assert pc.get_cpu_freq(psutil_module=_fake_psutil(cpu_freq=cpu_freq)) == "sentinel"
     assert seen == {"percpu": False}
+
+
+def test_the_optional_function_list_is_pinned_as_a_whole():
+    """Pins the whole tuple: the other tests compare against this constant itself, so a dropped or reordered entry
+    would pass them. Keep this in step with psutil's own platform-gated functions."""
+    from pyutilz.system import psutil_compat as pc
+
+    assert pc.OPTIONAL_PSUTIL_FUNCTIONS == ("cpu_freq", "sensors_temperatures", "sensors_fans", "sensors_battery")

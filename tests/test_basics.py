@@ -183,3 +183,222 @@ class TestSimilarityBoundaries:
     def test_a_shorter_common_prefix_keeps_the_longer_string_as_root_when_fully_matched(self):
         # "ab" is a prefix of "abcd": 2 of 4 characters match and the root is the whole first string.
         assert contigous_strings_similarity("abcd", "ab") == (0.5, "abcd")
+
+
+class TestBasicsSweepSurvivors:
+    """The survivors of the basics sweep: the search window and its defaults in find_between, the token defaults and
+    positions in parse_tokens, the newline handling in make_text_from_inner_html_elements, the camelCase rules in
+    underscorize_variable, the hash inputs and default algorithm in get_hash, and the normalisation and strip set in
+    slugify (basics.py 17-208)."""
+
+    # --- find_between -----------------------------------------------------------
+
+    def test_find_between_returns_the_text_between_the_markers(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abc", "a", "c") == "b"
+
+    def test_an_empty_string_has_nothing_between_anything(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("", "a", "c") is None
+
+    def test_an_explicit_zero_upper_bound_is_an_empty_window_not_the_whole_text(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abc", "a", "c", idx2=0) is None
+
+    def test_an_empty_start_marker_begins_at_the_window_start(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abcdef", "", "c") == "ab"
+        assert find_between("abcdef", "", "e", idx1=-3) == "d"
+
+    def test_a_negative_start_is_counted_from_the_end_and_clamped_at_zero(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abcdef", "", "e", idx1=-3) == "d"
+        assert find_between("abcdef", "", "c", idx1=-6) == "ab"
+
+    def test_a_start_marker_at_the_very_beginning_is_found(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abc", "a", "c") == "b"
+
+    def test_an_empty_end_marker_runs_to_the_window_end(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abcdef", "b", "", idx2=4) == "cd"
+
+    def test_an_empty_start_and_end_at_the_beginning_is_an_empty_match(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abc", "", "a") == ""
+
+    # --- parse_tokens -----------------------------------------------------------
+
+    def test_the_default_clock_tokens_are_used_when_none_are_given(self):
+        from pyutilz.text.strings.basics import parse_tokens
+
+        assert parse_tokens("x [%clk 0:01] y [%clk 0:02]") == ["0:01", "0:02"]
+
+    def test_a_token_at_the_very_start_is_found(self):
+        from pyutilz.text.strings.basics import parse_tokens
+
+        assert parse_tokens("[%clk 0:01] x", "[%clk ", "]") == ["0:01"]
+
+    def test_a_missing_end_token_is_logged_with_the_text_seen_so_far(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.basics import parse_tokens
+
+        with caplog.at_level(logging.WARNING):
+            assert parse_tokens("[%clk 1:00") == []
+        assert "No end token (]) found in [%clk " in caplog.text
+
+    # --- make_text_from_inner_html_elements ---------------------------------------
+
+    def test_html_strings_are_joined_by_newlines_and_empty_ones_are_dropped(self):
+        from pyutilz.text.strings.basics import make_text_from_inner_html_elements
+
+        class _Elem:
+            strings = ["a", "", "b"]
+
+        assert make_text_from_inner_html_elements(_Elem()) == "a\nb"
+
+    def test_a_single_character_string_is_kept(self):
+        from pyutilz.text.strings.basics import make_text_from_inner_html_elements
+
+        class _Elem:
+            strings = ["x", "y"]
+
+        assert make_text_from_inner_html_elements(_Elem()) == "x\ny"
+
+    def test_a_literal_backslash_n_inside_a_string_is_removed(self):
+        from pyutilz.text.strings.basics import make_text_from_inner_html_elements
+
+        class _Elem:
+            strings = ["ab\\ncd"]
+
+        assert make_text_from_inner_html_elements(_Elem()) == "abcd"
+
+    # --- underscorize_variable ----------------------------------------------------
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("ProdLangName", "prod_lang_name"),
+            ("lowerUpper", "lower_upper"),
+            ("ABC", "abc"),
+            ("a", "a"),
+            ("", ""),
+        ],
+    )
+    def test_camel_and_pascal_names_become_snake_case(self, name, expected):
+        from pyutilz.text.strings.basics import underscorize_variable
+
+        assert underscorize_variable(name) == expected
+
+    # --- get_hash -----------------------------------------------------------------
+
+    def test_the_default_digest_is_md5_in_base64_of_the_utf8_bytes(self):
+        import base64
+        import hashlib
+
+        from pyutilz.text.strings.basics import get_hash
+
+        expected = base64.b64encode(hashlib.md5(b"abc").digest()).decode("utf-8")
+        assert get_hash("abc") == expected
+
+    def test_a_none_algorithm_falls_back_to_md5(self):
+        import hashlib
+
+        from pyutilz.text.strings.basics import get_hash
+
+        assert get_hash("abc", algo=None, base=None) == hashlib.md5(b"abc").hexdigest()
+
+    def test_bytes_are_hashed_as_they_are(self):
+        import hashlib
+
+        from pyutilz.text.strings.basics import get_hash
+
+        assert get_hash(b"abc", base=None) == hashlib.md5(b"abc").hexdigest()
+
+    def test_an_object_exposing_getquoted_is_hashed_through_it(self):
+        import hashlib
+
+        from pyutilz.text.strings.basics import get_hash
+
+        class _Adapted:
+            def getquoted(self):
+                return b"'abc'"
+
+        assert get_hash(_Adapted(), base=None) == hashlib.md5(b"'abc'").hexdigest()
+
+    def test_a_falsy_base_gives_the_hex_digest_and_a_true_one_gives_base64(self):
+        import hashlib
+
+        from pyutilz.text.strings.basics import get_hash
+
+        assert get_hash("abc", base=None) == hashlib.md5(b"abc").hexdigest()
+        assert get_hash("abc", base=None, return_binary=True) == hashlib.md5(b"abc").digest()
+
+    # --- slugify ------------------------------------------------------------------
+
+    def test_unicode_is_kept_by_default(self):
+        from pyutilz.text.strings.basics import slugify
+
+        assert slugify("été") == "été"
+
+    def test_composed_and_decomposed_letters_normalise_to_the_composed_form(self):
+        from pyutilz.text.strings.basics import slugify
+
+        assert slugify("Å") == "Å"
+
+    def test_leading_and_trailing_underscores_and_dashes_are_stripped(self):
+        from pyutilz.text.strings.basics import slugify
+
+        assert slugify("_abc_") == "abc"
+        assert slugify("-abc-") == "abc"
+
+
+class TestBasicsRecheckSurvivors:
+    """What the basics re-check still found: an explicit None start for find_between, None for each token default in
+    parse_tokens, the exact text of the missing-end warning, a single-letter capital after a lower-case one in
+    underscorize_variable, and rpad of an empty string (basics.py 35, 60-71, 89, 164)."""
+
+    def test_a_none_start_index_means_the_start_of_the_text(self):
+        from pyutilz.text.strings.basics import find_between
+
+        assert find_between("abc", "", "c", idx1=None) == "ab"
+
+    def test_a_none_start_token_uses_the_clock_default(self):
+        from pyutilz.text.strings.basics import parse_tokens
+
+        assert parse_tokens("x [%clk 0:05] y", start_token=None) == ["0:05"]
+
+    def test_a_none_end_token_uses_the_closing_bracket(self):
+        from pyutilz.text.strings.basics import parse_tokens
+
+        assert parse_tokens("x [%clk 0:05] y", end_token=None) == ["0:05"]
+
+    def test_the_missing_end_warning_names_only_the_text_up_to_the_start_token(self, caplog):
+        import logging
+
+        from pyutilz.text.strings.basics import parse_tokens
+
+        with caplog.at_level(logging.WARNING):
+            assert parse_tokens("[%clk 1:00 tail") == []
+        assert "found in [%clk " in caplog.text
+        assert "1:00" not in caplog.text
+
+    def test_a_capital_after_a_lower_case_letter_gets_an_underscore(self):
+        from pyutilz.text.strings.basics import underscorize_variable
+
+        assert underscorize_variable("aBc") == "a_bc"
+
+    def test_rpad_of_an_empty_string_stays_empty_by_default(self):
+        from pyutilz.text.strings.basics import rpad
+
+        assert rpad("") == ""
+        assert rpad("abc", 5) == "abc.."
