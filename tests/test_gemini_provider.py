@@ -1074,3 +1074,67 @@ class TestGenerateCallArgumentsSurvivors:
         response = _ResponseWithText([candidate], text="ok")
         (text, ratings, _finish), _recorded, _mock, _p = self._call(monkeypatch, response=response, prompt="hi")
         assert ratings == [{"category": "HARM_CATEGORY_HATE_SPEECH", "probability": "LOW", "blocked": False}]
+
+
+class TestCountTokensAndUnsupportedAccountSurvivors:
+    """count_tokens reports the API's total, and falls back to the local token counter with a debug note when the API gives
+    no total or fails; the two account methods always raise with their explanations (gemini_provider.py 606-641)."""
+
+    def _provider_with_count(self, result=None, error=None):
+        from unittest.mock import AsyncMock
+
+        p = _make_provider()
+        mock = AsyncMock(return_value=result, side_effect=error)
+        p.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(count_tokens=mock)))
+        return p
+
+    def test_the_api_total_is_reported_as_an_integer(self):
+        import asyncio
+
+        p = self._provider_with_count(result=SimpleNamespace(total_tokens="42"))
+        assert asyncio.run(p.count_tokens("hi")) == 42
+
+    def test_a_missing_total_falls_back_to_the_local_counter_with_a_debug_note(self, monkeypatch, caplog):
+        import asyncio
+        import logging
+
+        from pyutilz.llm import token_counter
+
+        monkeypatch.setattr(token_counter, "count_tokens", lambda text: 7)
+        p = self._provider_with_count(result=SimpleNamespace(total_tokens=None))
+        with caplog.at_level(logging.DEBUG):
+            assert asyncio.run(p.count_tokens("hi")) == 7
+        assert "Gemini count_tokens API failed (Gemini count_tokens returned no total_tokens); falling back to tiktoken." in caplog.text
+
+    def test_an_api_failure_falls_back_to_the_local_counter_and_names_the_error(self, monkeypatch, caplog):
+        import asyncio
+        import logging
+
+        from pyutilz.llm import token_counter
+
+        monkeypatch.setattr(token_counter, "count_tokens", lambda text: 9)
+        p = self._provider_with_count(error=RuntimeError("network down"))
+        with caplog.at_level(logging.DEBUG):
+            assert asyncio.run(p.count_tokens("hi")) == 9
+        assert "Gemini count_tokens API failed (network down)" in caplog.text
+
+    def test_the_account_balance_is_refused_with_the_billing_explanation(self):
+        import asyncio
+
+        p = _make_provider()
+        with pytest.raises(NotImplementedError) as exc:
+            asyncio.run(p.get_account_credits())
+        assert str(exc.value) == (
+            "Gemini billing is GCP-based — there is no balance endpoint "
+            "reachable with a Gemini API key. Check console.cloud.google.com/billing "
+            "or use the Cloud Billing API with separate GCP credentials."
+        )
+
+    def test_the_account_limits_are_refused_with_the_quota_explanation(self):
+        import asyncio
+
+        p = _make_provider()
+        with pytest.raises(NotImplementedError) as exc:
+            asyncio.run(p.check_account_limits())
+        assert str(exc.value).startswith("Gemini does not expose per-key rate limits via API. ")
+        assert "console.cloud.google.com/iam-admin/quotas" in str(exc.value)
