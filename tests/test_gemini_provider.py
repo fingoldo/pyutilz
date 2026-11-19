@@ -1004,3 +1004,73 @@ class TestGenerateOutcomeSurvivors:
         with pytest.raises(LLMSafetyBlockError, match=r"Gemini response has no text \(likely safety block\): no text here") as exc:
             self._run(p, _ResponseWithText(self._candidates("STOP"), text_error=ValueError("no text here")))
         assert exc.value.details["finish_reason"] == "STOP"
+
+
+class TestGenerateCallArgumentsSurvivors:
+    """generate passes its options to the config builder in order, sends the prompt as the contents when there are no
+    images, records 'unknown' for a candidate with no finish reason, and captures the candidate's safety ratings
+    (gemini_provider.py 435-492)."""
+
+    def _call(self, monkeypatch, response=None, **kwargs):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        p = _make_provider()
+        recorded: list = []
+
+        def _build(*args):
+            recorded.append(args)
+            return "CFG"
+
+        monkeypatch.setattr(p, "_build_generate_config", _build)
+        monkeypatch.setattr(type(p), "fit_max_tokens_to_context", lambda self, max_tokens, prompt, system=None: max_tokens)
+        resp = response or _ResponseWithText([SimpleNamespace(finish_reason="STOP")], text="ok")
+        mock = AsyncMock(return_value=resp)
+        p.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=mock)))
+
+        async def _go():
+            out = await p.generate(**kwargs)
+            return out, p.last_safety_ratings, p._last_finish_reason
+
+        out = asyncio.run(_go())
+        return out, recorded, mock, p
+
+    def test_the_config_builder_receives_the_options_in_their_order(self, monkeypatch):
+        _out, recorded, _mock, _p = self._call(
+            monkeypatch,
+            prompt="hi",
+            system="s",
+            temperature=0.2,
+            max_tokens=50,
+            json_mode=True,
+            thinking="high",
+            json_schema={"type": "object"},
+        )
+        assert recorded == [(50, 0.2, "s", True, {"type": "object"}, "high")]
+
+    def test_a_zero_output_cap_is_passed_on_as_no_budget(self, monkeypatch):
+        _out, recorded, _mock, _p = self._call(monkeypatch, prompt="hi", max_tokens=0)
+        assert recorded[0][0] is None
+
+    def test_the_prompt_is_sent_as_plain_contents_with_the_built_config(self, monkeypatch):
+        _out, _recorded, mock, p = self._call(monkeypatch, prompt="hi")
+        mock.assert_awaited_once()
+        kwargs = mock.await_args.kwargs
+        assert kwargs["contents"] == "hi"
+        assert kwargs["config"] == "CFG"
+        assert kwargs["model"] == p.model_name
+
+    def test_a_candidate_without_a_finish_reason_is_recorded_as_unknown(self, monkeypatch):
+        response = _ResponseWithText([SimpleNamespace()], text="ok")
+        (text, ratings, finish), _recorded, _mock, _p = self._call(monkeypatch, response=response, prompt="hi")
+        assert text == "ok"
+        assert finish == "unknown"
+
+    def test_the_candidate_safety_ratings_are_captured(self, monkeypatch):
+        candidate = SimpleNamespace(
+            finish_reason="STOP",
+            safety_ratings=[SimpleNamespace(category="HARM_CATEGORY_HATE_SPEECH", probability="LOW", blocked=False)],
+        )
+        response = _ResponseWithText([candidate], text="ok")
+        (text, ratings, _finish), _recorded, _mock, _p = self._call(monkeypatch, response=response, prompt="hi")
+        assert ratings == [{"category": "HARM_CATEGORY_HATE_SPEECH", "probability": "LOW", "blocked": False}]
