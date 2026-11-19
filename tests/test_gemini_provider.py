@@ -920,3 +920,87 @@ class TestSessionCostDefaultsAndKeysSurvivors:
         summary = p.get_session_cost()
         assert summary["long_context_surcharge_usd"] == 0.0
         assert summary["long_context_calls"] == 0
+
+
+class _ResponseWithText:
+    """A response whose text property either returns a value or raises, as the SDK's does for a blocked candidate."""
+
+    def __init__(self, candidates, text=None, text_error=None):
+        self.candidates = candidates
+        self._text = text
+        self._text_error = text_error
+
+    @property
+    def text(self):
+        if self._text_error is not None:
+            raise self._text_error
+        return self._text
+
+
+class TestGenerateOutcomeSurvivors:
+    """generate turns the response into text or a typed error: a truncation keeps the partial text and logs a failed salvage,
+    empty or unreadable text raises a safety error with its details, and a response without candidates records 'unknown'
+    (gemini_provider.py 435-545). The per-call finish reason is read inside the coroutine, where it is set."""
+
+    def _run(self, p, response):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        p.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=AsyncMock(return_value=response))))
+
+        async def _go():
+            return await p.generate("hi"), p._last_finish_reason
+
+        return asyncio.run(_go())
+
+    def _candidates(self, finish="STOP"):
+        return [SimpleNamespace(finish_reason=finish)]
+
+    def test_a_plain_answer_is_returned_and_its_finish_reason_recorded(self):
+        p = _make_provider()
+        text, finish = self._run(p, _ResponseWithText(self._candidates("STOP"), text="answer"))
+        assert text == "answer"
+        assert finish == "STOP"
+
+    def test_a_response_without_candidates_records_unknown_and_still_returns_text(self):
+        p = _make_provider()
+        text, finish = self._run(p, _ResponseWithText([], text="answer"))
+        assert text == "answer"
+        assert finish == "unknown"
+
+    def test_a_truncated_answer_raises_with_its_partial_text(self):
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        p = _make_provider()
+        with pytest.raises(LLMTruncationError, match=r"Gemini response truncated by max_tokens \(finish_reason=MAX_TOKENS\)") as exc:
+            self._run(p, _ResponseWithText(self._candidates("MAX_TOKENS"), text="partial"))
+        assert exc.value.partial_text == "partial"
+        assert exc.value.finish_reason == "MAX_TOKENS"
+
+    def test_a_truncated_answer_whose_text_cannot_be_read_is_logged_and_gives_empty_partial(self, caplog):
+        import logging
+
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        p = _make_provider()
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LLMTruncationError) as exc:
+                self._run(p, _ResponseWithText(self._candidates("MAX_TOKENS"), text_error=ValueError("no text")))
+        assert exc.value.partial_text == ""
+        assert "Could not read partial text off a truncated Gemini response; reporting it as empty: no text" in caplog.text
+
+    def test_an_empty_answer_raises_a_safety_block_with_its_details(self):
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+
+        p = _make_provider()
+        with pytest.raises(LLMSafetyBlockError, match=r"Gemini returned empty text \(likely safety block\)") as exc:
+            self._run(p, _ResponseWithText(self._candidates("STOP"), text=""))
+        assert exc.value.details == {"finish_reason": "STOP", "safety_ratings": []}
+
+    def test_an_unreadable_answer_raises_a_safety_block_naming_the_cause(self):
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+
+        p = _make_provider()
+        with pytest.raises(LLMSafetyBlockError, match=r"Gemini response has no text \(likely safety block\): no text here") as exc:
+            self._run(p, _ResponseWithText(self._candidates("STOP"), text_error=ValueError("no text here")))
+        assert exc.value.details["finish_reason"] == "STOP"
