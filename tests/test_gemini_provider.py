@@ -1138,3 +1138,59 @@ class TestCountTokensAndUnsupportedAccountSurvivors:
             asyncio.run(p.check_account_limits())
         assert str(exc.value).startswith("Gemini does not expose per-key rate limits via API. ")
         assert "console.cloud.google.com/iam-admin/quotas" in str(exc.value)
+
+
+class TestSchemaAndCandidateCaptureSurvivors:
+    """A bare schema is sent whole and a wrapper with only a strict flag sends its inner schema; the candidate's function
+    calls, grounding, citations and all candidates are captured, and a failure to read them is logged at debug
+    (gemini_provider.py 368-371, 575-606)."""
+
+    def _config_for(self, monkeypatch, json_schema):
+        from pyutilz.llm import gemini_provider as gp
+
+        monkeypatch.setattr(gp.types, "GenerateContentConfig", lambda **kw: dict(kw))
+        monkeypatch.setattr(gp, "gemini_thinking_config", lambda thinking, model: None)
+        p = _make_provider()
+        p._candidate_count = 1
+        p._cached_content = None
+        return p._build_generate_config(0, 0.7, None, False, json_schema, None)
+
+    def test_a_bare_schema_is_sent_whole(self, monkeypatch):
+        schema = {"type": "object", "properties": {"a": {"type": "string"}}}
+        assert self._config_for(monkeypatch, schema)["response_json_schema"] == schema
+
+    def test_a_wrapper_with_only_a_strict_flag_sends_its_inner_schema(self, monkeypatch):
+        inner = {"type": "object"}
+        cfg = self._config_for(monkeypatch, {"schema": inner, "strict": True})
+        assert cfg["response_json_schema"] == inner
+
+    def test_function_calls_grounding_and_all_candidates_are_captured(self, monkeypatch):
+        p = _make_provider()
+        grounding = SimpleNamespace(web="g")
+        citation = SimpleNamespace(cite="c")
+        call = SimpleNamespace(name="lookup", args={"q": "x"})
+        candidate = SimpleNamespace(
+            finish_reason="STOP",
+            grounding_metadata=grounding,
+            citation_metadata=citation,
+            content=SimpleNamespace(parts=[SimpleNamespace(function_call=call), SimpleNamespace(function_call=None)]),
+        )
+        candidates = [candidate, SimpleNamespace()]
+        p._capture_candidate_metadata(SimpleNamespace(candidates=candidates))
+        assert p.last_grounding_metadata is grounding
+        assert p.last_citation_metadata is citation
+        assert p.last_function_calls == [{"name": "lookup", "args": {"q": "x"}}]
+        assert p.last_all_candidates == candidates
+
+    def test_a_failure_to_read_the_candidates_is_logged_at_debug(self, caplog):
+        import logging
+
+        class _Broken:
+            @property
+            def candidates(self):
+                raise ValueError("unreadable")
+
+        p = _make_provider()
+        with caplog.at_level(logging.DEBUG):
+            p._capture_candidate_metadata(_Broken())
+        assert "Gemini candidate metadata capture failed: unreadable" in caplog.text
