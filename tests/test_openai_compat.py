@@ -474,6 +474,56 @@ class TestStreamAttemptSurvivors:
         _stream, _box, state, _resp = await self._drain(_make_provider(), lines=[line, "data: [DONE]"])
         assert state["response_started"] is True
 
+    @staticmethod
+    def _chunk(text: str) -> str:
+        return f"data: {jsonlib.dumps({'choices': [{'delta': {'content': text}}]})}"
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_json_line_is_skipped_and_the_stream_goes_on(self):
+        _stream, box, _state, _resp = await self._drain(_make_provider(), lines=["data: {not json", self._chunk("hi"), "data: [DONE]"])
+        assert box["streamed_text"] == ["hi"]
+
+    @pytest.mark.asyncio
+    async def test_nothing_after_done_is_read(self):
+        _stream, box, _state, _resp = await self._drain(_make_provider(), lines=[self._chunk("hi"), "data: [DONE]", self._chunk("late")])
+        assert box["streamed_text"] == ["hi"]
+
+    @pytest.mark.asyncio
+    async def test_an_empty_line_does_not_end_the_stream(self):
+        _stream, box, _state, _resp = await self._drain(_make_provider(), lines=["", self._chunk("hi"), "", "data: [DONE]"])
+        assert box["streamed_text"] == ["hi"]
+
+    @pytest.mark.asyncio
+    async def test_the_usage_block_is_kept_from_whichever_chunk_carries_it(self):
+        usage = {"prompt_tokens": 3, "completion_tokens": 1}
+        trailer = f"data: {jsonlib.dumps({'choices': [], 'usage': usage})}"
+        _stream, box, _state, _resp = await self._drain(_make_provider(), lines=[self._chunk("hi"), trailer, "data: [DONE]"])
+        assert box["latest_usage"] == usage
+
+    @pytest.mark.asyncio
+    async def test_an_event_line_without_a_space_after_the_prefix_is_read(self):
+        bare = f"data:{jsonlib.dumps({'choices': [{'delta': {'content': 'hi'}}]})}"
+        _stream, box, _state, _resp = await self._drain(_make_provider(), lines=[bare, "data: [DONE]"])
+        assert box["streamed_text"] == ["hi"]
+
+    @pytest.mark.asyncio
+    async def test_a_stream_dying_mid_answer_still_has_its_first_chunk_tracked(self):
+        p = _make_provider()
+        p._track_provider_specific_response = MagicMock()
+        first = {"id": "gen-7", "choices": [{"delta": {"content": "partial"}}]}
+        error = f"data: {jsonlib.dumps({'error': {'code': 502, 'message': 'upstream connection lost'}})}"
+        with pytest.raises(httpx.HTTPStatusError):
+            await self._drain(p, lines=[f"data: {jsonlib.dumps(first)}", error, "data: [DONE]"])
+        assert any(c.args[0] == first for c in p._track_provider_specific_response.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_the_first_chunk_is_handed_to_the_provider_hook_as_it_arrives(self):
+        p = _make_provider()
+        p._track_provider_specific_response = MagicMock()
+        first = {"choices": [{"delta": {"content": "hi"}}]}
+        await self._drain(p, lines=[f"data: {jsonlib.dumps(first)}", "data: [DONE]"])
+        assert any(c.args[0] == first for c in p._track_provider_specific_response.call_args_list)
+
     @pytest.mark.asyncio
     async def test_lines_without_the_data_prefix_are_skipped(self):
         line = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'hi'}, 'finish_reason': 'stop'}]})}"
