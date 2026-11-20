@@ -1016,6 +1016,29 @@ class TestGenerateOutcomeSurvivors:
         assert exc.value.details["safety_ratings"] == [{"category": "HARASSMENT", "probability": "HIGH", "blocked": True}]
 
 
+class TestWithoutGenaiInstalled:
+    """With google.genai absent the module still imports: GENAI_AVAILABLE is False and no error is ever classed as
+    retryable (gemini_provider.py 36, 73). Checked in a fresh interpreter, because the flag is set at import time."""
+
+    def test_the_module_imports_without_genai_and_reports_it_unavailable(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        src = Path(gemini_provider_module.__file__).resolve().parents[2]
+        code = (
+            "import sys\n"
+            "sys.modules['google.genai'] = None\n"
+            "from pyutilz.llm import gemini_provider as g\n"
+            "print(g.GENAI_AVAILABLE)\n"
+            "print(g._is_retryable_genai_error(RuntimeError('429')))\n"
+        )
+        env = {**__import__("os").environ, "PYTHONPATH": str(src)}
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, env=env)
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.split() == ["False", "False"]
+
+
 class TestGenerateCallArgumentsSurvivors:
     """generate passes its options to the config builder in order, sends the prompt as the contents when there are no
     images, records 'unknown' for a candidate with no finish reason, and captures the candidate's safety ratings
