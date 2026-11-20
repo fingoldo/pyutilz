@@ -306,5 +306,8 @@
   "src/pyutilz/text/strings/basics.py::684ef270364d::logic: break becomes continue": "equivalent: after a missing end token the restart searches from -1, and a start token longer than one character cannot begin at the last character, so nothing new is found",
   "src/pyutilz/text/strings/basics.py::279e8199a8fa::operator: > becomes >=": "equivalent: the length of new is never negative, and when it is zero the else branch takes the same path",
   "src/pyutilz/text/strings/basics.py::ec4d4b7a5c56::operator: += becomes =": "equivalent: new is empty here, so assigning and appending give the same result",
-  "src/pyutilz/text/strings/jsonutils.py::4f47be27b449::constant: emptied a string": "equivalent: replacing the empty string with the empty string returns the text unchanged, so the NUL check has no observable effect on this line"
+  "src/pyutilz/text/strings/jsonutils.py::4f47be27b449::constant: emptied a string": "equivalent: replacing the empty string with the empty string returns the text unchanged, so the NUL check has no observable effect on this line",
+  "src/pyutilz/llm/gemini_provider.py::b7a013059d83::arguments transposed: 1 <-> int(candidate_count)": "equivalent: max() is commutative, so swapping 1 and the candidate count returns the same count",
+  "src/pyutilz/llm/gemini_provider.py::71a0f2fc2ed3::logic: max becomes min": "equivalent for the current tier table: no tier key is a prefix of another that the model could match, so max and min select the same single key",
+  "src/pyutilz/llm/gemini_provider.py::2a50e0284a08::arguments transposed: self.total_cached_content_tokens <-> self.total_prompt_tokens": "equivalent: min() is commutative, so swapping the cached and prompt counts returns the same cache-hit count"
 }
