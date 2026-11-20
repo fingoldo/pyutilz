@@ -722,6 +722,14 @@ class TestUsageAccountingSurvivors:
         p._record_usage({"prompt_tokens": 5, "completion_tokens": 2})
         assert p._last_usage == {"input_tokens": 15, "output_tokens": 6, "reasoning_tokens": 3, "cached_tokens": 6}
 
+    def test_the_usage_log_line_states_prompt_cache_completion_and_reasoning_in_order(self, caplog):
+        import logging
+
+        p = _make_provider()
+        with caplog.at_level(logging.INFO):
+            p._record_usage({"prompt_tokens": 10, "completion_tokens": 4, "prompt_cache_hit_tokens": 6, "completion_tokens_details": {"reasoning_tokens": 3}})
+        assert "10 prompt (6 cached) + 4 completion (3 reasoning) | cumulative: 10 in, 4 out" in caplog.text
+
     def test_totals_accumulate_across_calls(self):
         p = _make_provider()
         p._record_usage({"prompt_tokens": 10, "completion_tokens": 4, "prompt_tokens_details": {"cache_write_tokens": 3}})
