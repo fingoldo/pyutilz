@@ -429,6 +429,22 @@ class TestPricingFallbackSurvivors:
         assert p._cache_write_cost_per_1m("m") == 1.0
 
 
+class TestStreamDefaultsSurvivors:
+    """A plain generate_stream call sends temperature 0.7, no max_tokens and no response_format (openai_compat.py 428-430)."""
+
+    @pytest.mark.asyncio
+    async def test_a_plain_stream_call_sends_the_documented_defaults(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=["data: [DONE]"]))
+        async for _ in p.generate_stream("q"):
+            pass
+        body = p._client.stream.call_args.kwargs["json"]
+        assert body["temperature"] == 0.7
+        assert "max_tokens" not in body
+        assert "response_format" not in body
+
+
 class TestStreamBackoffSurvivors:
     """The stream retry wait doubles from 5 s, is capped at 300 s, adds jitter in [0, 5), and is never shorter than a
     Retry-After the server sent (openai_compat.py 411-422)."""
