@@ -476,6 +476,53 @@ class TestStreamPreparationSurvivors:
         assert asyncio.run(_go()) is False
 
 
+class TestStreamRetryAndBodyArgumentsSurvivors:
+    """generate_stream hands its options to the body builder in order, and a stream that fails to open is retried up to
+    MAX_RETRY_ATTEMPTS times, succeeding if a later open works (openai_compat.py 463-482)."""
+
+    @pytest.mark.asyncio
+    async def test_the_body_builder_receives_the_options_in_order(self):
+        p = _make_provider()
+        spy = MagicMock(return_value={"model": "m", "messages": []})
+        p._build_stream_body = spy
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=["data: [DONE]"]))
+        async for _ in p.generate_stream("q", "sys", 0.2, 50, True, False, {"name": "s"}, ["img"]):
+            pass
+        args = spy.call_args.args
+        assert args[:8] == ("q", "sys", 0.2, 50, True, False, {"name": "s"}, ["img"])
+
+    @pytest.mark.asyncio
+    async def test_a_stream_that_never_opens_is_retried_exactly_the_configured_number_of_times(self, monkeypatch):
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        monkeypatch.setattr(openai_compat_mod, "MAX_RETRY_ATTEMPTS", 3)
+        monkeypatch.setattr(openai_compat_mod.asyncio, "sleep", AsyncMock())
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(side_effect=lambda *a, **k: _MockStreamResponse(status_code=429))
+        with pytest.raises(httpx.HTTPStatusError):
+            async for _ in p.generate_stream("q"):
+                pass
+        assert p._client.stream.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_a_stream_that_opens_on_a_later_attempt_still_answers(self, monkeypatch):
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        monkeypatch.setattr(openai_compat_mod, "MAX_RETRY_ATTEMPTS", 3)
+        monkeypatch.setattr(openai_compat_mod.asyncio, "sleep", AsyncMock())
+        answer = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}"
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(side_effect=[_MockStreamResponse(status_code=429), _MockStreamResponse(status_code=429), _MockStreamResponse(lines=[answer, "data: [DONE]"])])
+        out = [chunk async for chunk in p.generate_stream("q")]
+        assert out == ["ok"]
+        assert p._client.stream.call_count == 3
+        # The two refused opens were abandoned before any response started.
+        assert [r["response_started"] for r in p.last_aborted_stream_attempts] == [False, False]
+
+
 class TestStreamBackoffSurvivors:
     """The stream retry wait doubles from 5 s, is capped at 300 s, adds jitter in [0, 5), and is never shorter than a
     Retry-After the server sent (openai_compat.py 411-422)."""
