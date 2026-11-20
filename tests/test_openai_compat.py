@@ -395,6 +395,27 @@ class TestHooks:
         assert caplog.records == []
 
 
+class TestClientConfigurationSurvivors:
+    """The shared client carries the bearer token and JSON content type, a 10 s connect timeout, and the per-call
+    flags are reset at the start of each call (openai_compat.py 94-122, 103, 115)."""
+
+    def test_the_client_sends_the_bearer_token_and_a_json_content_type(self):
+        p = _make_provider()
+        assert p._client.headers["Authorization"] == "Bearer test-key"
+        assert p._client.headers["Content-Type"] == "application/json"
+
+    def test_the_connect_timeout_is_ten_seconds(self):
+        assert _make_provider()._client.timeout.connect == 10.0
+
+    def test_a_reset_clears_the_schema_applied_flag_and_the_json_mode_fallback(self):
+        p = _make_provider()
+        p._last_json_schema_applied = True
+        p.last_json_mode_fallback = True
+        p._reset_per_call_state()
+        assert p._last_json_schema_applied is False
+        assert p.last_json_mode_fallback is False
+
+
 class TestStreamAttemptSurvivors:
     """One streamed attempt posts the body to /chat/completions, reads the body of a 4xx error before classifying it,
     marks the response as started once it is accepted, and skips lines that are not ``data:`` events
