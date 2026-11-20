@@ -395,6 +395,40 @@ class TestHooks:
         assert caplog.records == []
 
 
+class TestPricingFallbackSurvivors:
+    """The default pricing record keeps input and output in their own fields, and a missing cached-input or cache-write
+    rate falls back to the uncached input rate, while a published one is used (openai_compat.py 263-277)."""
+
+    def test_the_default_record_keeps_input_and_output_apart(self):
+        from pyutilz.llm._pricing import Pricing
+
+        record = _make_provider()._resolve_pricing("m")
+        assert record == Pricing(input=1.0, output=2.0, cache_hit=None)
+
+    def test_a_published_cache_hit_rate_is_used(self):
+        from pyutilz.llm._pricing import Pricing
+
+        p = _make_provider()
+        p._resolve_pricing = lambda model: Pricing(input=1.0, output=2.0, cache_hit=0.25)
+        assert OpenAICompatibleProvider._cache_hit_cost_per_1m(p, "m") == 0.25
+
+    def test_a_missing_cache_hit_rate_falls_back_to_the_input_rate(self):
+        from pyutilz.llm._pricing import Pricing
+
+        p = _make_provider()
+        p._resolve_pricing = lambda model: Pricing(input=1.0, output=2.0, cache_hit=None)
+        assert OpenAICompatibleProvider._cache_hit_cost_per_1m(p, "m") == 1.0
+
+    def test_a_published_cache_write_rate_is_used_and_a_missing_one_falls_back(self):
+        from pyutilz.llm._pricing import Pricing
+
+        p = _make_provider()
+        p._resolve_pricing = lambda model: Pricing(input=1.0, output=2.0, cache_write=3.0)
+        assert p._cache_write_cost_per_1m("m") == 3.0
+        p._resolve_pricing = lambda model: Pricing(input=1.0, output=2.0, cache_write=None)
+        assert p._cache_write_cost_per_1m("m") == 1.0
+
+
 class TestClientConfigurationSurvivors:
     """The shared client carries the bearer token and JSON content type, a 10 s connect timeout, and the per-call
     flags are reset at the start of each call (openai_compat.py 94-122, 103, 115)."""
