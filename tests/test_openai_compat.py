@@ -395,6 +395,74 @@ class TestHooks:
         assert caplog.records == []
 
 
+class TestStreamAttemptSurvivors:
+    """One streamed attempt posts the body to /chat/completions, reads the body of a 4xx error before classifying it,
+    marks the response as started once it is accepted, and skips lines that are not ``data:`` events
+    (openai_compat.py 337-366)."""
+
+    @staticmethod
+    async def _drain(p, body=None, state=None, lines=None, status=200):
+        box = {"streamed_text": []}
+        state = {} if state is None else state
+        resp = _MockStreamResponse(status_code=status, lines=lines or [])
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=resp)
+        async for _ in p._stream_attempt(body if body is not None else {"model": "m"}, state, box):
+            pass
+        return p._client.stream, box, state, resp
+
+    @pytest.mark.asyncio
+    async def test_the_attempt_posts_the_body_to_chat_completions(self):
+        body = {"model": "m", "messages": []}
+        stream, _box, _state, _resp = await self._drain(_make_provider(), body=body, lines=["data: [DONE]"])
+        args, kwargs = stream.call_args
+        assert args[:2] == ("POST", "/chat/completions")
+        assert kwargs["json"] == body
+
+    @pytest.mark.asyncio
+    async def test_an_error_body_is_read_before_the_status_is_classified(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        resp = _MockStreamResponse(status_code=400)
+        resp.aread = AsyncMock(return_value=b"{}")
+        p._client.stream = MagicMock(return_value=resp)
+        with pytest.raises((httpx.HTTPStatusError, LLMProviderError)):
+            async for _ in p._stream_attempt({"model": "m"}, {}, {"streamed_text": []}):
+                pass
+        resp.aread.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_providers_special_status_handler_runs_before_the_generic_raise(self):
+        from tests.openai_compat_support import _TestProvider
+
+        class _Special(_TestProvider):
+            def _handle_special_status(self, resp):
+                if resp.status_code == 402:
+                    raise LLMProviderError("credits exhausted")
+
+        p = _Special(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(status_code=402))
+        with pytest.raises(LLMProviderError, match="credits exhausted"):
+            async for _ in p._stream_attempt({"model": "m"}, {}, {"streamed_text": []}):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_an_accepted_stream_marks_the_response_as_started(self):
+        line = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'hi'}, 'finish_reason': 'stop'}]})}"
+        _stream, _box, state, _resp = await self._drain(_make_provider(), lines=[line, "data: [DONE]"])
+        assert state["response_started"] is True
+
+    @pytest.mark.asyncio
+    async def test_lines_without_the_data_prefix_are_skipped(self):
+        line = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'hi'}, 'finish_reason': 'stop'}]})}"
+        # The skipped line carries valid JSON after its first five characters: if the prefix test were
+        # ever matched by the empty string, that payload would be parsed and its content would leak in.
+        smuggled = "event" + jsonlib.dumps({"choices": [{"delta": {"content": "LEAK"}}]})
+        _stream, box, _state, _resp = await self._drain(_make_provider(), lines=[smuggled, "not an event line", "", line, "data: [DONE]"])
+        assert box["streamed_text"] == ["hi"]
+
+
 class TestRateLimitSnapshotSurvivors:
     """The captured snapshot keeps only the x-ratelimit-/ratelimit- headers, lower-cased, replaces the previous one
     on every response, and check_account_limits reports it with short keys (openai_compat.py 203-242)."""
