@@ -429,6 +429,26 @@ class TestPricingFallbackSurvivors:
         assert p._cache_write_cost_per_1m("m") == 1.0
 
 
+class TestCloseSurvivors:
+    """_close closes the current HTTP client only when it is still open (openai_compat.py 325-326)."""
+
+    @pytest.mark.asyncio
+    async def test_an_open_client_is_closed(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.is_closed = False
+        await p._close()
+        p._client.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_already_closed_client_is_not_closed_again(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.is_closed = True
+        await p._close()
+        p._client.aclose.assert_not_awaited()
+
+
 class TestClientConfigurationSurvivors:
     """The shared client carries the bearer token and JSON content type, a 10 s connect timeout, and the per-call
     flags are reset at the start of each call (openai_compat.py 94-122, 103, 115)."""
