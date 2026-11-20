@@ -1367,3 +1367,14 @@ class TestGenerateDefaultsAndBudgetSurvivors:
     def test_the_budget_is_fitted_with_the_prompt_then_the_system(self, monkeypatch):
         _built, fitted = self._run(monkeypatch, prompt="hi", system="s", max_tokens=5)
         assert fitted == [(5, "hi", "s")]
+
+
+class TestProviderIdentityAndTimeoutSurvivors:
+    """The provider names itself Gemini in its messages, and every request is bounded by its ten-minute timeout, since a
+    thinking model can take minutes (gemini_provider.py 94, 155)."""
+
+    def test_the_provider_is_named_gemini(self):
+        assert GeminiProvider._provider_name == "Gemini"
+
+    def test_a_request_is_bounded_by_ten_minutes(self):
+        assert GeminiProvider._request_timeout_seconds == 600.0
