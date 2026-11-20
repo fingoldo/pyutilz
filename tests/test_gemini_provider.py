@@ -1308,3 +1308,22 @@ class TestLongContextSurchargeAccumulationSurvivors:
         p = self._provider(monkeypatch, model="gemini-2.5-flash")
         p._add_long_context_surcharge(250_000, 0, 10)
         assert p._long_context_surcharge_usd == 0.0
+
+
+class TestSafetyRatingDefaultsSurvivors:
+    """A safety rating that carries no blocked flag is recorded as not blocked (gemini_provider.py 571)."""
+
+    def test_a_rating_without_a_blocked_flag_is_recorded_as_not_blocked(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        p = _make_provider()
+        candidate = SimpleNamespace(finish_reason="STOP", safety_ratings=[SimpleNamespace(category="HARASSMENT", probability="LOW")])
+        response = _ResponseWithText([candidate], text="ok")
+        p.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=AsyncMock(return_value=response))))
+
+        async def _go():
+            await p.generate("hi")
+            return p.last_safety_ratings
+
+        assert asyncio.run(_go()) == [{"category": "HARASSMENT", "probability": "LOW", "blocked": False}]
