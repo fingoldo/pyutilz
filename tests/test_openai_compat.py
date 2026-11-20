@@ -716,6 +716,12 @@ class TestUsageAccountingSurvivors:
         p._record_usage({"prompt_tokens": 10, "completion_tokens": 4})
         assert (p.total_prompt_tokens, p.total_completion_tokens, p.total_cache_hit_tokens, p.total_reasoning_tokens) == (10, 4, 0, 0)
 
+    def test_the_per_call_usage_dict_sums_its_blocks_under_each_key(self):
+        p = _make_provider()
+        p._record_usage({"prompt_tokens": 10, "completion_tokens": 4, "completion_tokens_details": {"reasoning_tokens": 3}, "prompt_cache_hit_tokens": 6})
+        p._record_usage({"prompt_tokens": 5, "completion_tokens": 2})
+        assert p._last_usage == {"input_tokens": 15, "output_tokens": 6, "reasoning_tokens": 3, "cached_tokens": 6}
+
     def test_totals_accumulate_across_calls(self):
         p = _make_provider()
         p._record_usage({"prompt_tokens": 10, "completion_tokens": 4, "prompt_tokens_details": {"cache_write_tokens": 3}})
