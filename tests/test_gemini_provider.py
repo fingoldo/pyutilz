@@ -1005,6 +1005,16 @@ class TestGenerateOutcomeSurvivors:
             self._run(p, _ResponseWithText(self._candidates("STOP"), text_error=ValueError("no text here")))
         assert exc.value.details["finish_reason"] == "STOP"
 
+    def test_an_unreadable_answer_carries_the_safety_ratings_of_its_candidate(self):
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+
+        p = _make_provider()
+        ratings = [SimpleNamespace(category="HARASSMENT", probability="HIGH", blocked=True)]
+        candidates = [SimpleNamespace(finish_reason="STOP", safety_ratings=ratings)]
+        with pytest.raises(LLMSafetyBlockError) as exc:
+            self._run(p, _ResponseWithText(candidates, text_error=ValueError("no text here")))
+        assert exc.value.details["safety_ratings"] == [{"category": "HARASSMENT", "probability": "HIGH", "blocked": True}]
+
 
 class TestGenerateCallArgumentsSurvivors:
     """generate passes its options to the config builder in order, sends the prompt as the contents when there are no
@@ -1399,6 +1409,29 @@ class TestReasoningTotalsAndCallResetSurvivors:
     def _usage_response(self, thoughts):
         usage = SimpleNamespace(prompt_token_count=1, candidates_token_count=1, thoughts_token_count=thoughts, cached_content_token_count=0)
         return SimpleNamespace(candidates=[SimpleNamespace(finish_reason="STOP")], text="ok", usage_metadata=usage)
+
+    def test_a_failed_call_does_not_keep_the_safety_ratings_of_the_previous_call(self):
+        import asyncio
+
+        p = _make_provider()
+        rated = SimpleNamespace(
+            candidates=[SimpleNamespace(finish_reason="STOP", safety_ratings=[SimpleNamespace(category="HARASSMENT", probability="LOW", blocked=False)])],
+            text="ok",
+            usage_metadata=None,
+        )
+        p.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=AsyncMock(side_effect=[rated, RuntimeError("transport down")]))))
+
+        async def _go():
+            # PerCallAttr state is context-local: both calls and the reads happen inside one coroutine.
+            await p.generate("hi")
+            after_ok = list(p.last_safety_ratings)
+            with pytest.raises(RuntimeError, match="transport down"):
+                await p.generate("hi")
+            return after_ok, list(p.last_safety_ratings)
+
+        after_ok, after_failed = asyncio.run(_go())
+        assert after_ok == [{"category": "HARASSMENT", "probability": "LOW", "blocked": False}]
+        assert after_failed == []
 
     def test_reasoning_tokens_accumulate_across_calls(self):
         p = _make_provider()
