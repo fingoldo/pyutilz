@@ -395,6 +395,45 @@ class TestHooks:
         assert caplog.records == []
 
 
+class TestRateLimitSnapshotSurvivors:
+    """The captured snapshot keeps only the x-ratelimit-/ratelimit- headers, lower-cased, replaces the previous one
+    on every response, and check_account_limits reports it with short keys (openai_compat.py 203-242)."""
+
+    def test_only_the_ratelimit_headers_are_kept_and_lower_cased(self):
+        p = _make_provider()
+        p._capture_rate_limit_headers({"X-RateLimit-Remaining-Requests": "7", "ratelimit-reset": "9", "x-request-id": "abc", "Content-Type": "json"})
+        assert p.last_rate_limits == {"x-ratelimit-remaining-requests": "7", "ratelimit-reset": "9"}
+
+    def test_a_response_without_rate_limit_headers_clears_the_previous_snapshot(self):
+        p = _make_provider()
+        p._capture_rate_limit_headers({"x-ratelimit-remaining-requests": "7"})
+        p._capture_rate_limit_headers({"x-request-id": "abc"})
+        assert p.last_rate_limits == {}
+
+    def test_account_limits_report_the_raw_headers_and_short_keys(self):
+        import asyncio
+
+        p = _make_provider()
+        p._capture_rate_limit_headers({"x-ratelimit-remaining-requests": "0", "ratelimit-reset-tokens": "30"})
+        out = asyncio.run(p.check_account_limits())
+        assert out == {
+            "raw": {"x-ratelimit-remaining-requests": "0", "ratelimit-reset-tokens": "30"},
+            "remaining_requests": "0",
+            "reset_tokens": "30",
+        }
+
+    def test_account_limits_without_a_snapshot_name_the_provider_and_the_fix(self):
+        import asyncio
+
+        p = _make_provider()
+        with pytest.raises(NotImplementedError) as exc:
+            asyncio.run(p.check_account_limits())
+        assert str(exc.value) == (
+            "TestProvider: no rate-limit snapshot captured yet -- issue at least one generate() call first; the headers are "
+            "captured automatically. Standalone introspection endpoints are not exposed for regular keys on this provider."
+        )
+
+
 class TestRateLimitHeaderCapture:
     @pytest.mark.asyncio
     async def test_generate_captures_headers_on_429_before_raising(self):
