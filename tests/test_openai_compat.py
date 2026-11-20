@@ -763,6 +763,45 @@ class TestUsageAccountingSurvivors:
         assert (p.total_prompt_tokens, p.total_completion_tokens, p.total_cache_hit_tokens, p.total_reasoning_tokens) == (0, 0, 0, 0)
 
 
+class TestGenerateDefaultsAndOrderSurvivors:
+    """A buffered generate call: its defaults reach the body as documented, the options reach the body builder in order,
+    the per-call state is reset and the async preparation awaited (openai_compat.py 656, 694-714)."""
+
+    @pytest.mark.asyncio
+    async def test_a_plain_generate_call_sends_the_documented_defaults(self):
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(return_value="ok")
+        assert await p.generate("q") == "ok"
+        body = p._post_and_unwrap.call_args.args[0]
+        assert body["temperature"] == 0.7
+        assert "max_tokens" not in body
+        assert "response_format" not in body
+
+    @pytest.mark.asyncio
+    async def test_the_options_reach_the_body_builder_in_order(self):
+        p = _make_provider()
+        spy = MagicMock(return_value={"model": "m", "messages": []})
+        p._request_body = spy
+        p._post_and_unwrap = AsyncMock(return_value="ok")
+        await p.generate("q", "sys", 0.2, 50, False, None, None, ["img"], [{"t": 1}], "auto", {"x": 1})
+        args = spy.call_args.args
+        assert args[0] == "q" and args[1] == "sys" and args[2] == 0.2
+        assert args[6] == ["img"]
+        assert args[7] == [{"t": 1}]
+        assert args[8] == "auto"
+        assert args[9] == {"x": 1}
+
+    @pytest.mark.asyncio
+    async def test_a_generate_call_awaits_the_preparation_and_starts_clean(self):
+        p = _make_provider()
+        p._async_prepare = AsyncMock()
+        p._post_and_unwrap = AsyncMock(return_value="ok")
+        p.last_json_mode_fallback = True
+        await p.generate("q")
+        p._async_prepare.assert_awaited_once()
+        assert p.last_json_mode_fallback is False
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
