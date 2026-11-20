@@ -1236,3 +1236,38 @@ class TestGenerateJsonForwardingSurvivors:
     def test_the_sampling_arguments_keep_their_positions(self, monkeypatch):
         prompt, system, temperature, max_tokens, *_rest = self._record(monkeypatch, system="be brief", temperature=0.9)
         assert (prompt, system, temperature, max_tokens) == ("hi", "be brief", 0.9, 0)
+
+
+class TestModelFamilyLimitsSurvivors:
+    """Each model family reports its exact context window and output ceiling, a model outside the families reports the
+    default window and no ceiling, and the first matching prefix wins (gemini_provider.py 214-233)."""
+
+    @pytest.mark.parametrize(
+        ("model", "window", "output"),
+        [
+            ("gemini-2.5-flash", 1_048_576, 65536),
+            ("gemini-2.0-flash", 1_048_576, 8192),
+            ("gemini-3-pro-preview", 1_048_576, 65536),
+        ],
+    )
+    def test_each_family_reports_its_window_and_output_ceiling(self, model, window, output):
+        p = _make_provider()
+        p.model_name = model
+        assert p.context_window == window
+        assert p.max_output_tokens == output
+
+    def test_a_model_outside_the_families_reports_the_default_window_and_no_ceiling(self):
+        p = _make_provider()
+        p.model_name = "gemini-1.5-pro"
+        assert p.context_window == 1_048_576
+        assert p.max_output_tokens is None
+
+    def test_the_first_matching_prefix_wins_and_the_default_is_used_when_none_matches(self):
+        p = _make_provider()
+        table = (("ab", 1), ("a", 2))
+        p.model_name = "abc"
+        assert p._family_limit(table, 9) == 1
+        p.model_name = "ax"
+        assert p._family_limit(table, 9) == 2
+        p.model_name = "z"
+        assert p._family_limit(table, 9) == 9
