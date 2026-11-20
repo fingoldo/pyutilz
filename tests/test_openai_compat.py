@@ -716,6 +716,12 @@ class TestUsageAccountingSurvivors:
         p._record_usage({"prompt_tokens": 10, "completion_tokens": 4})
         assert (p.total_prompt_tokens, p.total_completion_tokens, p.total_cache_hit_tokens, p.total_reasoning_tokens) == (10, 4, 0, 0)
 
+    def test_totals_accumulate_across_calls(self):
+        p = _make_provider()
+        p._record_usage({"prompt_tokens": 10, "completion_tokens": 4, "prompt_tokens_details": {"cache_write_tokens": 3}})
+        p._record_usage({"prompt_tokens": 5, "completion_tokens": 2, "prompt_tokens_details": {"cache_write_tokens": 1}})
+        assert (p.total_prompt_tokens, p.total_completion_tokens, p.total_cache_write_tokens) == (15, 6, 4)
+
     def test_the_deepseek_cache_key_is_read(self):
         p = _make_provider()
         p._record_usage({"prompt_tokens": 10, "prompt_cache_hit_tokens": 6})
