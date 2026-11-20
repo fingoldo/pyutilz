@@ -523,6 +523,31 @@ class TestStreamRetryAndBodyArgumentsSurvivors:
         assert [r["response_started"] for r in p.last_aborted_stream_attempts] == [False, False]
 
 
+class TestStreamRepairSurvivors:
+    """A stream refused over a request parameter is re-opened once with the provider's repaired body, and the refused
+    attempt is recorded (openai_compat.py 504-518)."""
+
+    @pytest.mark.asyncio
+    async def test_a_refused_stream_is_reopened_once_with_the_repaired_body(self, caplog):
+        answer = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}"
+        repaired_body = {"model": "m", "messages": [], "reasoning": {"enabled": False}}
+
+        class _Repairing(_TestProvider):
+            def _body_after_rejected_request(self, body, status, detail):
+                return repaired_body if status == 400 else None
+
+        p = _Repairing(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(side_effect=[_MockStreamResponse(status_code=400), _MockStreamResponse(lines=[answer, "data: [DONE]"])])
+        with caplog.at_level(logging.WARNING):
+            out = [chunk async for chunk in p.generate_stream("q")]
+        assert out == ["ok"]
+        assert p._client.stream.call_count == 2
+        assert p._client.stream.call_args.kwargs["json"] == repaired_body
+        assert "rejected a streaming request parameter" in caplog.text
+        assert [r["response_started"] for r in p.last_aborted_stream_attempts] == [False]
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
