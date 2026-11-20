@@ -653,6 +653,60 @@ class TestStreamWaitAndFinishSurvivors:
         assert exc.value.partial_text == "cut"
 
 
+class TestStreamChunkFoldingSurvivors:
+    """A streamed call records its finish reason, the citations it carried, the merged tool-call fragments and the
+    reasoning text (openai_compat.py 554-564). Read inside the coroutine: per-call state is context-local."""
+
+    @staticmethod
+    def _line(choice=None, **top):
+        return f"data: {jsonlib.dumps({'choices': [choice] if choice is not None else [], **top})}"
+
+    @pytest.mark.asyncio
+    async def test_the_finish_reason_and_citations_of_the_stream_are_kept(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        lines = [
+            self._line({"delta": {"content": "a"}}, citations=["https://src.example/1"]),
+            self._line({"delta": {}, "finish_reason": "stop"}),
+            "data: [DONE]",
+        ]
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=lines))
+        async for _ in p.generate_stream("q"):
+            pass
+        assert p._last_finish_reason == "stop"
+        assert p.last_citations == ["https://src.example/1"]
+
+    @pytest.mark.asyncio
+    async def test_tool_call_fragments_are_merged_by_index(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        lines = [
+            self._line({"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "lookup", "arguments": '{"a":'}}]}}),
+            self._line({"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "1}"}}]}, "finish_reason": "tool_calls"}),
+            "data: [DONE]",
+        ]
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=lines))
+        async for _ in p.generate_stream("q"):
+            pass
+        assert len(p.last_tool_calls) == 1
+        assert p.last_tool_calls[0]["function"]["name"] == "lookup"
+        assert p.last_tool_calls[0]["function"]["arguments"] == '{"a":1}'
+
+    @pytest.mark.asyncio
+    async def test_reasoning_text_is_collected_separately_from_the_answer(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        lines = [
+            self._line({"delta": {"reasoning": "think first"}}),
+            self._line({"delta": {"content": "answer"}}),
+            "data: [DONE]",
+        ]
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=lines))
+        out = [chunk async for chunk in p.generate_stream("q")]
+        assert out == ["answer"]
+        assert p.last_reasoning_text == "think first"
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
