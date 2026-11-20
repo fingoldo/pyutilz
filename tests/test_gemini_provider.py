@@ -1192,6 +1192,19 @@ class TestSchemaAndCandidateCaptureSurvivors:
         schema = {"type": "object", "properties": {"a": {"type": "string"}}}
         assert self._config_for(monkeypatch, schema)["response_json_schema"] == schema
 
+    def test_a_schema_with_a_schema_key_but_no_wrapper_flags_is_sent_whole(self, monkeypatch):
+        bare = {"schema": {"type": "string"}}
+        assert self._config_for(monkeypatch, bare)["response_json_schema"] == bare
+
+    def test_two_candidates_are_requested_in_the_config(self, monkeypatch):
+        from pyutilz.llm import gemini_provider as gp
+
+        monkeypatch.setattr(gp.types, "GenerateContentConfig", lambda **kw: dict(kw))
+        monkeypatch.setattr(gp, "gemini_thinking_config", lambda thinking, model: None)
+        p = _make_provider(candidate_count=2)
+        p._cached_content = None
+        assert p._build_generate_config(0, 0.7, None, False, None, None)["candidate_count"] == 2
+
     def test_a_wrapper_with_only_a_strict_flag_sends_its_inner_schema(self, monkeypatch):
         inner = {"type": "object"}
         cfg = self._config_for(monkeypatch, {"schema": inner, "strict": True})
