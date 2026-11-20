@@ -707,6 +707,42 @@ class TestStreamChunkFoldingSurvivors:
         assert p.last_reasoning_text == "think first"
 
 
+class TestUsageAccountingSurvivors:
+    """Each usage block adds its prompt, completion, cache-hit, reasoning and cache-write tokens to the totals, read from
+    the DeepSeek key or the nested OpenAI/xAI key, and a null field counts as zero (openai_compat.py 587-599)."""
+
+    def test_plain_counts_add_to_the_totals(self):
+        p = _make_provider()
+        p._record_usage({"prompt_tokens": 10, "completion_tokens": 4})
+        assert (p.total_prompt_tokens, p.total_completion_tokens, p.total_cache_hit_tokens, p.total_reasoning_tokens) == (10, 4, 0, 0)
+
+    def test_the_deepseek_cache_key_is_read(self):
+        p = _make_provider()
+        p._record_usage({"prompt_tokens": 10, "prompt_cache_hit_tokens": 6})
+        assert p.total_cache_hit_tokens == 6
+
+    def test_the_nested_openai_cache_key_is_read(self):
+        p = _make_provider()
+        p._record_usage({"prompt_tokens": 10, "prompt_tokens_details": {"cached_tokens": 5}})
+        assert p.total_cache_hit_tokens == 5
+
+    def test_reasoning_tokens_are_read_from_the_completion_details(self):
+        p = _make_provider()
+        p._record_usage({"completion_tokens": 9, "completion_tokens_details": {"reasoning_tokens": 7}})
+        assert p.total_reasoning_tokens == 7
+
+    def test_cache_writes_are_read_from_either_nesting(self):
+        p = _make_provider()
+        p._record_usage({"prompt_tokens_details": {"cache_write_tokens": 3}})
+        p._record_usage({"input_tokens_details": {"cache_write_tokens": 2}})
+        assert p.total_cache_write_tokens == 5
+
+    def test_null_fields_count_as_zero(self):
+        p = _make_provider()
+        p._record_usage({"prompt_tokens": None, "completion_tokens": None, "prompt_cache_hit_tokens": None, "completion_tokens_details": {"reasoning_tokens": None}})
+        assert (p.total_prompt_tokens, p.total_completion_tokens, p.total_cache_hit_tokens, p.total_reasoning_tokens) == (0, 0, 0, 0)
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
