@@ -1271,3 +1271,40 @@ class TestModelFamilyLimitsSurvivors:
         assert p._family_limit(table, 9) == 2
         p.model_name = "z"
         assert p._family_limit(table, 9) == 9
+
+
+class TestLongContextSurchargeAccumulationSurvivors:
+    """The surcharge is charged only above the threshold on a model with a tier, starts from zero and accumulates across
+    calls, and counts each charged call (gemini_provider.py 277-284)."""
+
+    def _provider(self, monkeypatch, model="gemini-2.5-pro"):
+        from pyutilz.llm import gemini_provider as gp
+
+        monkeypatch.setattr(gp, "long_context_surcharge", lambda pricing, prompt, output, cache_read=0: (0.5, 0.25))
+        p = _make_provider()
+        p.model_name = model
+        return p
+
+    def test_the_first_charged_call_starts_from_zero_and_counts_one(self, monkeypatch):
+        p = self._provider(monkeypatch)
+        p._add_long_context_surcharge(250_000, 0, 10)
+        assert p._long_context_surcharge_usd == pytest.approx(0.75, rel=1e-9)
+        assert p._long_context_calls == 1
+
+    def test_later_charged_calls_accumulate(self, monkeypatch):
+        p = self._provider(monkeypatch)
+        p._add_long_context_surcharge(250_000, 0, 10)
+        p._add_long_context_surcharge(300_000, 0, 10)
+        assert p._long_context_surcharge_usd == pytest.approx(1.5, rel=1e-9)
+        assert p._long_context_calls == 2
+
+    def test_a_call_at_or_below_the_threshold_is_not_charged(self, monkeypatch):
+        p = self._provider(monkeypatch)
+        p._add_long_context_surcharge(200_000, 0, 10)
+        assert p._long_context_surcharge_usd == 0.0
+        assert p._long_context_calls == 0
+
+    def test_a_model_without_a_tier_is_never_charged(self, monkeypatch):
+        p = self._provider(monkeypatch, model="gemini-2.5-flash")
+        p._add_long_context_surcharge(250_000, 0, 10)
+        assert p._long_context_surcharge_usd == 0.0
