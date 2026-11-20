@@ -523,6 +523,28 @@ class TestStreamRetryAndBodyArgumentsSurvivors:
         assert [r["response_started"] for r in p.last_aborted_stream_attempts] == [False, False]
 
 
+class TestStreamCloseSurvivors:
+    """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
+
+    @pytest.mark.asyncio
+    async def test_stopping_early_closes_the_response(self):
+        class _Recording(_MockStreamResponse):
+            closed = False
+
+            async def __aexit__(self, *exc_info):
+                type(self).closed = True
+                return False
+
+        resp = _Recording(lines=[f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'a'}}]})}", f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'b'}}]})}", "data: [DONE]"])
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=resp)
+        gen = p.generate_stream("q")
+        assert await gen.__anext__() == "a"
+        await gen.aclose()
+        assert _Recording.closed is True
+
+
 class TestStreamBackoffSurvivors:
     """The stream retry wait doubles from 5 s, is capped at 300 s, adds jitter in [0, 5), and is never shorter than a
     Retry-After the server sent (openai_compat.py 411-422)."""
