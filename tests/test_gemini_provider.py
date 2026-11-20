@@ -1327,3 +1327,43 @@ class TestSafetyRatingDefaultsSurvivors:
             return p.last_safety_ratings
 
         assert asyncio.run(_go()) == [{"category": "HARASSMENT", "probability": "LOW", "blocked": False}]
+
+
+class TestGenerateDefaultsAndBudgetSurvivors:
+    """generate's own defaults reach the config builder unchanged (temperature 0.7, no cap, no JSON mode), a cap of one token
+    is a real cap, and the budget is fitted with the prompt and system in that order (gemini_provider.py 435-470)."""
+
+    def _run(self, monkeypatch, **kwargs):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        p = _make_provider()
+        built: list = []
+        fitted: list = []
+
+        def _build(*args):
+            built.append(args)
+            return "CFG"
+
+        def _fit(self, max_tokens, prompt, system=None):
+            fitted.append((max_tokens, prompt, system))
+            return max_tokens
+
+        monkeypatch.setattr(p, "_build_generate_config", _build)
+        monkeypatch.setattr(type(p), "fit_max_tokens_to_context", _fit)
+        resp = _ResponseWithText([SimpleNamespace(finish_reason="STOP")], text="ok")
+        p.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=AsyncMock(return_value=resp))))
+        asyncio.run(p.generate(**kwargs))
+        return built, fitted
+
+    def test_the_defaults_reach_the_config_builder_unchanged(self, monkeypatch):
+        built, _fitted = self._run(monkeypatch, prompt="hi")
+        assert built == [(None, 0.7, None, False, None, None)]
+
+    def test_a_cap_of_one_token_is_kept(self, monkeypatch):
+        built, _fitted = self._run(monkeypatch, prompt="hi", max_tokens=1)
+        assert built[0][0] == 1
+
+    def test_the_budget_is_fitted_with_the_prompt_then_the_system(self, monkeypatch):
+        _built, fitted = self._run(monkeypatch, prompt="hi", system="s", max_tokens=5)
+        assert fitted == [(5, "hi", "s")]
