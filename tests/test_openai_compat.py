@@ -548,6 +548,57 @@ class TestStreamRepairSurvivors:
         assert [r["response_started"] for r in p.last_aborted_stream_attempts] == [False]
 
 
+class TestStreamRepairConditionsSurvivors:
+    """The repaired re-issue happens only before any content and only once; a retried open is logged
+    (openai_compat.py 509-524)."""
+
+    @staticmethod
+    def _repairing_provider(repaired_body):
+        class _Repairing(_TestProvider):
+            def _body_after_rejected_request(self, body, status, detail):
+                return repaired_body if status == 400 else None
+
+        return _Repairing(api_key="test-key", model="test-model")  # pragma: allowlist secret
+
+    @pytest.mark.asyncio
+    async def test_a_second_refusal_is_not_repaired_again(self):
+        p = self._repairing_provider({"model": "m", "messages": []})
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(side_effect=[_MockStreamResponse(status_code=400), _MockStreamResponse(status_code=400)])
+        with pytest.raises(httpx.HTTPStatusError):
+            async for _ in p.generate_stream("q"):
+                pass
+        assert p._client.stream.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_error_after_content_is_not_repaired(self):
+        content = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'partial'}}]})}"
+        refusal = f"data: {jsonlib.dumps({'error': {'code': 400, 'message': 'bad parameter'}})}"
+        p = self._repairing_provider({"model": "m", "messages": []})
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[content, refusal, "data: [DONE]"]))
+        with pytest.raises(httpx.HTTPStatusError):
+            async for _ in p.generate_stream("q"):
+                pass
+        assert p._client.stream.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_retried_open_is_logged_with_its_attempt_number(self, monkeypatch, caplog):
+        import logging
+
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        monkeypatch.setattr(openai_compat_mod, "MAX_RETRY_ATTEMPTS", 3)
+        monkeypatch.setattr(openai_compat_mod.asyncio, "sleep", AsyncMock())
+        answer = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}"
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(side_effect=[_MockStreamResponse(status_code=429), _MockStreamResponse(lines=[answer, "data: [DONE]"])])
+        with caplog.at_level(logging.WARNING):
+            [chunk async for chunk in p.generate_stream("q")]
+        assert "Streaming attempt 1 failed" in caplog.text
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
