@@ -429,6 +429,46 @@ class TestPricingFallbackSurvivors:
         assert p._cache_write_cost_per_1m("m") == 1.0
 
 
+class TestStreamBackoffSurvivors:
+    """The stream retry wait doubles from 5 s, is capped at 300 s, adds jitter in [0, 5), and is never shorter than a
+    Retry-After the server sent (openai_compat.py 411-422)."""
+
+    @staticmethod
+    def _wait(monkeypatch, attempt, jitter=0.0, exc=None):
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        seen = []
+
+        def _uniform(a, b):
+            seen.append((a, b))
+            return jitter
+
+        monkeypatch.setattr(openai_compat_mod.random, "uniform", _uniform)
+        wait = OpenAICompatibleProvider._stream_retry_backoff(exc if exc is not None else RuntimeError("x"), attempt)
+        return wait, seen
+
+    def test_the_wait_doubles_from_five_seconds_and_is_capped_at_300(self, monkeypatch):
+        assert self._wait(monkeypatch, 1)[0] == 5.0
+        assert self._wait(monkeypatch, 3)[0] == 8.0
+        assert self._wait(monkeypatch, 8)[0] == 256.0
+        assert self._wait(monkeypatch, 9)[0] == 300.0
+
+    def test_the_jitter_is_drawn_from_zero_to_five_and_added(self, monkeypatch):
+        wait, seen = self._wait(monkeypatch, 3, jitter=2.5)
+        assert seen == [(0, 5)]
+        assert wait == 10.5
+
+    def test_a_retry_after_longer_than_the_backoff_is_honoured(self, monkeypatch):
+        response = httpx.Response(429, headers={"retry-after": "60"})
+        exc = httpx.HTTPStatusError("rate limited", request=httpx.Request("POST", "https://x"), response=response)
+        assert self._wait(monkeypatch, 1, exc=exc)[0] == 60.0
+
+    def test_a_retry_after_shorter_than_the_backoff_does_not_shorten_it(self, monkeypatch):
+        response = httpx.Response(429, headers={"retry-after": "1"})
+        exc = httpx.HTTPStatusError("rate limited", request=httpx.Request("POST", "https://x"), response=response)
+        assert self._wait(monkeypatch, 9, exc=exc)[0] == 300.0
+
+
 class TestCloseSurvivors:
     """_close closes the current HTTP client only when it is still open (openai_compat.py 325-326)."""
 
