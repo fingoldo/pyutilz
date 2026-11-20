@@ -1378,3 +1378,38 @@ class TestProviderIdentityAndTimeoutSurvivors:
 
     def test_a_request_is_bounded_by_ten_minutes(self):
         assert GeminiProvider._request_timeout_seconds == 600.0
+
+
+class TestReasoningTotalsAndCallResetSurvivors:
+    """Reasoning tokens accumulate across calls, and each generate call starts from a clean per-call state, so the last
+    call's usage does not leak into the next call (gemini_provider.py 399, 468)."""
+
+    def _generate(self, p, response):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        p.client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=AsyncMock(return_value=response))))
+
+        async def _go():
+            await p.generate("hi")
+            return p._last_usage, p.total_reasoning_tokens
+
+        return asyncio.run(_go())
+
+    def _usage_response(self, thoughts):
+        usage = SimpleNamespace(prompt_token_count=1, candidates_token_count=1, thoughts_token_count=thoughts, cached_content_token_count=0)
+        return SimpleNamespace(candidates=[SimpleNamespace(finish_reason="STOP")], text="ok", usage_metadata=usage)
+
+    def test_reasoning_tokens_accumulate_across_calls(self):
+        p = _make_provider()
+        self._generate(p, self._usage_response(thoughts=10))
+        _last, total = self._generate(p, self._usage_response(thoughts=4))
+        assert total == 14
+
+    def test_a_call_without_usage_does_not_inherit_the_previous_call_usage(self):
+        p = _make_provider()
+        self._generate(p, self._usage_response(thoughts=10))
+        no_usage = SimpleNamespace(candidates=[SimpleNamespace(finish_reason="STOP")], text="ok", usage_metadata=None)
+        last, _total = self._generate(p, no_usage)
+        assert last["reasoning_tokens"] == 0
+        assert last["input_tokens"] == 0
