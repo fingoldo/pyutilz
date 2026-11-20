@@ -445,6 +445,37 @@ class TestStreamDefaultsSurvivors:
         assert "response_format" not in body
 
 
+class TestStreamPreparationSurvivors:
+    """A streamed call awaits the provider's async preparation and starts from a clean per-call state
+    (openai_compat.py 457, 461)."""
+
+    @pytest.mark.asyncio
+    async def test_a_stream_call_awaits_the_async_preparation(self):
+        p = _make_provider()
+        p._async_prepare = AsyncMock()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=["data: [DONE]"]))
+        async for _ in p.generate_stream("q"):
+            pass
+        p._async_prepare.assert_awaited_once()
+
+    def test_a_stream_call_starts_from_a_clean_per_call_state(self):
+        import asyncio
+
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=["data: [DONE]"]))
+
+        async def _go():
+            # PerCallAttr state is context-local: the flag is set and read inside the same coroutine.
+            p.last_json_mode_fallback = True
+            async for _ in p.generate_stream("q"):
+                pass
+            return p.last_json_mode_fallback
+
+        assert asyncio.run(_go()) is False
+
+
 class TestStreamBackoffSurvivors:
     """The stream retry wait doubles from 5 s, is capped at 300 s, adds jitter in [0, 5), and is never shorter than a
     Retry-After the server sent (openai_compat.py 411-422)."""
