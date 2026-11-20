@@ -599,6 +599,60 @@ class TestStreamRepairConditionsSurvivors:
         assert "Streaming attempt 1 failed" in caplog.text
 
 
+class TestStreamWaitAndFinishSurvivors:
+    """A retried open waits the backoff before reopening and logs the attempt with its wait; a stream that closes with
+    finish_reason 'error' or 'length' raises rather than returning a fragment (openai_compat.py 524-536)."""
+
+    @pytest.mark.asyncio
+    async def test_a_retried_open_waits_the_backoff_then_reopens_and_logs_it(self, monkeypatch, caplog):
+        import logging
+
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        monkeypatch.setattr(openai_compat_mod, "MAX_RETRY_ATTEMPTS", 3)
+        sleep = AsyncMock()
+        monkeypatch.setattr(openai_compat_mod.asyncio, "sleep", sleep)
+        p = _make_provider()
+        monkeypatch.setattr(p, "_stream_retry_backoff", lambda exc, attempt: 7.0)
+        answer = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}"
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(side_effect=[_MockStreamResponse(status_code=429), _MockStreamResponse(lines=[answer, "data: [DONE]"])])
+        with caplog.at_level(logging.WARNING):
+            [chunk async for chunk in p.generate_stream("q")]
+        sleep.assert_awaited_once_with(7.0)
+        assert "Streaming attempt 1 failed (HTTPStatusError: " in caplog.text
+        assert "retrying in 7s" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_stream_closing_with_finish_reason_error_raises_with_the_partial_text(self):
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        partial = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'partial'}}]})}"
+        failed = f"data: {jsonlib.dumps({'choices': [{'delta': {}, 'finish_reason': 'error'}]})}"
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[partial, failed, "data: [DONE]"]))
+        with pytest.raises(LLMStreamInterruptedError) as exc:
+            async for _ in p.generate_stream("q"):
+                pass
+        assert exc.value.partial_text == "partial"
+
+    @pytest.mark.asyncio
+    async def test_a_stream_closing_with_finish_reason_length_raises_a_truncation(self):
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        partial = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'cut'}}]})}"
+        cut = f"data: {jsonlib.dumps({'choices': [{'delta': {}, 'finish_reason': 'length'}]})}"
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[partial, cut, "data: [DONE]"]))
+        with pytest.raises(LLMTruncationError) as exc:
+            async for _ in p.generate_stream("q"):
+                pass
+        assert exc.value.finish_reason == "length"
+        assert exc.value.partial_text == "cut"
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
