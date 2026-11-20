@@ -1194,3 +1194,45 @@ class TestSchemaAndCandidateCaptureSurvivors:
         with caplog.at_level(logging.DEBUG):
             p._capture_candidate_metadata(_Broken())
         assert "Gemini candidate metadata capture failed: unreadable" in caplog.text
+
+
+class TestGenerateJsonForwardingSurvivors:
+    """generate_json forwards its options to the JSON path in a fixed order: the defaults are a 0.3 temperature and no cap,
+    images are sent only when non-empty, thinking whenever it is set (including False), and the schema when given
+    (gemini_provider.py 293-320)."""
+
+    def _record(self, monkeypatch, **kwargs):
+        import asyncio
+
+        p = _make_provider()
+        calls: list = []
+
+        async def _via(prompt, system, temperature, max_tokens, json_mode=False, **extra):
+            calls.append((prompt, system, temperature, max_tokens, json_mode, extra))
+            return {"ok": True}
+
+        monkeypatch.setattr(p, "_generate_json_via", _via)
+        out = asyncio.run(p.generate_json("hi", **kwargs))
+        assert out == {"ok": True}
+        return calls[0]
+
+    def test_the_defaults_are_a_point_three_temperature_and_no_cap_and_json_mode(self, monkeypatch):
+        prompt, system, temperature, max_tokens, json_mode, extra = self._record(monkeypatch)
+        assert (prompt, system, temperature, max_tokens, json_mode, extra) == ("hi", None, 0.3, 0, True, {})
+
+    def test_an_empty_image_list_is_not_forwarded(self, monkeypatch):
+        *_rest, extra = self._record(monkeypatch, images=[])
+        assert extra == {}
+
+    def test_images_thinking_and_schema_are_forwarded_under_their_names(self, monkeypatch):
+        schema = {"type": "object"}
+        *_rest, extra = self._record(monkeypatch, images=["data:x"], thinking="high", json_schema=schema)
+        assert extra == {"images": ["data:x"], "thinking": "high", "json_schema": schema}
+
+    def test_a_thinking_setting_of_false_is_still_forwarded(self, monkeypatch):
+        *_rest, extra = self._record(monkeypatch, thinking=False)
+        assert extra == {"thinking": False}
+
+    def test_the_sampling_arguments_keep_their_positions(self, monkeypatch):
+        prompt, system, temperature, max_tokens, *_rest = self._record(monkeypatch, system="be brief", temperature=0.9)
+        assert (prompt, system, temperature, max_tokens) == ("hi", "be brief", 0.9, 0)
