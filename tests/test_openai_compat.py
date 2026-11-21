@@ -1012,6 +1012,11 @@ class TestSessionCostArithmeticSurvivors:
         p.total_reasoning_tokens = 0
         cost = p.get_session_cost()
         assert cost["cache_miss_tokens"] == 500_000
+        assert cost["prompt_tokens"] == 1_000_000
+        assert cost["cache_hit_tokens"] == 400_000
+        assert cost["completion_tokens"] == 500_000
+        assert cost["reasoning_tokens"] == 0
+        assert cost["calls"] == 0
         assert cost["input_cost_usd"] == pytest.approx(0.5 * 1.0 + 0.4 * 0.1 + 0.1 * 1.0, rel=1e-9)
         assert cost["output_cost_usd"] == pytest.approx(0.5 * 2.0, rel=1e-9)
         assert cost["total_cost_usd"] == pytest.approx(0.64 + 1.0, rel=1e-9)
