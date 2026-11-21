@@ -963,6 +963,41 @@ class TestBufferedFinishReasonSurvivors:
         assert p._last_finish_reason == "unknown"
 
 
+class TestLongContextSurchargeSurvivors:
+    """A call whose prompt reaches the long-context tier adds that tier's surcharge to a running total and counts it;
+    a short prompt adds nothing (openai_compat.py 907-925)."""
+
+    def test_a_long_prompt_adds_the_surcharge_and_counts_the_call(self, monkeypatch):
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        class _Tier:
+            def applies(self, n):
+                return n >= 10
+
+        class _LongTier(_TestProvider):
+            def _long_context_tier(self, model):
+                return _Tier()
+
+        seen = []
+
+        def _surcharge(pricing, prompt, billed, cache_read, cache_write):
+            seen.append((prompt, billed, cache_read, cache_write))
+            return (1.5, 2.5)
+
+        monkeypatch.setattr(openai_compat_mod, "long_context_surcharge", _surcharge)
+        p = _LongTier(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        p._add_long_context_surcharge(20, 5, 3, 2)
+        p._add_long_context_surcharge(20, 5, 3, 2)
+        assert seen == [(20, 5, 3, 2), (20, 5, 3, 2)]
+        assert p._long_context_surcharge_usd == pytest.approx(8.0)
+        assert p._long_context_calls == 2
+
+    def test_a_short_prompt_adds_no_surcharge(self):
+        p = _make_provider()
+        p._add_long_context_surcharge(20, 5, 3, 2)
+        assert p._long_context_calls == 0
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
