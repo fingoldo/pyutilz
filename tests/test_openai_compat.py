@@ -995,6 +995,34 @@ class TestCostWithNonUnitRatesSurvivors:
         assert cost["output_cost_usd"] == pytest.approx(0.5 * 8.0, rel=1e-9)
 
 
+class TestLongTierEstimateSurvivors:
+    """An estimate for a prompt at the long-context tier prices the call with price_call(pricing, input, output) and sums
+    the parts (openai_compat.py 932)."""
+
+    def test_the_long_tier_estimate_passes_pricing_then_tokens_in_order(self, monkeypatch):
+        import pyutilz.llm.openai_compat as openai_compat_mod
+        from pyutilz.llm._pricing import Pricing
+
+        class _Tier:
+            def applies(self, n):
+                return n >= 10
+
+        class _LongTier(_TestProvider):
+            def _long_context_tier(self, model):
+                return _Tier()
+
+        seen = []
+
+        def _price_call(pricing, input_tokens, output_tokens):
+            seen.append((pricing, input_tokens, output_tokens))
+            return (1.25, 2.5)
+
+        monkeypatch.setattr(openai_compat_mod, "price_call", _price_call)
+        p = _LongTier(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        assert p.estimate_cost(20, 7) == pytest.approx(3.75, rel=1e-9)
+        assert seen == [(Pricing(input=1.0, output=2.0, cache_hit=None), 20, 7)]
+
+
 class TestLongContextSurchargeSurvivors:
     """A call whose prompt reaches the long-context tier adds that tier's surcharge to a running total and counts it;
     a short prompt adds nothing (openai_compat.py 907-925)."""
