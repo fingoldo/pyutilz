@@ -1177,6 +1177,46 @@ class TestPerLoopClientCloseSurvivors:
         assert "Closing a per-loop HTTP client failed: loop is gone" in caplog.text
 
 
+class TestLoggedDetailLengthSurvivors:
+    """Error detail in the retry log is cut to 200 characters and in the repair log to 160 (openai_compat.py 526, 812)."""
+
+    @pytest.mark.asyncio
+    async def test_the_retry_log_keeps_exactly_200_characters_of_the_error(self, monkeypatch, caplog):
+        import logging
+
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        monkeypatch.setattr(openai_compat_mod, "MAX_RETRY_ATTEMPTS", 3)
+        monkeypatch.setattr(openai_compat_mod.asyncio, "sleep", AsyncMock())
+        answer = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}"
+        long_text = "x" * 300
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(side_effect=[httpx.ReadError(long_text), _MockStreamResponse(lines=[answer, "data: [DONE]"])])
+        with caplog.at_level(logging.WARNING):
+            [chunk async for chunk in p.generate_stream("q")]
+        assert "x" * 200 + ")," in caplog.text
+        assert "x" * 201 not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_the_repair_log_keeps_exactly_160_characters_of_the_detail(self, caplog):
+        import logging
+
+        class _Repairing(_TestProvider):
+            def _body_after_rejected_request(self, body, status, detail):
+                return {"model": "m", "messages": []} if status == 400 else None
+
+        long_text = "y" * 300
+        p = _Repairing(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        p._client = AsyncMock()
+        ok = _mock_response(body={"choices": [{"message": {"content": "fixed"}, "finish_reason": "stop"}]})
+        p._client.post = AsyncMock(side_effect=[_mock_response(status_code=400, body={"error": {"message": long_text}}), ok])
+        with caplog.at_level(logging.WARNING):
+            assert await p.generate("q") == "fixed"
+        assert "y" * 160 in caplog.text
+        assert "y" * 161 not in caplog.text
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
