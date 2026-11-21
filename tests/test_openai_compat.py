@@ -1302,6 +1302,27 @@ class TestFreshProviderAndCapSurvivors:
         assert p._post_and_unwrap.call_args.args[0]["max_tokens"] == 1
 
 
+class TestContextWindowDefaultAndStreamIdentitySurvivors:
+    """A model with no window in the map gets the 128,000-token default; a streamed attempt keeps the generation id of its
+    first chunk, not the last (openai_compat.py 305, 383)."""
+
+    def test_an_unlisted_model_gets_the_128000_token_window(self):
+        assert _make_provider().context_window == 128_000
+
+    @pytest.mark.asyncio
+    async def test_the_generation_id_comes_from_the_first_chunk(self):
+        first = {"id": "gen-1", "choices": [{"delta": {"content": "a"}}]}
+        second = {"id": "gen-2", "choices": [{"delta": {"content": "b"}}]}
+        error = f"data: {jsonlib.dumps({'error': {'code': 502, 'message': 'upstream connection lost'}})}"
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[f"data: {jsonlib.dumps(first)}", f"data: {jsonlib.dumps(second)}", error]))
+        with pytest.raises(httpx.HTTPStatusError):
+            async for _ in p.generate_stream("q"):
+                pass
+        assert p.last_aborted_stream_attempts[0]["generation_id"] == "gen-1"
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
