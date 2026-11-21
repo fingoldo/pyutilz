@@ -802,6 +802,57 @@ class TestGenerateDefaultsAndOrderSurvivors:
         assert p.last_json_mode_fallback is False
 
 
+class TestEmptyCompletionFallbackSurvivors:
+    """An empty buffered answer under response_format is re-issued once without it and flagged; a second empty answer
+    raises, naming whether the format was sent, dropped or never requested (openai_compat.py 727-752)."""
+
+    @pytest.mark.asyncio
+    async def test_an_empty_json_answer_is_reissued_once_without_response_format(self, caplog):
+        import logging
+
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(side_effect=[None, "fallback answer"])
+        with caplog.at_level(logging.WARNING):
+            out = await p.generate("q", json_mode=True)
+        assert out == "fallback answer"
+        assert p._post_and_unwrap.await_count == 2
+        second_body = p._post_and_unwrap.call_args_list[1].args[0]
+        assert "response_format" not in second_body
+        assert "re-issuing once without it" in caplog.text
+        assert "TestProvider/test-model returned an empty completion under response_format" in caplog.text
+        assert p.last_json_mode_fallback is True
+
+    @pytest.mark.asyncio
+    async def test_an_empty_truncated_json_answer_is_reissued_once_without_response_format(self, caplog):
+        import logging
+
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(side_effect=[LLMTruncationError("cut", finish_reason="length", partial_text=""), "answer"])
+        with caplog.at_level(logging.WARNING):
+            out = await p.generate("q", json_mode=True)
+        assert out == "answer"
+        assert "response_format" not in p._post_and_unwrap.call_args_list[1].args[0]
+        assert "EMPTY completion cut off by max_tokens under response_format" in caplog.text
+        assert p.last_json_mode_fallback is True
+
+    @pytest.mark.asyncio
+    async def test_a_second_empty_answer_reports_the_format_as_dropped(self):
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(side_effect=[None, None])
+        with pytest.raises(LLMProviderError, match=r"response_format=dropped\)"):
+            await p.generate("q", json_mode=True)
+
+    @pytest.mark.asyncio
+    async def test_an_empty_answer_without_a_json_request_reports_the_format_as_not_sent(self):
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(return_value=None)
+        with pytest.raises(LLMProviderError, match=r"response_format=not sent\)"):
+            await p.generate("q")
+        assert p._post_and_unwrap.await_count == 1
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
