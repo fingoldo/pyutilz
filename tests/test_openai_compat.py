@@ -544,7 +544,7 @@ class TestStreamRepairSurvivors:
         assert out == ["ok"]
         assert p._client.stream.call_count == 2
         assert p._client.stream.call_args.kwargs["json"] == repaired_body
-        assert "rejected a streaming request parameter" in caplog.text
+        assert "TestProvider/test-model rejected a streaming request parameter" in caplog.text
         assert [r["response_started"] for r in p.last_aborted_stream_attempts] == [False]
 
 
