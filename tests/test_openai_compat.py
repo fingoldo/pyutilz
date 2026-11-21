@@ -1132,6 +1132,51 @@ class TestGenerateJsonDefaultsSurvivors:
         assert spy.call_args.kwargs["json_mode"] is True
 
 
+class TestPerLoopClientCloseSurvivors:
+    """_close also closes the copies made for other event loops: open ones are closed, closed ones skipped without
+    stopping the loop, and a copy that fails to close is logged at debug and does not raise (openai_compat.py 325-335)."""
+
+    @staticmethod
+    def _provider_with_loop_copies(monkeypatch, current, others):
+        from pyutilz.llm.base import PerLoopHTTPClient
+
+        monkeypatch.setattr(PerLoopHTTPClient, "all_clients", lambda descriptor, owner: [current, *others])
+        p = _make_provider()
+        p._client = current
+        return p
+
+    @pytest.mark.asyncio
+    async def test_open_copies_for_other_loops_are_closed(self, monkeypatch):
+        current = AsyncMock(is_closed=False)
+        other = AsyncMock(is_closed=False)
+        p = self._provider_with_loop_copies(monkeypatch, current, [other])
+        await p._close()
+        other.aclose.assert_awaited_once()
+        current.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_closed_copy_is_skipped_and_the_loop_goes_on(self, monkeypatch):
+        current = AsyncMock(is_closed=True)
+        closed_copy = AsyncMock(is_closed=True)
+        open_copy = AsyncMock(is_closed=False)
+        p = self._provider_with_loop_copies(monkeypatch, current, [closed_copy, open_copy])
+        await p._close()
+        closed_copy.aclose.assert_not_awaited()
+        open_copy.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_copy_that_fails_to_close_is_logged_and_not_raised(self, monkeypatch, caplog):
+        import logging
+
+        current = AsyncMock(is_closed=True)
+        failing = AsyncMock(is_closed=False)
+        failing.aclose.side_effect = RuntimeError("loop is gone")
+        p = self._provider_with_loop_copies(monkeypatch, current, [failing])
+        with caplog.at_level(logging.DEBUG, logger="pyutilz.llm.openai_compat"):
+            await p._close()
+        assert "Closing a per-loop HTTP client failed: loop is gone" in caplog.text
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
