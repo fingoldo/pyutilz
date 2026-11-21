@@ -1217,6 +1217,31 @@ class TestLoggedDetailLengthSurvivors:
         assert "y" * 161 not in caplog.text
 
 
+class TestFreshProviderAndCapSurvivors:
+    """A fresh provider reports zero cost and no cache writes, and an explicit output cap is sent as max_tokens
+    (openai_compat.py 698, 941)."""
+
+    def test_a_fresh_provider_reports_zero_input_cost_and_no_cache_misses(self):
+        cost = _make_provider().get_session_cost()
+        assert cost["cache_miss_tokens"] == 0
+        assert cost["input_cost_usd"] == 0.0
+        assert cost["long_context_calls"] == 0
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_output_cap_is_sent_as_max_tokens(self):
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(return_value="ok")
+        await p.generate("q", max_tokens=50)
+        assert p._post_and_unwrap.call_args.args[0]["max_tokens"] == 50
+
+    @pytest.mark.asyncio
+    async def test_a_one_token_cap_is_sent_as_max_tokens(self):
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(return_value="ok")
+        await p.generate("q", max_tokens=1)
+        assert p._post_and_unwrap.call_args.args[0]["max_tokens"] == 1
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
