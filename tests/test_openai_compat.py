@@ -922,6 +922,47 @@ class TestBufferedRepairAndMessageExtrasSurvivors:
         assert p.last_citations == []
 
 
+class TestBufferedFinishReasonSurvivors:
+    """A buffered completion ending with finish_reason 'error' raises with its partial text; a tool-call-only completion
+    returns empty text with the tool calls kept; a missing finish reason reads as 'unknown' (openai_compat.py 837-851)."""
+
+    @pytest.mark.asyncio
+    async def test_an_error_finish_raises_with_the_partial_text(self):
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body={"choices": [{"message": {"content": "partial"}, "finish_reason": "error"}]}))
+        # Retryable, so the decorator would back off for real: one attempt, no wait.
+        original_stop, original_wait = p.generate.retry.stop, p.generate.retry.wait
+        p.generate.retry.stop = stop_after_attempt(1)
+        p.generate.retry.wait = wait_none()
+        try:
+            with pytest.raises(LLMStreamInterruptedError, match=r"TestProvider response ended with finish_reason='error'") as exc:
+                await p.generate("q")
+        finally:
+            p.generate.retry.stop = original_stop
+            p.generate.retry.wait = original_wait
+        assert exc.value.partial_text == "partial"
+
+    @pytest.mark.asyncio
+    async def test_a_tool_call_only_completion_returns_empty_text_and_keeps_the_calls(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        call = {"id": "t1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}
+        p._client.post = AsyncMock(return_value=_mock_response(body={"choices": [{"message": {"content": None, "tool_calls": [call]}, "finish_reason": "tool_calls"}]}))
+        assert await p.generate("q") == ""
+        assert p.last_tool_calls == [call]
+
+    @pytest.mark.asyncio
+    async def test_a_completion_without_a_finish_reason_reads_as_unknown(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body={"choices": [{"message": {"content": "ok"}}]}))
+        assert await p.generate("q") == "ok"
+        assert p._last_finish_reason == "unknown"
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
