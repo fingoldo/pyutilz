@@ -853,6 +853,30 @@ class TestEmptyCompletionFallbackSurvivors:
         assert p._post_and_unwrap.await_count == 1
 
 
+class TestBufferedPostAndEmptyMessageSurvivors:
+    """A buffered call posts to /chat/completions, hands the response to the provider's response hook, and an empty
+    answer names its finish reason, reasoning tokens and format state in one fixed message (openai_compat.py 754-792)."""
+
+    @pytest.mark.asyncio
+    async def test_a_buffered_call_posts_to_chat_completions_and_tracks_the_response(self):
+        p = _make_provider()
+        p._track_provider_specific_response = MagicMock()
+        data = {"id": "gen-9", "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body=data))
+        assert await p.generate("q") == "ok"
+        assert p._client.post.call_args.args[0] == "/chat/completions"
+        assert any(c.args[0] == data for c in p._track_provider_specific_response.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_an_empty_answer_without_a_json_request_has_one_fixed_message(self):
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(return_value=None)
+        with pytest.raises(LLMProviderError) as exc:
+            await p.generate("q")
+        assert str(exc.value) == "TestProvider/test-model returned an empty completion (finish_reason=None, reasoning_tokens=0, response_format=not sent)"
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
