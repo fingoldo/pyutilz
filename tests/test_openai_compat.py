@@ -998,6 +998,35 @@ class TestLongContextSurchargeSurvivors:
         assert p._long_context_calls == 0
 
 
+class TestSessionCostArithmeticSurvivors:
+    """The session cost splits prompt tokens into cache-hit, cache-write and miss, prices each at its own rate, prices
+    the billed output, and adds any long-context surcharge (openai_compat.py 936-968). Test rates: input 1.0,
+    cache-hit 0.1 (from the test provider), output 2.0; cache-write falls back to input."""
+
+    def test_the_session_cost_prices_each_token_class_at_its_own_rate(self):
+        p = _make_provider()
+        p.total_prompt_tokens = 1_000_000
+        p.total_cache_hit_tokens = 400_000
+        p.total_cache_write_tokens = 100_000
+        p.total_completion_tokens = 500_000
+        p.total_reasoning_tokens = 0
+        cost = p.get_session_cost()
+        assert cost["cache_miss_tokens"] == 500_000
+        assert cost["input_cost_usd"] == pytest.approx(0.5 * 1.0 + 0.4 * 0.1 + 0.1 * 1.0, rel=1e-9)
+        assert cost["output_cost_usd"] == pytest.approx(0.5 * 2.0, rel=1e-9)
+        assert cost["total_cost_usd"] == pytest.approx(0.64 + 1.0, rel=1e-9)
+
+    def test_the_surcharge_is_added_to_the_total_and_reported(self):
+        p = _make_provider()
+        p.total_prompt_tokens = 1_000
+        p._long_context_surcharge_usd = 0.25
+        p._long_context_calls = 3
+        cost = p.get_session_cost()
+        assert cost["long_context_surcharge_usd"] == 0.25
+        assert cost["long_context_calls"] == 3
+        assert cost["total_cost_usd"] == pytest.approx(cost["input_cost_usd"] + cost["output_cost_usd"] + 0.25, rel=1e-9)
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
