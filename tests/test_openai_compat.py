@@ -877,6 +877,51 @@ class TestBufferedPostAndEmptyMessageSurvivors:
         assert str(exc.value) == "TestProvider/test-model returned an empty completion (finish_reason=None, reasoning_tokens=0, response_format=not sent)"
 
 
+class TestBufferedRepairAndMessageExtrasSurvivors:
+    """A buffered call re-issues once with a provider-repaired body when the upstream rejects a parameter; any other
+    rejection raises the API error with its detail; a completion message's tool calls, citations and reasoning are kept
+    (openai_compat.py 798-831)."""
+
+    @pytest.mark.asyncio
+    async def test_a_non_retryable_rejection_raises_the_api_error_with_its_detail(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(status_code=400, body={"error": {"message": "bad param"}}))
+        with pytest.raises(LLMProviderError) as exc:
+            await p.generate("q")
+        assert str(exc.value) == "TestProvider API error 400: bad param"
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_parameter_is_repaired_once_and_logged(self, caplog):
+        import logging
+
+        class _Repairing(_TestProvider):
+            def _body_after_rejected_request(self, body, status, detail):
+                return {"model": "m", "messages": [], "repaired": True} if status == 400 else None
+
+        p = _Repairing(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        p._client = AsyncMock()
+        ok = _mock_response(body={"choices": [{"message": {"content": "fixed"}, "finish_reason": "stop"}]})
+        p._client.post = AsyncMock(side_effect=[_mock_response(status_code=400, body={"error": {"message": "bad param"}}), ok])
+        with caplog.at_level(logging.WARNING):
+            assert await p.generate("q") == "fixed"
+        assert p._client.post.call_args.kwargs["json"] == {"model": "m", "messages": [], "repaired": True}
+        assert "TestProvider/test-model rejected a request parameter (HTTP 400) - re-issuing once with it adjusted: bad param" in caplog.text
+
+    def test_the_message_extras_keep_tool_calls_citations_and_reasoning(self):
+        p = _make_provider()
+        p._capture_message_extras({"tool_calls": [{"id": "t1"}], "citations": ["https://a.example"], "reasoning": "why"})
+        assert p.last_tool_calls == [{"id": "t1"}]
+        assert p.last_citations == ["https://a.example"]
+        assert p.last_reasoning_text == "why"
+
+    def test_the_message_extras_default_to_empty_when_absent(self):
+        p = _make_provider()
+        p._capture_message_extras({"tool_calls": "not-a-list", "citations": None})
+        assert p.last_tool_calls == []
+        assert p.last_citations == []
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
