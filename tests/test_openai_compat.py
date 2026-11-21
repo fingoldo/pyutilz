@@ -1376,6 +1376,57 @@ class TestStreamRetryGuardSurvivors:
         recorded.assert_called_once_with(usage)
 
 
+class TestUsageHookAndSpecialStatusSurvivors:
+    """Recording usage calls the provider's usage hook and the long-context surcharge for a prompt at the tier; a buffered
+    call hands its error response to the provider's special-status handler first (openai_compat.py 625, 627, 783)."""
+
+    def test_recording_usage_calls_the_provider_hook_with_the_block(self):
+        p = _make_provider()
+        hook = MagicMock()
+        p._track_provider_specific_usage = hook
+        usage = {"prompt_tokens": 3, "completion_tokens": 1}
+        p._record_usage(usage)
+        hook.assert_called_once_with(usage)
+
+    def test_recording_usage_applies_the_surcharge_for_a_long_prompt(self):
+        class _Tier:
+            def applies(self, n):
+                return n >= 10
+
+        class _LongTier(_TestProvider):
+            def _long_context_tier(self, model):
+                return _Tier()
+
+        p = _LongTier(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        p._add_long_context_surcharge = MagicMock()
+        p._record_usage({"prompt_tokens": 20, "completion_tokens": 5})
+        p._add_long_context_surcharge.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_a_buffered_special_status_is_raised_by_the_provider_handler(self):
+        from pyutilz.llm.exceptions import LLMProviderError
+        from tests.openai_compat_support import _TestProvider
+
+        class _Special(_TestProvider):
+            def _handle_special_status(self, resp):
+                if resp.status_code == 402:
+                    raise LLMProviderError("credits exhausted")
+
+        p = _Special(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(status_code=402, body={"error": {"message": "pay up"}}))
+        # 402 is retryable: one attempt and no wait, so a missed handler fails at once instead of backing off.
+        original_stop, original_wait = p.generate.retry.stop, p.generate.retry.wait
+        p.generate.retry.stop = stop_after_attempt(1)
+        p.generate.retry.wait = wait_none()
+        try:
+            with pytest.raises(LLMProviderError, match="credits exhausted"):
+                await p.generate("q")
+        finally:
+            p.generate.retry.stop = original_stop
+            p.generate.retry.wait = original_wait
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
