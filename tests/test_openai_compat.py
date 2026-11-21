@@ -963,6 +963,38 @@ class TestBufferedFinishReasonSurvivors:
         assert p._last_finish_reason == "unknown"
 
 
+class TestCostWithNonUnitRatesSurvivors:
+    """With rates other than 1, the estimate and the session cost multiply each token count by its own rate, at exact
+    values (openai_compat.py 933-947). Rates: input 4.0, output 8.0, cache-hit 0.1 (test provider), cache-write 2.5."""
+
+    @staticmethod
+    def _provider():
+        class _Priced(_TestProvider):
+            def _input_cost_per_1m(self, model):
+                return 4.0
+
+            def _output_cost_per_1m(self, model):
+                return 8.0
+
+            def _cache_write_cost_per_1m(self, model):
+                return 2.5
+
+        return _Priced(api_key="test-key", model="test-model")  # pragma: allowlist secret
+
+    def test_the_estimate_prices_input_and_output_at_their_rates(self):
+        assert self._provider().estimate_cost(1_000_000, 500_000) == pytest.approx(4.0 + 4.0, rel=1e-9)
+
+    def test_the_session_cost_prices_each_token_class_at_its_rate(self):
+        p = self._provider()
+        p.total_prompt_tokens = 1_000_000
+        p.total_cache_hit_tokens = 400_000
+        p.total_cache_write_tokens = 100_000
+        p.total_completion_tokens = 500_000
+        cost = p.get_session_cost()
+        assert cost["input_cost_usd"] == pytest.approx(0.5 * 4.0 + 0.4 * 0.1 + 0.1 * 2.5, rel=1e-9)
+        assert cost["output_cost_usd"] == pytest.approx(0.5 * 8.0, rel=1e-9)
+
+
 class TestLongContextSurchargeSurvivors:
     """A call whose prompt reaches the long-context tier adds that tier's surcharge to a running total and counts it;
     a short prompt adds nothing (openai_compat.py 907-925)."""
