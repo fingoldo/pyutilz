@@ -1309,6 +1309,21 @@ class TestStreamAttemptSurvivors:
         assert box["streamed_text"] == ["hi"]
 
 
+class TestUnparseableRateLimitHeadersSurvivors:
+    """Headers that cannot be read as a mapping are logged with the reason and leave the previous snapshot in place
+    (openai_compat.py 216)."""
+
+    def test_unreadable_headers_are_logged_and_keep_the_previous_snapshot(self, caplog):
+        import logging
+
+        p = _make_provider()
+        p._capture_rate_limit_headers({"x-ratelimit-remaining-requests": "7"})
+        with caplog.at_level(logging.WARNING):
+            p._capture_rate_limit_headers(42)
+        assert "Could not parse response headers for rate-limit capture:" in caplog.text
+        assert p.last_rate_limits == {"x-ratelimit-remaining-requests": "7"}
+
+
 class TestRateLimitSnapshotSurvivors:
     """The captured snapshot keeps only the x-ratelimit-/ratelimit- headers, lower-cased, replaces the previous one
     on every response, and check_account_limits reports it with short keys (openai_compat.py 203-242)."""
