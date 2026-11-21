@@ -1323,6 +1323,42 @@ class TestContextWindowDefaultAndStreamIdentitySurvivors:
         assert p.last_aborted_stream_attempts[0]["generation_id"] == "gen-1"
 
 
+class TestStreamRetryGuardSurvivors:
+    """A truncated stream raises at once and is never reopened, and a stream's usage is recorded once (openai_compat.py
+    493-505)."""
+
+    @pytest.mark.asyncio
+    async def test_a_truncated_stream_is_raised_and_never_reopened(self, monkeypatch):
+        import pyutilz.llm.openai_compat as openai_compat_mod
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        monkeypatch.setattr(openai_compat_mod, "MAX_RETRY_ATTEMPTS", 3)
+        monkeypatch.setattr(openai_compat_mod.asyncio, "sleep", AsyncMock())
+        partial = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'cut'}}]})}"
+        cut = f"data: {jsonlib.dumps({'choices': [{'delta': {}, 'finish_reason': 'length'}]})}"
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[partial, cut, "data: [DONE]"]))
+        with pytest.raises(LLMTruncationError):
+            async for _ in p.generate_stream("q"):
+                pass
+        assert p._client.stream.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_streams_usage_is_recorded_once(self, monkeypatch):
+        usage = {"prompt_tokens": 3, "completion_tokens": 1}
+        p = _make_provider()
+        recorded = MagicMock()
+        monkeypatch.setattr(p, "_track_streaming_usage", recorded)
+        answer = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}"
+        trailer = f"data: {jsonlib.dumps({'choices': [], 'usage': usage})}"
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[answer, trailer, "data: [DONE]"]))
+        async for _ in p.generate_stream("q"):
+            pass
+        recorded.assert_called_once_with(usage)
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
