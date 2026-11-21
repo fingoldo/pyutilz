@@ -1032,6 +1032,62 @@ class TestSessionCostArithmeticSurvivors:
         assert cost["total_cost_usd"] == pytest.approx(cost["input_cost_usd"] + cost["output_cost_usd"] + 0.25, rel=1e-9)
 
 
+class TestExactMessageTextSurvivors:
+    """The error and truncation messages carry their provider name and state exactly (openai_compat.py 516, 535, 538, 730,
+    731, 871)."""
+
+    @pytest.mark.asyncio
+    async def test_a_stream_ending_in_error_names_the_provider_exactly(self):
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        failed = f"data: {jsonlib.dumps({'choices': [{'delta': {}, 'finish_reason': 'error'}]})}"
+        partial = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'x'}}]})}"
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[partial, failed, "data: [DONE]"]))
+        with pytest.raises(LLMStreamInterruptedError) as exc:
+            async for _ in p.generate_stream("q"):
+                pass
+        assert str(exc.value) == "TestProvider stream ended with finish_reason='error'"
+
+    @pytest.mark.asyncio
+    async def test_a_stream_truncated_by_max_tokens_names_the_cut_exactly(self):
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        partial = f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'cut'}}]})}"
+        cut = f"data: {jsonlib.dumps({'choices': [{'delta': {}, 'finish_reason': 'length'}]})}"
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[partial, cut, "data: [DONE]"]))
+        with pytest.raises(LLMTruncationError) as exc:
+            async for _ in p.generate_stream("q"):
+                pass
+        assert str(exc.value) == "TestProvider streamed response truncated by max_tokens (finish_reason='length')"
+
+    @pytest.mark.asyncio
+    async def test_a_buffered_answer_truncated_by_max_tokens_names_the_cut_exactly(self):
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body={"choices": [{"message": {"content": "cut"}, "finish_reason": "length"}]}))
+        with pytest.raises(LLMTruncationError) as exc:
+            await p.generate("q")
+        assert str(exc.value) == "TestProvider response truncated by max_tokens (finish_reason='length')"
+
+    @pytest.mark.asyncio
+    async def test_the_empty_truncation_reissue_log_names_the_provider_and_the_action(self, caplog):
+        import logging
+
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        p = _make_provider()
+        p._post_and_unwrap = AsyncMock(side_effect=[LLMTruncationError("cut", finish_reason="length", partial_text=""), "answer"])
+        with caplog.at_level(logging.WARNING):
+            await p.generate("q", json_mode=True)
+        assert "TestProvider/test-model returned an EMPTY completion cut off by max_tokens under response_format - re-issuing once without it before reporting truncation" in caplog.text
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
