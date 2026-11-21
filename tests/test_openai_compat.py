@@ -1316,6 +1316,16 @@ class TestCloseSurvivors:
         p._client.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_a_client_without_an_is_closed_flag_is_treated_as_open(self):
+        p = _make_provider()
+        from types import SimpleNamespace
+
+        client = SimpleNamespace(aclose=AsyncMock())
+        p._client = client
+        await p._close()
+        client.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_an_already_closed_client_is_not_closed_again(self):
         p = _make_provider()
         p._client = AsyncMock()
