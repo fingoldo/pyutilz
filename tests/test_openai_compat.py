@@ -1088,6 +1088,34 @@ class TestExactMessageTextSurvivors:
         assert "TestProvider/test-model returned an EMPTY completion cut off by max_tokens under response_format - re-issuing once without it before reporting truncation" in caplog.text
 
 
+class TestStreamMetadataHookSurvivors:
+    """The response hook sees the first chunk as it arrives, then the first and last chunks in that order once the
+    stream ends; a stream with no chunks at all gives it nothing (openai_compat.py 400-406)."""
+
+    @pytest.mark.asyncio
+    async def test_the_hook_sees_the_first_chunk_then_the_first_and_last_in_order(self):
+        p = _make_provider()
+        p._track_provider_specific_response = MagicMock()
+        first = {"id": "gen-1", "choices": [{"delta": {"content": "a"}}]}
+        last = {"id": "gen-2", "choices": [{"delta": {"content": "b"}, "finish_reason": "stop"}]}
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[f"data: {jsonlib.dumps(first)}", f"data: {jsonlib.dumps(last)}", "data: [DONE]"]))
+        async for _ in p.generate_stream("q"):
+            pass
+        ids = [c.args[0]["id"] for c in p._track_provider_specific_response.call_args_list]
+        assert ids == ["gen-1", "gen-1", "gen-2"]
+
+    @pytest.mark.asyncio
+    async def test_a_stream_without_chunks_gives_the_hook_nothing(self):
+        p = _make_provider()
+        p._track_provider_specific_response = MagicMock()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=["data: [DONE]"]))
+        async for _ in p.generate_stream("q"):
+            pass
+        p._track_provider_specific_response.assert_not_called()
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
