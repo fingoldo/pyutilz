@@ -1345,6 +1345,23 @@ class TestStreamRetryGuardSurvivors:
         assert p._client.stream.call_count == 1
 
     @pytest.mark.asyncio
+    async def test_an_empty_truncated_stream_is_not_offered_a_repair(self):
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        class _AlwaysRepairs(_TestProvider):
+            def _body_after_rejected_request(self, body, status, detail):
+                return {"model": "m", "messages": [], "repaired": True}
+
+        cut_empty = f"data: {jsonlib.dumps({'choices': [{'delta': {}, 'finish_reason': 'length'}]})}"
+        p = _AlwaysRepairs(api_key="test-key", model="test-model")  # pragma: allowlist secret
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=[cut_empty, "data: [DONE]"]))
+        with pytest.raises(LLMTruncationError):
+            async for _ in p.generate_stream("q"):
+                pass
+        assert p._client.stream.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_a_streams_usage_is_recorded_once(self, monkeypatch):
         usage = {"prompt_tokens": 3, "completion_tokens": 1}
         p = _make_provider()
