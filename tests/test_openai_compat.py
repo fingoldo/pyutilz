@@ -1116,6 +1116,22 @@ class TestStreamMetadataHookSurvivors:
         p._track_provider_specific_response.assert_not_called()
 
 
+class TestGenerateJsonDefaultsSurvivors:
+    """generate_json forwards its documented defaults: temperature 0.3, no token cap, and JSON mode on (openai_compat.py
+    886-892)."""
+
+    @pytest.mark.asyncio
+    async def test_generate_json_forwards_its_defaults(self):
+        p = _make_provider()
+        spy = AsyncMock(return_value={})
+        p._generate_json_via = spy
+        await p.generate_json("q")
+        args = spy.call_args.args
+        assert args[2] == 0.3
+        assert args[3] == 0
+        assert spy.call_args.kwargs["json_mode"] is True
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
