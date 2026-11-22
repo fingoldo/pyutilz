@@ -1452,6 +1452,27 @@ class TestProgressAndReasoningOrderSurvivors:
         assert text.index("first") < text.index("second")
 
 
+class TestSurchargeCallArgumentsSurvivors:
+    """Recording usage hands the surcharge its prompt tokens, billed output, cache-hit and cache-write counts, in that order
+    (openai_compat.py 627)."""
+
+    def test_the_surcharge_receives_prompt_billed_output_cache_hit_and_cache_write_in_order(self):
+        p = _make_provider()
+        spy = MagicMock()
+        p._add_long_context_surcharge = spy
+        p._record_usage({"prompt_tokens": 20, "completion_tokens": 5, "prompt_cache_hit_tokens": 6, "completion_tokens_details": {"reasoning_tokens": 3}, "prompt_tokens_details": {"cache_write_tokens": 2}})
+        spy.assert_called_once_with(20, 5, 6, 2)
+
+    def test_the_surcharge_is_the_last_call_after_the_usage_hook(self):
+        p = _make_provider()
+        p._add_long_context_surcharge = MagicMock()
+        p._track_provider_specific_usage = MagicMock()
+        usage = {"prompt_tokens": 20, "completion_tokens": 5}
+        p._record_usage(usage)
+        p._track_provider_specific_usage.assert_called_once_with(usage)
+        p._add_long_context_surcharge.assert_called_once()
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
