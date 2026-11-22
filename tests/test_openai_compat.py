@@ -1502,6 +1502,20 @@ class TestGenerateJsonThinkingForwardingSurvivors:
         assert spy.call_args.kwargs["thinking"] is False
 
 
+class TestErrorRequestLabelSurvivors:
+    """An in-body error reports the response's own request, and a response without one reports a POST to
+    /chat/completions (openai_compat.py 839-841)."""
+
+    @pytest.mark.asyncio
+    async def test_an_in_body_error_reports_the_responses_own_request(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body={"error": {"code": 400, "message": "bad"}}))
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            await p.generate("q")
+        assert str(exc.value.request.url) == "https://test.example.com/chat/completions"
+        assert exc.value.request.method == "POST"
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
