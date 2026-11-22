@@ -1482,6 +1482,26 @@ class TestCacheWriteDefaultSurvivors:
         assert p.total_cache_write_tokens == 0
 
 
+class TestGenerateJsonThinkingForwardingSurvivors:
+    """generate_json forwards a thinking setting only when one is given (openai_compat.py 905)."""
+
+    @pytest.mark.asyncio
+    async def test_no_thinking_setting_is_not_forwarded(self):
+        p = _make_provider()
+        spy = AsyncMock(return_value={})
+        p._generate_json_via = spy
+        await p.generate_json("q")
+        assert "thinking" not in spy.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_a_thinking_setting_is_forwarded_as_given(self):
+        p = _make_provider()
+        spy = AsyncMock(return_value={})
+        p._generate_json_via = spy
+        await p.generate_json("q", thinking=False)
+        assert spy.call_args.kwargs["thinking"] is False
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
