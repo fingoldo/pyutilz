@@ -223,7 +223,8 @@ class TestBasicsSweepSurvivors:
     def test_a_start_marker_at_the_very_beginning_is_found(self):
         from pyutilz.text.strings.basics import find_between
 
-        assert find_between("abc", "a", "c") == "b"
+        # the start marker sits at index 0 and recurs later; the first end marker after it bounds the text
+        assert find_between("abcaXa", "a", "a") == "bc"
 
     def test_an_empty_end_marker_runs_to_the_window_end(self):
         from pyutilz.text.strings.basics import find_between
