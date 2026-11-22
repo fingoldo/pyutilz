@@ -190,6 +190,9 @@ class TestRetrierRedeliveryAndFlush:
                 done.set()
             return result
 
+        # items other tests left on the module-level retrier would reach this fake and consume its outcomes
+        for stale in list(mon._RETRIER._pending):
+            mon._RETRIER.forget(stale)
         monkeypatch.setattr(mon, "_attempt", _fake)
         retrier = mon._HeartbeatRetrier()
         item, key = self._item(mon, "again")
