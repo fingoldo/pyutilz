@@ -1473,6 +1473,15 @@ class TestSurchargeCallArgumentsSurvivors:
         p._add_long_context_surcharge.assert_called_once()
 
 
+class TestCacheWriteDefaultSurvivors:
+    """A usage block that reports no cache writes adds none (openai_compat.py 602)."""
+
+    def test_a_usage_block_without_cache_writes_adds_none(self):
+        p = _make_provider()
+        p._record_usage({"prompt_tokens": 1})
+        assert p.total_cache_write_tokens == 0
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
