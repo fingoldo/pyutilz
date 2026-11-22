@@ -321,5 +321,7 @@
   "src/pyutilz/llm/openai_compat.py::87dc732491bb::constant: 0 becomes 1": "unreachable: __init__ sets _long_context_calls to 0 (line 135), so the getattr default is never read",
   "src/pyutilz/llm/openai_compat.py::225bc21664d8::constant: 0 becomes 1": "unreachable: __init__ sets total_cache_write_tokens to 0 (line 131), so the getattr default is never read",
   "src/pyutilz/llm/openai_compat.py::9cbf02b58ab7::constant: 0.0 becomes 0.1": "unreachable: __init__ sets _long_context_surcharge_usd to 0.0 (line 134), so the getattr default is never read",
-  "src/pyutilz/llm/openai_compat.py::46920294ad14::logic: or becomes and": "equivalent: a truncation is not offered a repaired body (the repair hook returns None for it, as the empty-truncation test shows) and is not retryable, so the guard's other branch ends in the same raise"
+  "src/pyutilz/llm/openai_compat.py::46920294ad14::logic: or becomes and": "equivalent: a truncation is not offered a repaired body (the repair hook returns None for it, as the empty-truncation test shows) and is not retryable, so the guard's other branch ends in the same raise",
+  "src/pyutilz/llm/openai_compat.py::8f3d3ab0d574::constant: emptied a string": "equivalent: the aborted-attempt record reads generation_id with a default of None, and _note_stream_chunk writes the key itself whenever a first chunk arrives, so an empty initial key never changes what is recorded",
+  "src/pyutilz/llm/openai_compat.py::abaab3d04c90::constant: emptied a string": "equivalent: the aborted-attempt record reads response_started through bool(), so a missing key and an initial False both record False, and _stream_attempt writes the key when a response starts"
 }
