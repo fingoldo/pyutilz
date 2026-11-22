@@ -1,7 +1,1 @@
-{
-  "credential_shaped_log_arg::llm/anthropic_provider.py::0c859f705c9f": "logs max_tokens, the integer output-length limit of a request, which is a count and not a credential",
-  "credential_shaped_log_arg::llm/anthropic_provider.py::13bdb9d9d5ef": "logs reasoning_tokens, the integer count of tokens the model spent reasoning, which is not a credential",
-  "credential_shaped_log_arg::llm/base.py::586e53b48a71": "logs input_tokens and max_tokens, integer LLM token counts used for accounting, which are not credentials",
-  "credential_shaped_log_arg::llm/openai_compat.py::81df81e4d472": "logs total prompt and completion token counts of a finished request, integers for accounting, not credentials",
-  "credential_shaped_log_arg::text/strings/basics.py::b993feba1a7c": "logs end_token, the delimiter string a text splitter ends on, which is a delimiter and not a credential"
-}
+{}
