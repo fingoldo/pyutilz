@@ -1427,6 +1427,31 @@ class TestUsageHookAndSpecialStatusSurvivors:
             p.generate.retry.wait = original_wait
 
 
+class TestProgressAndReasoningOrderSurvivors:
+    """Each streamed chunk reports its reasoning piece and content piece to the stream-progress counter in that order, and
+    reasoning from successive messages is kept in arrival order (openai_compat.py 568, 831)."""
+
+    def test_the_progress_counter_gets_the_reasoning_piece_then_the_content(self, monkeypatch):
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        spy = MagicMock()
+        monkeypatch.setattr(openai_compat_mod, "note_stream_progress", spy)
+        p = _make_provider()
+        p._apply_stream_chunk({"choices": [{"delta": {"reasoning": "think", "content": "hi"}}]}, {})
+        spy.assert_called_once()
+        reasoning_piece, content_piece = spy.call_args.args
+        assert content_piece == "hi"
+        assert reasoning_piece is not None and "think" in str(reasoning_piece)
+
+    def test_reasoning_from_successive_messages_keeps_arrival_order(self):
+        p = _make_provider()
+        p._capture_message_extras({"reasoning": "first"})
+        p._capture_message_extras({"reasoning": "second"})
+        text = p.last_reasoning_text
+        assert "first" in text and "second" in text
+        assert text.index("first") < text.index("second")
+
+
 class TestStreamCloseSurvivors:
     """A consumer that stops reading a stream closes the HTTP response at once (openai_compat.py 490)."""
 
