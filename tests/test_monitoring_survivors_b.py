@@ -3,6 +3,16 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clear_module_retrier():
+    """Items other tests left on the module-level retrier would reach a test's fake attempt and consume its outcomes."""
+    from pyutilz.system import monitoring as mon
+
+    for stale in list(mon._RETRIER._pending):
+        mon._RETRIER.forget(stale)
+    yield
+
+
 class _Retrier:
     def __init__(self):
         self.submitted: list = []
@@ -190,9 +200,6 @@ class TestRetrierRedeliveryAndFlush:
                 done.set()
             return result
 
-        # items other tests left on the module-level retrier would reach this fake and consume its outcomes
-        for stale in list(mon._RETRIER._pending):
-            mon._RETRIER.forget(stale)
         monkeypatch.setattr(mon, "_attempt", _fake)
         retrier = mon._HeartbeatRetrier()
         item, key = self._item(mon, "again")

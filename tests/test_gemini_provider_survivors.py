@@ -8,6 +8,28 @@ from pyutilz.llm.exceptions import LLMSafetyBlockError
 from pyutilz.llm.gemini_provider import GeminiProvider
 
 
+@pytest.fixture(autouse=True)
+def _ensure_genai_types_available():
+    """``types`` (``from google.genai import types``) is a module-level global set to None when
+    GENAI_AVAILABLE is False -- e.g. on any CI leg without the real google-genai package
+    installed. ``generate()`` calls ``types.GenerateContentConfig(...)`` unconditionally, so
+    every test exercising it needs a real (or mocked) ``types`` regardless of whether the actual
+    optional dependency is present. Individual tests that patch ``types`` themselves for a
+    stricter assertion (e.g. checking constructor kwargs) simply nest their own patch inside
+    this one -- harmless, not a conflict."""
+    # GENAI_AVAILABLE is forced True for every test in this module: the constructor refuses to run without it, and
+    # google-genai is not installed on Python 3.8 (its marker is >=3.10), so classes that build a provider directly
+    # (not through _make_provider) would otherwise fail there. A test that needs the unavailable path patches it False itself.
+    with patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True):
+        # genai (the client) is None on 3.8 as well: the constructor calls genai.Client(...) and types.HttpOptions(...).
+        with patch.multiple(
+            "pyutilz.llm.gemini_provider",
+            genai=gemini_provider_module.genai if gemini_provider_module.genai is not None else MagicMock(),
+            types=gemini_provider_module.types if gemini_provider_module.types is not None else MagicMock(),
+        ):
+            yield
+
+
 def _make_provider(**overrides):
     # GENAI_AVAILABLE is a module-level flag set once at import time from whether the real
     # google-genai package was importable -- False on any CI leg where it's not installed
