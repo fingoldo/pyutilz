@@ -172,16 +172,19 @@ class TestRetrierRedeliveryAndFlush:
         done = threading.Event()
 
         def _fake(*args, **kwargs):
+            # a retry thread left by another test can call this fake: only this test's own job is recorded
+            if args[-1] != "resend-order":
+                return True
             seen.append(args)
             done.set()
             return True
 
         monkeypatch.setattr(mon, "_attempt", _fake)
         retrier = mon._HeartbeatRetrier()
-        item, key = self._item(mon, "order", data="payload", params={"state": "complete"})
+        item, key = self._item(mon, "resend-order", data="payload", params={"state": "complete"})
         retrier.submit(item)
         assert done.wait(timeout=3.0)
-        assert seen == [("https://x/order", "payload", {"state": "complete"}, "healthchecks.io", "order")]
+        assert seen == [("https://x/resend-order", "payload", {"state": "complete"}, "healthchecks.io", "resend-order")]
 
     def test_a_failed_redelivery_is_attempted_again_and_success_clears_it(self, monkeypatch):
         import threading
@@ -194,6 +197,9 @@ class TestRetrierRedeliveryAndFlush:
         done = threading.Event()
 
         def _fake(*args, **kwargs):
+            # retry threads left by other tests can reach this fake: only this test's own job consumes an outcome
+            if args[-1] != "redeliver-again":
+                return True
             attempts.append(args[-1])
             result = next(outcomes)
             if result:
@@ -202,10 +208,10 @@ class TestRetrierRedeliveryAndFlush:
 
         monkeypatch.setattr(mon, "_attempt", _fake)
         retrier = mon._HeartbeatRetrier()
-        item, key = self._item(mon, "again")
+        item, key = self._item(mon, "redeliver-again")
         retrier.submit(item)
         assert done.wait(timeout=3.0)
-        assert attempts == ["again", "again"]
+        assert attempts == ["redeliver-again", "redeliver-again"]
         assert retrier.wait_idle(timeout=3.0)
         assert retrier.pending_count() == 0
 
