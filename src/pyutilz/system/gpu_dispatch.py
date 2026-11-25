@@ -744,6 +744,11 @@ def _static_gpu_caps(device_id: int = 0) -> Optional[dict]:
         # against the 17 the hardware really holds.
         "reserved_shared_mem_per_block": query_cuda_device_attribute("RESERVED_SHARED_MEMORY_PER_BLOCK", device_id) or 0,
         "warp_size": int(caps.get("WARP_SIZE", WARP_SIZE)),
+        # RATED clocks and the memory interface (static): the maximum SM clock and the memory clock in kHz and the bus width in bits, what a throughput model needs next to the SM count.
+        "clock_khz": query_cuda_device_attribute("CLOCK_RATE", device_id) or 0,
+        "mem_clock_khz": query_cuda_device_attribute("MEMORY_CLOCK_RATE", device_id) or 0,
+        "mem_bus_bits": query_cuda_device_attribute("GLOBAL_MEMORY_BUS_WIDTH", device_id) or 0,
+        "l2_cache_bytes": query_cuda_device_attribute("L2_CACHE_SIZE", device_id) or 0,
         "free_vram_gb": None,
         "total_vram_gb": None,
         "name": None,
@@ -793,8 +798,8 @@ def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
     Returns:
         Dict with keys: ``cc_major``, ``cc_minor``, ``sm_count``,
         ``total_cuda_cores``, ``max_threads_per_block``,
-        ``max_shared_mem_per_block``, ``warp_size``, ``free_vram_gb``,
-        ``total_vram_gb``, ``name``. Returns ``None`` on CPU-only hosts.
+        ``max_shared_mem_per_block``, ``warp_size``, ``clock_khz`` (rated maximum SM clock), ``mem_clock_khz``, ``mem_bus_bits``, ``l2_cache_bytes``,
+        ``free_vram_gb``, ``total_vram_gb``, ``name``. Returns ``None`` on CPU-only hosts.
 
     The hardware-invariant fields come from the per-device :func:`_static_gpu_caps` cache (one
     ``nvidia-smi`` subprocess per device per process instead of one per call); ``free_vram_gb`` is

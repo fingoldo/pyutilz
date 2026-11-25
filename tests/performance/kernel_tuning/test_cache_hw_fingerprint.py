@@ -12,7 +12,7 @@ from pyutilz.performance.kernel_tuning import cache as ktc
 from pyutilz.performance.kernel_tuning.cache import cache_base as cb
 
 _SUMMARY = {"name": "TestCard 9000", "cc_major": 8, "cc_minor": 9}
-_PROV = {"cuda_driver_version": 12040, "cuda_runtime_version": 12020, "gpu_summary": {"total_vram_gb": 8192.0}}
+_PROV = {"cuda_driver_version": 12040, "cuda_runtime_version": 12020, "gpu_summary": {"total_vram_gb": 8192.0, "total_cuda_cores": 4608, "clock_khz": 2_520_000}}
 
 
 class _Env:
@@ -64,6 +64,7 @@ def env(tmp_path, monkeypatch):
         return int(state.device_count)
 
     monkeypatch.setattr(ktc, "_cpu_model_slug", lambda: "testcpu")
+    monkeypatch.setattr(cb, "_cpu_identity_suffix", lambda: "p4l8_f28")
     monkeypatch.setattr(ktc, "gpu_capability_summary", summary_probe)
     monkeypatch.setattr(cb, "_gpu_device_count", device_count)
     monkeypatch.setattr(cb, "_current_device_id", lambda: state.device_id)
@@ -81,10 +82,10 @@ def _gpu_part(fp: str) -> str:
     return fp.rsplit("_t", 1)[0]
 
 
-def test_gpu_key_carries_device_vram_driver_runtime_and_threads(env):
-    """The key names the device index, a VRAM class, the driver and runtime versions and the effective numba thread count."""
+def test_gpu_key_carries_cpu_cores_clock_device_cuda_cores_vram_clock_driver_runtime_and_threads(env):
+    """The key names the CPU core counts and rated clock, the device index, the CUDA core count, the VRAM in GiB, the rated GPU clock, the driver and runtime versions and the numba thread count."""
     fp = env.fp()
-    assert fp.startswith("cpu_testcpu_gpu_testcard-9000_cc8.9_d0_vram8g_drv12040_rt12020_nb")
+    assert fp.startswith("cpu_testcpu_p4l8_f28_gpu_testcard-9000_cc8.9_d0_cu4608_vram8g_f25_drv12040_rt12020_nb")
     assert fp.endswith("_t4")
 
 
@@ -108,8 +109,8 @@ def test_different_numba_thread_counts_give_different_keys_sharing_one_persisted
     assert _gpu_part(fp_two) == _gpu_part(fp_sixteen)
 
 
-def test_device_index_vram_class_and_driver_each_change_the_key(env, monkeypatch):
-    """Routing to another device, a different VRAM class or a driver upgrade yields a new key (a re-tune)."""
+def test_device_index_vram_cuda_cores_clock_and_driver_each_change_the_key(env, monkeypatch):
+    """Routing to another device, a different VRAM size, core count or rated clock, or a driver upgrade yields a new key (a re-tune)."""
     monkeypatch.setenv("PYUTILZ_HW_FP_REFRESH", "1")
     base = env.fp()
     env.device_id = 1
@@ -118,9 +119,51 @@ def test_device_index_vram_class_and_driver_each_change_the_key(env, monkeypatch
     env.prov["gpu_summary"]["total_vram_gb"] = 24576.0
     assert env.fp() != base
     env.prov["gpu_summary"]["total_vram_gb"] = 8192.0
+    env.prov["gpu_summary"]["total_cuda_cores"] = 3584
+    assert "_cu3584_" in env.fp() and env.fp() != base
+    env.prov["gpu_summary"]["total_cuda_cores"] = 4608
+    env.prov["gpu_summary"]["clock_khz"] = 1_800_000
+    assert "_f18_" in env.fp() and env.fp() != base
+    env.prov["gpu_summary"]["clock_khz"] = 2_520_000
     env.prov["cuda_driver_version"] = 12050
     env_fp = env.fp()
     assert env_fp != base and "_drv12050_" in env_fp
+
+
+def test_vram_of_12_and_16_gib_no_longer_share_a_key_and_a_clock_inside_a_bin_does_not_split_it(env, monkeypatch):
+    """The power-of-two class lumped 12 and 16 GB into ``vram16g``; the key now rounds to the GiB. The rated clock is rounded to 100 MHz, so 2.52 and 2.54 GHz are one key."""
+    monkeypatch.setenv("PYUTILZ_HW_FP_REFRESH", "1")
+    env.prov["gpu_summary"]["total_vram_gb"] = 12288.0
+    twelve = env.fp()
+    env.prov["gpu_summary"]["total_vram_gb"] = 16384.0
+    assert twelve != env.fp() and "_vram12g_" in twelve
+    env.prov["gpu_summary"]["clock_khz"] = 2_540_000
+    assert env.fp().count("_f25_") == 1
+
+
+def test_identity_helpers_round_and_report_unknown_fields():
+    """VRAM to the nearest GiB for MiB and GiB inputs, the clock to 100 MHz, junk and zero to the unknown token."""
+    assert cb._vram_gib(8192.0) == "vram8g" and cb._vram_gib(8.0) == "vram8g" and cb._vram_gib(11264.0) == "vram11g" and cb._vram_gib(4095.0) == "vram4g"
+    assert cb._vram_gib(None) == "vramx" and cb._vram_gib(0) == "vramx"
+    assert cb._rounded_clock(1_620_000) == "f16" and cb._rounded_clock(1_649_000) == "f16" and cb._rounded_clock(1_651_000) == "f17"
+    assert cb._rounded_clock(None) == "fx" and cb._rounded_clock(0) == "fx"
+
+
+def test_cpu_identity_reads_physical_and_logical_cores_and_the_rated_maximum_clock(monkeypatch):
+    """``p<physical>l<logical>_f<100 MHz>`` from psutil (the maximum, not the current clock); a missing clock falls back to cpuinfo, then to ``x``."""
+    freq = types.SimpleNamespace(current=800.0, max=2808.0)
+    fake = types.SimpleNamespace(cpu_count=lambda logical=True: 8 if logical else 4, cpu_freq=lambda: freq)
+    monkeypatch.setitem(sys.modules, "psutil", fake)
+    cb._cpu_identity_suffix.cache_clear()
+    assert cb._cpu_identity_suffix() == "p4l8_f28"
+    freq.max = 0.0
+    monkeypatch.setitem(sys.modules, "cpuinfo", types.SimpleNamespace(get_cpu_info=lambda: {"hz_advertised": (3_400_000_000, 0)}))
+    cb._cpu_identity_suffix.cache_clear()
+    assert cb._cpu_identity_suffix() == "p4l8_f34"
+    monkeypatch.setitem(sys.modules, "cpuinfo", types.SimpleNamespace(get_cpu_info=lambda: {}))
+    cb._cpu_identity_suffix.cache_clear()
+    assert cb._cpu_identity_suffix() == "p4l8_fx"
+    cb._cpu_identity_suffix.cache_clear()
 
 
 def test_vram_class_rounds_up_to_a_power_of_two_gib_for_both_mib_and_gib_inputs():
@@ -315,3 +358,79 @@ def test_device_count_reports_devices_when_the_stack_sees_them(monkeypatch):
     """A successful query returns the real count."""
     monkeypatch.setitem(sys.modules, "cupy", _fake_cupy(lambda: 2, _FakeRuntimeError))
     assert cb._gpu_device_count() == 2
+
+
+# ---- the entries of the pre-2026-11-25 key are adopted once ------------------------------------------------------------------------------------------------------------------------------------
+
+
+def _write_legacy_entry(root, legacy_fp: str, rel: str, record: Dict[str, Any]) -> None:
+    """One tuning-entry file under the legacy key directory."""
+    path = root / legacy_fp / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(jsonlib.dumps(record), encoding="utf-8")
+
+
+def test_the_legacy_key_is_the_old_composition(env):
+    """CPU model string, GPU name and capability, device index, power-of-two VRAM class, driver, runtime, library versions and threads: none of the new components."""
+    ktc.legacy_hw_fingerprint.cache_clear()
+    legacy = ktc.legacy_hw_fingerprint()
+    assert legacy.startswith("cpu_testcpu_gpu_testcard-9000_cc8.9_d0_vram8g_drv12040_rt12020_nb") and legacy.endswith("_t4")
+    assert "_p4l8_" not in legacy and "_cu4608_" not in legacy
+
+
+def test_entries_of_the_legacy_directory_are_adopted_once_with_the_new_fingerprint(env, tmp_path):
+    """An existing host keeps its tuning: every ``.json`` entry is copied to the new key directory with the new fingerprint inside, a marker names the source, and a second call copies nothing."""
+    ktc.legacy_hw_fingerprint.cache_clear()
+    legacy = ktc.legacy_hw_fingerprint()
+    new = env.fp()
+    assert legacy != new
+    record = {"hw_fingerprint": legacy, "kernel_name": "k", "best": "cpu"}
+    _write_legacy_entry(tmp_path, legacy, "k-1234/abc.0.1.2.json", record)
+    _write_legacy_entry(tmp_path, legacy, "k-1234/abc.0.1.3.json", {**record, "best": "gpu"})
+    (tmp_path / legacy / "k-1234" / "notes.txt").write_text("not an entry", encoding="utf-8")
+    cb._ADOPTED_DIRS.clear()
+    new_dir = ktc.host_cache_dir()
+    assert new_dir.endswith(new)
+    copied = sorted(p.name for p in (tmp_path / new / "k-1234").iterdir())
+    assert copied == ["abc.0.1.2.json", "abc.0.1.3.json"]
+    entry = jsonlib.loads((tmp_path / new / "k-1234" / "abc.0.1.3.json").read_text(encoding="utf-8"))
+    assert entry["hw_fingerprint"] == new and entry["adopted_from_fingerprint"] == legacy and entry["best"] == "gpu"
+    marker = jsonlib.loads((tmp_path / new / cb._ADOPTION_MARKER).read_text(encoding="utf-8"))
+    assert marker["adopted_from"] == legacy and marker["files"] == 2
+    assert (tmp_path / legacy / "k-1234" / "abc.0.1.2.json").exists()  # nothing is removed from the old directory
+    cb._ADOPTED_DIRS.clear()
+    (tmp_path / legacy / "k-1234" / "late.0.1.4.json").write_text(jsonlib.dumps(record), encoding="utf-8")
+    ktc.host_cache_dir()
+    assert not (tmp_path / new / "k-1234" / "late.0.1.4.json").exists()  # the marker stops a second copy
+
+
+def test_an_entry_already_in_the_new_directory_is_kept_and_a_host_without_a_legacy_directory_adopts_nothing(env, tmp_path):
+    """The new directory wins over the copy; with no legacy directory the marker is written and nothing is created."""
+    import shutil
+
+    ktc.legacy_hw_fingerprint.cache_clear()
+    legacy = ktc.legacy_hw_fingerprint()
+    new = env.fp()
+    _write_legacy_entry(tmp_path, legacy, "k-1/e.json", {"hw_fingerprint": legacy, "best": "old"})
+    _write_legacy_entry(tmp_path, new, "k-1/e.json", {"hw_fingerprint": new, "best": "new"})
+    cb._ADOPTED_DIRS.clear()
+    ktc.host_cache_dir()
+    assert jsonlib.loads((tmp_path / new / "k-1" / "e.json").read_text(encoding="utf-8"))["best"] == "new"
+    shutil.rmtree(tmp_path / legacy)
+    (tmp_path / new / cb._ADOPTION_MARKER).unlink()
+    cb._ADOPTED_DIRS.clear()
+    assert cb._adopt_legacy_entries(str(tmp_path / new)) == 0
+    assert (tmp_path / new / cb._ADOPTION_MARKER).exists()
+
+
+def test_a_host_whose_gpu_probe_failed_adopts_nothing(env, tmp_path):
+    """The unknown-GPU key is never persisted and never receives the entries of another key."""
+    env.summary = RuntimeError("probe failed")
+    ktc.legacy_hw_fingerprint.cache_clear()
+    fp = env.fp()
+    assert "gpu-unknown" in fp
+    legacy = ktc.legacy_hw_fingerprint()
+    _write_legacy_entry(tmp_path, legacy, "k-1/e.json", {"hw_fingerprint": legacy})
+    cb._ADOPTED_DIRS.clear()
+    ktc.host_cache_dir()
+    assert not (tmp_path / fp / "k-1").exists()

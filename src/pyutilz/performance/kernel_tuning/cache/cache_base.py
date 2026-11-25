@@ -65,6 +65,32 @@ def _cpu_model_slug() -> str:
         return "unknown"
 
 
+@lru_cache(maxsize=1)
+def _cpu_identity_suffix() -> str:
+    """Physical and logical core counts and the RATED maximum clock of the CPU, rounded to 100 MHz, as a key fragment (``p4l8_f28``: 4 cores, 8 threads, 2.8 GHz); a field that cannot be read is ``x``.
+
+    The rated maximum, not the current clock: the current clock moves with the power plan and with throttling and would make the key flip between runs of one machine, while the rated maximum still
+    tells a 2.8 GHz part from a 3.8 GHz one of the same model name. The number of threads of THIS process stays the separate ``t<threads>`` component."""
+    physical = logical = mhz = None
+    try:
+        import psutil
+
+        physical, logical = psutil.cpu_count(logical=False), psutil.cpu_count(logical=True)
+        freq = psutil.cpu_freq()
+        mhz = float(freq.max) if freq is not None and freq.max else None
+    except Exception as e:
+        logger.debug("cpu identity probe failed (%s); the key carries x for what could not be read", e)
+    if not mhz:
+        try:
+            import cpuinfo
+
+            advertised = cpuinfo.get_cpu_info().get("hz_advertised")
+            mhz = float(advertised[0]) / 1e6 if advertised else None
+        except Exception as e:
+            logger.debug("cpuinfo clock probe failed (%s)", e)
+    return f"p{physical or 'x'}l{logical or 'x'}_f{round(mhz / 100.0) if mhz else 'x'}"
+
+
 def _current_device_id() -> int:
     """Return the live CUDA device id (whatever the caller is using).
     Falls back to 0 on probe failure. Lets the cache key reflect e.g.
@@ -233,7 +259,28 @@ def _vram_class(total_vram: object) -> str:
 
 
 def _gpu_identity_suffix() -> str:
-    """Device index, VRAM class, CUDA driver / runtime and cupy versions of the live GPU, as a key fragment. Fields that cannot be read are ``x``."""
+    """Device index, CUDA core count, exact VRAM (GiB), rated maximum clock (100 MHz), CUDA driver and runtime versions of the live GPU, as a key fragment. Fields that cannot be read are ``x``.
+
+    Before 2026-11-25 the fragment was the device index, a power-of-two VRAM class (12 and 16 GB shared ``vram16g``), the driver and the runtime (``_legacy_gpu_identity_suffix``); two cards of one name and
+    capability that differ in the core count, the VRAM or the clock got one key and one tuning."""
+    prov = _build_provenance()
+    gpu = prov.get("gpu_summary")
+    gpu = gpu if isinstance(gpu, dict) else {}
+    cores = gpu.get("total_cuda_cores")
+    return "_".join(
+        (
+            f"d{_current_device_id()}",
+            f"cu{cores}" if cores else "cux",
+            _vram_gib(gpu.get("total_vram_gb")),
+            _rounded_clock(gpu.get("clock_khz")),
+            f"drv{_token(prov.get('cuda_driver_version'))}",
+            f"rt{_token(prov.get('cuda_runtime_version'))}",
+        )
+    )
+
+
+def _legacy_gpu_identity_suffix() -> str:
+    """The GPU key fragment before 2026-11-25 (device index, power-of-two VRAM class, driver, runtime): the name of the directory an existing host's entries are in."""
     prov = _build_provenance()
     gpu = prov.get("gpu_summary")
     vram = gpu.get("total_vram_gb") if isinstance(gpu, dict) else None
@@ -247,8 +294,30 @@ def _gpu_identity_suffix() -> str:
     )
 
 
+def _vram_gib(total_vram: object) -> str:
+    """Total VRAM rounded to the nearest GiB (``vram12g``); GPUtil reports MiB, the summary key says GB, so both scales are accepted. ``vramx`` when it cannot be read."""
+    try:
+        value = float(total_vram)  # type: ignore[arg-type]  # object from a loosely-typed summary dict; the except covers a non-numeric value
+    except (TypeError, ValueError) as exc:
+        logger.warning("_vram_gib: total VRAM is not numeric, reported as unknown: %s: %s", type(exc).__name__, exc)
+        return "vramx"
+    if value <= 0:
+        return "vramx"
+    gib = value / 1024.0 if value > 256 else value
+    return f"vram{max(1, round(gib))}g"
+
+
+def _rounded_clock(clock_khz: object) -> str:
+    """The rated maximum SM clock rounded to 100 MHz as a key fragment (``f16``: 1.6 GHz); ``fx`` when it is not reported."""
+    try:
+        khz = float(clock_khz)  # type: ignore[arg-type]  # object from a loosely-typed summary dict; the except covers a non-numeric value
+    except (TypeError, ValueError):
+        return "fx"
+    return f"f{round(khz / 1e5)}" if khz > 0 else "fx"
+
+
 _HW_FP_DISK_FILENAME = ".hw_fingerprint.json"
-_HW_FP_SCHEMA_VERSION = 2
+_HW_FP_SCHEMA_VERSION = 3
 _HW_FP_FRESHNESS_SECONDS = 7 * 24 * 3600  # 7 days
 
 
@@ -337,13 +406,16 @@ def _write_hw_fingerprint_to_disk(fingerprint: str, selector: Optional[str] = No
 def hw_fingerprint() -> str:
     """Per-host key. Format::
 
-        cpu_<cpu>_gpu_<gpu>_cc<M.m>_d<device>_vram<N>g_drv<driver>_rt<runtime>_nb<numba>_cupy<cupy>_t<threads>
-        cpu_<cpu>_no-gpu_nb<numba>_cupy<cupy>_t<threads>      (host with no CUDA device)
-        cpu_<cpu>_gpu-unknown_nb<numba>_cupy<cupy>_t<threads>  (GPU probe failed; never persisted)
+        cpu_<cpu>_p<cores>l<threads>_f<100 MHz>_gpu_<gpu>_cc<M.m>_d<device>_cu<cuda cores>_vram<N>g_f<100 MHz>_drv<driver>_rt<runtime>_nb<numba>_cupy<cupy>_t<threads>
+        cpu_<cpu>_p<cores>l<threads>_f<100 MHz>_no-gpu_nb<numba>_cupy<cupy>_t<threads>      (host with no CUDA device)
+        cpu_<cpu>_p<cores>l<threads>_f<100 MHz>_gpu-unknown_nb<numba>_cupy<cupy>_t<threads>  (GPU probe failed; never persisted)
 
-    ``threads`` is the effective numba thread count of THIS process, so a tuning measured with 2 threads is not reused at 16. The key
-    also carries the device index, a power-of-two VRAM class, the CUDA driver / runtime versions and the numba / cupy versions. Adding a
-    component changes the key, which only triggers a re-tune; the old per-host directories are simply no longer consulted.
+    ``threads`` is the effective numba thread count of THIS process, so a tuning measured with 2 threads is not reused at 16. The CPU part carries
+    the model, the physical and logical core counts and the rated maximum clock rounded to 100 MHz; the GPU part the device index, the CUDA core
+    count, the VRAM rounded to a GiB, the rated maximum SM clock rounded to 100 MHz and the CUDA driver / runtime versions; the key ends with the
+    numba / cupy versions. Only static, rated attributes: a current clock moves with the power plan and throttling and would make the key unstable.
+    Adding a component changes the key; the entries of an existing host are adopted from its old key directory once (``_adopt_legacy_entries``,
+    ``legacy_hw_fingerprint``), so nothing has to be tuned again.
 
     The hardware part is cached two ways:
       * ``lru_cache(maxsize=1)`` for the process lifetime.
@@ -375,7 +447,7 @@ def hw_fingerprint() -> str:
     _facade = _sys.modules.get("pyutilz.performance.kernel_tuning.cache")
     _cpu_probe = getattr(_facade, "_cpu_model_slug", _cpu_model_slug)
     _gpu_probe = getattr(_facade, "_gpu_slug_and_cc", _gpu_slug_and_cc)
-    cpu = _cpu_probe()
+    cpu = f"{_cpu_probe()}_{_cpu_identity_suffix()}"
     gpu, cc = (_GPU_NONE, "") if opted_out else _gpu_probe()
     stamp = _package_stamp()
     if gpu == _GPU_NONE:
@@ -392,6 +464,33 @@ def hw_fingerprint() -> str:
     if not opted_out and gpu != _GPU_UNKNOWN:
         _write_hw_fingerprint_to_disk(base)
     return base + threads
+
+
+@lru_cache(maxsize=1)
+def legacy_hw_fingerprint() -> str:
+    """The key :func:`hw_fingerprint` had before 2026-11-25 (CPU model string; GPU name, capability, device index, power-of-two VRAM class, driver, runtime; numba and cupy versions; numba threads).
+
+    It names the directory in which an existing host's tuning entries are; :func:`_adopt_legacy_entries` carries them over to the current key. Resolved through the same probes (and the same facade
+    patching point) as the current key, never persisted."""
+    opted_out = _gpu_opted_out()
+    import sys as _sys
+
+    _facade = _sys.modules.get("pyutilz.performance.kernel_tuning.cache")
+    _cpu_probe = getattr(_facade, "_cpu_model_slug", _cpu_model_slug)
+    _gpu_probe = getattr(_facade, "_gpu_slug_and_cc", _gpu_slug_and_cc)
+    cpu = _cpu_probe()
+    gpu, cc = (_GPU_NONE, "") if opted_out else _gpu_probe()
+    stamp = _package_stamp()
+    if gpu in (_GPU_NONE, _GPU_UNKNOWN):
+        base = f"cpu_{cpu}_{gpu}_{stamp}"
+    else:
+        try:
+            identity = _legacy_gpu_identity_suffix()
+        except Exception as e:
+            logger.warning("legacy GPU identity probe failed (%s), key carries no device details", e)
+            identity = "dx"
+        base = f"cpu_{cpu}_gpu_{gpu}_cc{cc}_{identity}_{stamp}"
+    return base + f"_t{_numba_threads()}"
 
 
 @lru_cache(maxsize=8)
@@ -446,7 +545,73 @@ def host_cache_dir() -> str:
     Layout: ``<cache_dir>/<hw_fingerprint>/<kernel_slug>/<...>.json``. Created on
     first call.
     """
-    return _ensure_cache_dir(os.path.join(cache_dir(), hw_fingerprint()))
+    path = _ensure_cache_dir(os.path.join(cache_dir(), hw_fingerprint()))
+    _adopt_legacy_entries(path)
+    return path
+
+
+_ADOPTION_MARKER = ".adopted_legacy_entries.json"
+_ADOPTED_DIRS: "set[str]" = set()
+_ADOPTION_LOCK = threading.Lock()
+
+
+def _adopt_legacy_entries(new_dir: str) -> int:
+    """Carry the tuning entries of this host's pre-2026-11-25 key directory over to ``new_dir``, once; the number of files adopted.
+
+    The key gained attributes of the CPU and the GPU, so the directory of an existing host changed its name while the hardware did not; without this every kernel would be tuned again. Each ``.json``
+    entry that carries the old fingerprint gets the new one (the loaders compare it) and an ``adopted_from_fingerprint`` note; a marker file records the source so the copy is not repeated. Nothing is
+    deleted from the old directory. A host whose probe failed (``gpu-unknown``) adopts nothing."""
+    with _ADOPTION_LOCK:
+        if new_dir in _ADOPTED_DIRS:
+            return 0
+        _ADOPTED_DIRS.add(new_dir)
+    marker = os.path.join(new_dir, _ADOPTION_MARKER)
+    new_fp = os.path.basename(new_dir)
+    try:
+        if os.path.exists(marker) or _GPU_UNKNOWN in new_fp:
+            return 0
+        legacy_fp = legacy_hw_fingerprint()
+        legacy_dir = os.path.join(os.path.dirname(new_dir), legacy_fp)
+        adopted = _copy_entries_adopting(legacy_dir, new_dir, legacy_fp, new_fp) if legacy_fp != new_fp and os.path.isdir(legacy_dir) else 0
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write(jsonlib.dumps({"adopted_from": legacy_fp, "files": adopted, "ts_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")}))
+        return adopted
+    except Exception as e:
+        logger.warning("adopting the entries of the legacy key directory failed (%s: %s); the kernels are tuned again where they are missing", type(e).__name__, e)
+        return 0
+
+
+def _copy_entries_adopting(legacy_dir: str, new_dir: str, legacy_fp: str, new_fp: str) -> int:
+    """Copy every ``.json`` file under ``legacy_dir`` to the same relative path under ``new_dir`` (an existing target is kept), rewriting the fingerprint of the records that carry the legacy one."""
+    adopted = 0
+    for root, _dirs, files in os.walk(legacy_dir):
+        for name in files:
+            if not name.endswith(".json"):
+                continue
+            src = os.path.join(root, name)
+            dst = os.path.join(new_dir, os.path.relpath(src, legacy_dir))
+            if os.path.exists(dst):
+                continue
+            try:
+                with open(src, "rb") as f:
+                    data = f.read()
+                try:
+                    record = jsonlib.loads(data)
+                    if isinstance(record, dict) and record.get("hw_fingerprint") == legacy_fp:
+                        record["hw_fingerprint"] = new_fp
+                        record["adopted_from_fingerprint"] = legacy_fp
+                        data = jsonlib.dumps_bytes(record)
+                except (ValueError, TypeError):
+                    pass  # not a record: copied as it is
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                tmp = f"{dst}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                os.replace(tmp, dst)
+                adopted += 1
+            except OSError as e:
+                logger.debug("adopting %s failed: %s", src, e)
+    return adopted
 
 
 def _legacy_kernel_dir(host_dir: str, kernel_name: str) -> str:
@@ -591,6 +756,10 @@ def _build_provenance_cached() -> dict:
                 "name": summary.get("name"),
                 "total_vram_gb": summary.get("total_vram_gb"),
                 "sm_count": summary.get("sm_count"),
+                "total_cuda_cores": summary.get("total_cuda_cores"),
+                "clock_khz": summary.get("clock_khz"),
+                "mem_clock_khz": summary.get("mem_clock_khz"),
+                "mem_bus_bits": summary.get("mem_bus_bits"),
             }
     except Exception as e:  # nosec B110 - best-effort provenance enrichment (GPU cc/vram/name summary); failure must not block cache save, provenance dict just omits gpu_summary
         logger.debug("Could not build gpu_summary for provenance: %s", e)

@@ -13,7 +13,8 @@ discrete decision) per ``(input_size_axis_1, input_size_axis_2, ...)``.
 Generic API
 -----------
 
-* :func:`hw_fingerprint` -- per-host key (CPU model, GPU name / cc / device / VRAM / driver, library versions, numba threads).
+* :func:`hw_fingerprint` -- per-host key (CPU model, physical / logical cores, rated max clock; GPU name / cc / device / CUDA cores / VRAM / rated max clock / driver, library versions, numba threads).
+  :func:`legacy_hw_fingerprint` is the key before the CPU and GPU identity grew (2026-11-25); its entries are adopted by the current key directory once.
 * :class:`KernelTuningCache` -- read / write / lookup; multiple kernels per
   host file, schema-versioned JSON.
 * :func:`cache_path` / :func:`cache_dir` -- file-system layout.
@@ -97,6 +98,8 @@ from .cache_base import (
     _async_sweep_idle_max_wait,
     _async_sweep_start_delay,
     _build_provenance,
+    _adopt_legacy_entries,
+    _cpu_identity_suffix,
     _cpu_model_slug,
     _current_device_id,
     _gpu_slug_and_cc,
@@ -113,6 +116,7 @@ from .cache_base import (
     gpu_capability_summary,
     host_cache_dir,
     hw_fingerprint,
+    legacy_hw_fingerprint,
     provenance_changed,
     register_gpu_opt_out,
 )
@@ -143,6 +147,7 @@ __all__ = [
     "host_cache_dir",
     "register_default_cache",
     "hw_fingerprint",
+    "legacy_hw_fingerprint",
     "register_gpu_opt_out",
 ]
 

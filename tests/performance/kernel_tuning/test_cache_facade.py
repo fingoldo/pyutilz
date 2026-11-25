@@ -60,7 +60,7 @@ def test_facade_monkeypatch_of_cpu_probe_is_seen_by_hw_fingerprint(tmp_path, mon
     ktc.hw_fingerprint.cache_clear()
     try:
         fp = ktc.hw_fingerprint()
-        assert fp.startswith("cpu_sensorcpu_no-gpu_"), fp
+        assert fp.startswith("cpu_sensorcpu_") and "_no-gpu_" in fp, fp  # the patched model string leads, then the core counts and rated clock, then the GPU part
     finally:
         ktc.hw_fingerprint.cache_clear()
 
