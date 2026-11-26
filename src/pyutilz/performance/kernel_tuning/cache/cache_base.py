@@ -584,7 +584,7 @@ def _adopt_legacy_entries(new_dir: str) -> int:
 def _copy_entries_adopting(legacy_dir: str, new_dir: str, legacy_fp: str, new_fp: str) -> int:
     """Copy every ``.json`` file under ``legacy_dir`` to the same relative path under ``new_dir`` (an existing target is kept), rewriting the fingerprint of the records that carry the legacy one."""
     adopted = 0
-    for root, _dirs, files in os.walk(legacy_dir):
+    for root, _dirs, files in os.walk(legacy_dir):  # walk-ok: the per-host kernel-tuning cache directory holds only its own json records, no source tree or worktree
         for name in files:
             if not name.endswith(".json"):
                 continue
