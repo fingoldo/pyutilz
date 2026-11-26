@@ -61,3 +61,90 @@ class TestStringifyDict:
 
     def test_custom_separator(self):
         assert stringify_dict({"a": 1, "b": 2}, sep=";") == "a=1;b=2"
+
+
+class TestTextEntropySweepSurvivors:
+    """The survivors of the textentropy sweep: the defaults of the tokenizers (lowercase, strip, not a file), the file
+    branch of tokenize_source and tokenize_to_chars, the model order and prefix length of the Markov counts, the weighted
+    entropy rate and its argument order, and the order-zero and empty-stream cases (textentropy.py 23-126)."""
+
+    @staticmethod
+    def _one(s):
+        return [s]
+
+    def test_the_tokenizer_strips_and_lowercases_by_default(self):
+        from pyutilz.text.strings.textentropy import tokenize_text
+
+        assert list(tokenize_text("  AbC ", self._one)) == ["abc"]
+        assert list(tokenize_text("  AbC ", self._one, lowercase=False)) == ["AbC"]
+        assert list(tokenize_text("  AbC ", self._one, strip=False, lowercase=False)) == ["  AbC "]
+
+    def test_a_plain_string_is_tokenized_as_text_not_as_a_filename_by_default(self):
+        from pyutilz.text.strings.textentropy import tokenize_source
+
+        assert list(tokenize_source("  A ", self._one)) == ["a"]
+
+    def test_a_file_is_read_line_by_line_with_its_encoding(self, tmp_path):
+        from pyutilz.text.strings.textentropy import tokenize_source
+
+        path = tmp_path / "t.txt"
+        path.write_text("Été\nab\n", encoding="utf-8")
+        assert list(tokenize_source(str(path), self._one, is_file=True)) == ["été", "ab"]
+
+    def test_chars_from_a_file_get_a_trailing_space_per_line(self, tmp_path):
+        from pyutilz.text.strings.textentropy import tokenize_to_chars
+
+        path = tmp_path / "c.txt"
+        path.write_text("ab\ncd\n", encoding="utf-8")
+        assert list(tokenize_to_chars(str(path), is_file=True)) == ["a", "b", " ", "c", "d", " "]
+
+    def test_chars_of_a_string_are_its_characters(self):
+        from pyutilz.text.strings.textentropy import tokenize_to_chars
+
+        assert list(tokenize_to_chars("ab")) == ["a", "b"]
+
+    def test_the_default_model_order_is_two(self):
+        from pyutilz.text.strings.textentropy import get_entropy_stats
+
+        _cond, stats = get_entropy_stats(iter("abcd"))
+        assert stats == {("a", "b"): 1, ("b", "c"): 1}
+
+    def test_a_prefix_counts_every_time_it_recurs(self):
+        from pyutilz.text.strings.textentropy import get_entropy_stats
+
+        cond, stats = get_entropy_stats(iter("aaaa"), model_order=1)
+        assert stats[("a",)] == 3
+        assert cond[("a",)]["a"] == 3
+
+    def test_the_markov_counts_pair_each_prefix_with_its_next_token(self):
+        from pyutilz.text.strings.textentropy import get_entropy_stats
+
+        cond, stats = get_entropy_stats(iter("abc"), model_order=2)
+        assert dict(cond) == {("a", "b"): {"c": 1}}
+        assert stats == {("a", "b"): 1}
+
+    def test_the_weighted_entropy_rate_is_worked_out_exactly(self):
+        from pyutilz.text.strings.textentropy import entropy_rate, get_entropy_stats
+
+        cond, stats = get_entropy_stats(iter("abacxyxy"), model_order=1)
+        assert entropy_rate(cond, stats) == pytest.approx(2 / 7)
+
+    def test_an_order_zero_model_counts_every_token_under_one_empty_prefix(self):
+        from pyutilz.text.strings.textentropy import compute_entropy_stats
+
+        raw, rate = compute_entropy_stats("aab")
+        assert raw == 0.0
+        assert rate == pytest.approx(0.9182958340544896)
+
+    def test_a_stream_too_short_for_its_order_has_no_stats(self):
+        from pyutilz.text.strings.textentropy import compute_entropy_stats
+
+        assert compute_entropy_stats("") == (None, None)
+        assert compute_entropy_stats("a", order=1) == (None, None)
+
+    def test_a_single_prefix_still_has_stats(self):
+        from pyutilz.text.strings.textentropy import compute_entropy_stats
+
+        raw, rate = compute_entropy_stats("aaa")
+        assert raw == 0.0
+        assert rate == 0.0

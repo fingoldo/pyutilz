@@ -277,3 +277,625 @@ def test_applyfunc_parallel_returns_list_when_return_dataframe_false():
     # but its contents are exactly the per-chunk results, list-like end to end.
     assert not isinstance(result, pd.DataFrame)
     assert list(result) == [[1, 2], [3, 4]]
+
+
+class TestChunking:
+    """The three chunking helpers in parallel.py: exact chunk bounds (including the short last chunk), the rejection of a
+    non-positive size with its message, empty input, and the cleanup warning when a temp directory cannot be checked."""
+
+    def test_split_into_chunks_gives_exact_chunks_with_a_short_last_one(self):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        assert list(split_list_into_chunks(list(range(10)), 3)) == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+
+    def test_split_into_chunks_keeps_an_exact_multiple_without_an_empty_tail(self):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        assert list(split_list_into_chunks([1, 2, 3, 4], 2)) == [[1, 2], [3, 4]]
+
+    def test_a_chunk_size_of_one_gives_singletons(self):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        assert list(split_list_into_chunks(["a", "b"], 1)) == [["a"], ["b"]]
+
+    def test_a_chunk_size_larger_than_the_list_gives_one_chunk(self):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        assert list(split_list_into_chunks([1, 2, 3], 10)) == [[1, 2, 3]]
+
+    def test_an_empty_list_gives_no_chunks(self):
+        from pyutilz.system.parallel import split_list_into_chunks, split_list_into_chunks_indices
+
+        assert list(split_list_into_chunks([], 3)) == []
+        assert list(split_list_into_chunks_indices([], 3)) == []
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_a_non_positive_chunk_size_is_refused_with_its_value_in_the_message(self, bad):
+        from pyutilz.system.parallel import split_list_into_chunks
+
+        with pytest.raises(ValueError, match=f"split_list_into_chunks: chunk_size must be >= 1, got {bad}"):
+            list(split_list_into_chunks([1, 2], bad))
+
+    def test_the_index_bounds_are_exact_and_the_last_right_bound_is_clipped(self):
+        from pyutilz.system.parallel import split_list_into_chunks_indices
+
+        assert list(split_list_into_chunks_indices(list(range(10)), 3)) == [(0, 3), (3, 6), (6, 9), (9, 10)]
+        assert list(split_list_into_chunks_indices(list(range(4)), 4)) == [(0, 4)]
+        assert list(split_list_into_chunks_indices(list(range(5)), 2)) == [(0, 2), (2, 4), (4, 5)]
+
+    @pytest.mark.parametrize("bad", [0, -2])
+    def test_the_index_helper_refuses_a_non_positive_size_with_its_value(self, bad):
+        from pyutilz.system.parallel import split_list_into_chunks_indices
+
+        with pytest.raises(ValueError, match=f"split_list_into_chunks_indices: chunk_size must be >= 1, got {bad}"):
+            list(split_list_into_chunks_indices([1, 2], bad))
+
+    def test_the_nchunks_helper_refuses_zero_with_its_value(self):
+        from pyutilz.system.parallel import split_list_into_nchunks_indices
+
+        with pytest.raises(ValueError, match="split_list_into_nchunks_indices: nchunks must be >= 1, got 0"):
+            list(split_list_into_nchunks_indices([1, 2], 0))
+
+    def test_more_chunks_than_items_are_capped_at_one_item_each(self):
+        from pyutilz.system.parallel import split_list_into_nchunks_indices
+
+        assert list(split_list_into_nchunks_indices(list(range(3)), 10)) == [(0, 1), (1, 2), (2, 3)]
+
+    def test_nchunks_splits_as_evenly_as_it_can(self):
+        from pyutilz.system.parallel import split_list_into_nchunks_indices
+
+        assert list(split_list_into_nchunks_indices(list(range(10)), 3)) == [(0, 3), (3, 6), (6, 10)]
+
+    def test_a_failed_temp_directory_check_is_logged_with_its_path_and_error(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        warned: list = []
+        monkeypatch.setattr(parallel, "logger", type("L", (), {"warning": lambda self, fmt, *a, **k: warned.append((fmt, a)), "info": lambda self, *a, **k: None, "debug": lambda self, *a, **k: None, "error": lambda self, *a, **k: None})())
+        monkeypatch.setattr(parallel, "_TEMP_DIRS", ["/tmp/some-dir"])
+        boom = OSError("permission denied")
+
+        def _exists(path):
+            raise boom
+
+        monkeypatch.setattr(parallel.os.path, "exists", _exists)
+        parallel._cleanup_temp_dirs()
+        assert warned == [("Failed to cleanup temp directory %s: %s", ("/tmp/some-dir", boom))]
+
+
+class _Recorder:
+    """A stand-in for a pool or joblib dispatcher: remembers its constructor arguments and what it was asked to run."""
+
+    def __init__(self, sink, **kwargs):
+        self.kwargs = kwargs
+        sink.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def starmap(self, func, iterable):
+        return [func(*args) for args in iterable]
+
+
+class TestSplitArrayDistributeAndCpu:
+    """split_array's bounds and refusal, distribute_work's largest-first assignment, its deprecated alias and argument rules,
+    and cpu_count_physical's fallbacks (parallel.py 126-197)."""
+
+    def test_split_array_gives_exact_bounds_and_refuses_a_non_positive_step(self):
+        import numpy as np
+
+        from pyutilz.system.parallel import split_array
+
+        assert split_array(np.zeros(10), 3) == [(0, 3), (3, 6), (6, 9), (9, 10)]
+        assert split_array(np.zeros(0), 3) == []
+        with pytest.raises(ValueError, match="split_array: step must be >= 1, got 0"):
+            split_array(np.zeros(4), 0)
+
+    def test_distribute_work_is_largest_first_and_keeps_each_workers_items_in_input_order(self):
+        from pyutilz.system.parallel import distribute_work
+
+        values, indices = distribute_work([5, 4, 3, 3, 2], n_jobs=2)
+        assert values == [[5, 3], [4, 3, 2]]
+        assert indices == [[0, 3], [1, 2, 4]]
+
+    def test_the_deprecated_nworkers_alias_warns_and_sets_the_worker_count(self):
+        from pyutilz.system.parallel import distribute_work
+
+        with pytest.warns(DeprecationWarning, match="nworkers"):
+            values, _indices = distribute_work([1, 2, 3], nworkers=2)
+        assert len(values) == 2
+
+    def test_n_jobs_wins_over_the_deprecated_alias_when_both_are_given(self):
+        from pyutilz.system.parallel import distribute_work
+
+        with pytest.warns(DeprecationWarning):
+            values, _indices = distribute_work([1, 2], n_jobs=3, nworkers=5)
+        assert len(values) == 3
+
+    def test_distribute_work_needs_a_worker_count(self):
+        from pyutilz.system.parallel import distribute_work
+
+        with pytest.raises(TypeError, match="missing required argument: 'n_jobs'"):
+            distribute_work([1, 2])
+
+    def test_a_non_positive_worker_count_means_the_physical_core_count(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        monkeypatch.setattr(parallel, "cpu_count_physical", lambda: 2)
+        values, _indices = parallel.distribute_work([1, 2, 3], n_jobs=0)
+        assert len(values) == 2
+
+    def test_cpu_count_physical_asks_psutil_for_physical_cores(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        asked: list = []
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=True: asked.append(logical) or 6)
+        assert parallel.cpu_count_physical() == 6
+        assert asked == [False]
+
+    def test_cpu_count_physical_falls_back_when_psutil_cannot_tell(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=True: None)
+        assert parallel.cpu_count_physical() == 1
+        assert parallel.cpu_count_physical(fallback=4) == 4
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=True: 0)
+        assert parallel.cpu_count_physical(fallback=3) == 3
+
+
+class TestParallelDispatch:
+    """parallel_run hands joblib the worker count, backend and limits it was given; applyfunc_parallel sizes and builds its
+    pool, honours the deprecated alias, concatenates results, and handles empty input (parallel.py 198-273)."""
+
+    def _joblib(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+
+        class _FakeParallel(_Recorder):
+            def __init__(self, **kwargs):
+                super().__init__(made, **kwargs)
+
+            def __call__(self, jobs):
+                return [f"ran:{job}" for job in jobs]
+
+        monkeypatch.setattr(parallel, "Parallel", _FakeParallel)
+        return parallel, made
+
+    def test_parallel_run_passes_its_worker_count_backend_and_limits_to_joblib(self, monkeypatch):
+        parallel, made = self._joblib(monkeypatch)
+        assert parallel.parallel_run(["a", "b"], n_jobs=2) == ["ran:a", "ran:b"]
+        assert made[0].kwargs == {"n_jobs": 2, "backend": None, "max_nbytes": 50_000, "verbose": 0}
+
+    def test_a_non_positive_worker_count_becomes_the_physical_cores_by_default(self, monkeypatch):
+        parallel, made = self._joblib(monkeypatch)
+        monkeypatch.setattr(parallel, "cpu_count_physical", lambda: 3)
+        parallel.parallel_run(["a"], n_jobs=0)
+        assert made[0].kwargs["n_jobs"] == 3
+
+    def test_a_non_positive_worker_count_is_kept_when_real_cores_are_not_preferred(self, monkeypatch):
+        parallel, made = self._joblib(monkeypatch)
+        monkeypatch.setattr(parallel, "cpu_count_physical", lambda: 3)
+        parallel.parallel_run(["a"], n_jobs=0, prefer_real_cores=False)
+        assert made[0].kwargs["n_jobs"] == 0
+
+    def test_a_dask_backend_is_entered_as_a_context_and_joblib_gets_no_backend(self, monkeypatch):
+        parallel, made = self._joblib(monkeypatch)
+        entered: list = []
+
+        class _Context:
+            def __init__(self, name):
+                entered.append(name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(parallel, "parallel_backend", _Context)
+        parallel.parallel_run(["a"], n_jobs=2, backend="dask", batch_size=5)
+        assert entered == ["dask"]
+        assert made[0].kwargs["backend"] is None
+        assert made[0].kwargs["batch_size"] == 5
+
+    def test_applyfunc_parallel_returns_an_empty_frame_or_list_for_no_work(self):
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        assert applyfunc_parallel([], lambda x: x).empty
+        assert applyfunc_parallel([], lambda x: x, return_dataframe=False) == []
+
+    def test_applyfunc_parallel_concatenates_frames_with_a_fresh_index(self):
+        import pandas as pd
+
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        out = applyfunc_parallel([(1,), (2,)], lambda x: pd.DataFrame({"v": [x]}), n_jobs=2, use_threads=True)
+        assert list(out["v"]) == [1, 2]
+        assert list(out.index) == [0, 1]
+
+    def test_applyfunc_parallel_returns_the_plain_list_when_asked(self):
+        import pandas as pd
+
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        out = applyfunc_parallel([(1,), (2,)], lambda x: pd.DataFrame({"v": [x]}), n_jobs=2, return_dataframe=False, use_threads=True)
+        assert isinstance(out, list) and len(out) == 2
+
+    def test_the_deprecated_n_cores_alias_warns_and_sets_the_pool_size(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+        monkeypatch.setattr(parallel, "ThreadPool", lambda **kwargs: _Recorder(made, **kwargs))
+        with pytest.warns(DeprecationWarning, match="n_cores"):
+            parallel.applyfunc_parallel([(1,), (2,)], lambda x: x, n_cores=3, return_dataframe=False, use_threads=True)
+        assert made[0].kwargs["processes"] == 3
+
+    def test_the_default_pool_size_is_the_physical_count_capped_by_the_work(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+        monkeypatch.setattr(parallel, "ThreadPool", lambda **kwargs: _Recorder(made, **kwargs))
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=False: 8)
+        parallel.applyfunc_parallel([(1,), (2,)], lambda x: x, return_dataframe=False, use_threads=True)
+        assert made[0].kwargs["processes"] == 2
+
+    def test_a_missing_core_count_means_one_worker(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+        monkeypatch.setattr(parallel, "ThreadPool", lambda **kwargs: _Recorder(made, **kwargs))
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=False: None)
+        parallel.applyfunc_parallel([(1,), (2,)], lambda x: x, return_dataframe=False, use_threads=True)
+        assert made[0].kwargs["processes"] == 1
+
+    def test_the_process_pool_gets_its_initializer_and_arguments(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+        monkeypatch.setattr(parallel, "Pool", lambda **kwargs: _Recorder(made, **kwargs))
+
+        def _init(*args):
+            return None
+
+        out = parallel.applyfunc_parallel([(1,)], lambda x: x, n_jobs=1, return_dataframe=False, initializer=_init, initargs=("cfg",))
+        assert out == [1]
+        assert made[0].kwargs["initializer"] is _init
+        assert made[0].kwargs["initargs"] == ("cfg",)
+        assert made[0].kwargs["processes"] == 1
+
+
+class TestTensorFlowGpuSelection:
+    """set_tf_gpu restricts TensorFlow to one listed GPU and reports a bad index or a late failure instead of raising
+    (parallel.py 275-291). TensorFlow is replaced by a stub module."""
+
+    def _stub_tf(self, monkeypatch, gpus, fail=False):
+        import sys
+        import types
+
+        set_calls: list = []
+
+        def _set(device, kind):
+            if fail:
+                raise RuntimeError("GPUs already initialized")
+            set_calls.append((device, kind))
+
+        experimental = types.SimpleNamespace(
+            list_physical_devices=lambda kind: list(gpus),
+            set_visible_devices=_set,
+            list_logical_devices=lambda kind: ["logical-0"],
+        )
+        tf = types.SimpleNamespace(config=types.SimpleNamespace(experimental=experimental))
+        monkeypatch.setitem(sys.modules, "tensorflow", tf)
+        return set_calls
+
+    def _recorder(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        errors: list = []
+        infos: list = []
+        monkeypatch.setattr(
+            parallel,
+            "logger",
+            type(
+                "L",
+                (),
+                {
+                    "error": lambda self, fmt, *a, **k: errors.append((fmt, a)),
+                    "info": lambda self, fmt, *a, **k: infos.append((fmt, a)),
+                    "warning": lambda self, *a, **k: None,
+                    "debug": lambda self, *a, **k: None,
+                },
+            )(),
+        )
+        return parallel, errors, infos
+
+    def test_with_no_gpu_nothing_is_set_and_nothing_is_reported(self, monkeypatch):
+        parallel, errors, infos = self._recorder(monkeypatch)
+        calls = self._stub_tf(monkeypatch, gpus=[])
+        parallel.set_tf_gpu(0)
+        assert calls == [] and errors == []
+
+    @pytest.mark.parametrize("bad", [2, -1])
+    def test_an_index_outside_the_gpus_is_reported_and_nothing_is_set(self, monkeypatch, bad):
+        parallel, errors, infos = self._recorder(monkeypatch)
+        calls = self._stub_tf(monkeypatch, gpus=["g0", "g1"])
+        parallel.set_tf_gpu(bad)
+        assert calls == []
+        assert errors == [("Requested GPU index %s is out of range for %s available GPU(s)", (bad, 2))]
+
+    def test_a_valid_index_makes_only_that_gpu_visible_and_reports_the_counts(self, monkeypatch):
+        parallel, errors, infos = self._recorder(monkeypatch)
+        calls = self._stub_tf(monkeypatch, gpus=["g0", "g1"])
+        parallel.set_tf_gpu(1)
+        assert calls == [("g1", "GPU")]
+        assert errors == []
+        assert infos == [("%s Physical GPUs, %s Logical GPU", (2, 1))]
+
+    def test_a_failure_to_set_visibility_is_logged_not_raised(self, monkeypatch):
+        parallel, errors, infos = self._recorder(monkeypatch)
+        self._stub_tf(monkeypatch, gpus=["g0"], fail=True)
+        parallel.set_tf_gpu(0)
+        assert len(errors) == 1
+        assert isinstance(errors[0][0], RuntimeError)
+
+
+class TestMemMapArrayBehaviour:
+    """mem_map_array maps the array read-only by default, keeps every call in one shared directory, and overwrites a
+    name it has seen before (parallel.py 293-318)."""
+
+    def test_the_mapping_is_a_read_only_memmap_with_the_same_values(self):
+        import numpy as np
+
+        from pyutilz.system import parallel
+
+        data = np.arange(6, dtype=np.float64)
+        mapped = parallel.mem_map_array(data, "gap_read_only")
+        assert isinstance(mapped, np.memmap)
+        assert np.array_equal(mapped, data)
+        assert mapped.flags.writeable is False
+
+    def test_every_call_shares_one_directory_and_a_reused_name_is_overwritten(self):
+        import os
+
+        import numpy as np
+
+        from pyutilz.system import parallel
+
+        first = parallel.mem_map_array(np.zeros(3), "gap_shared_a")
+        folder = parallel._MEM_MAP_DIR
+        second = parallel.mem_map_array(np.ones(3), "gap_shared_b")
+        assert parallel._MEM_MAP_DIR == folder
+        assert os.path.dirname(first.filename) == folder == os.path.dirname(second.filename)
+        del first
+        import gc
+
+        gc.collect()
+        again = parallel.mem_map_array(np.full(3, 7.0), "gap_shared_a")
+        assert np.array_equal(again, np.full(3, 7.0))
+
+
+class TestBoundariesDefaultsAndLogs:
+    """Single-item boundaries, the one-worker and default-argument paths, the backend-name check, the log lines and their
+    arguments, the warning location, and the shared memory-map directory bookkeeping (parallel.py 46-316)."""
+
+    def _log_recorder(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        infos: list = []
+        errors: list = []
+        monkeypatch.setattr(
+            parallel,
+            "logger",
+            type(
+                "L",
+                (),
+                {
+                    "info": lambda self, fmt, *a, **k: infos.append((fmt, a)),
+                    "error": lambda self, fmt, *a, **k: errors.append((fmt, a)),
+                    "warning": lambda self, fmt, *a, **k: errors.append((fmt, a)),
+                    "debug": lambda self, *a, **k: None,
+                },
+            )(),
+        )
+        return parallel, infos, errors
+
+    def test_a_step_of_one_is_a_valid_split(self):
+        import numpy as np
+
+        from pyutilz.system.parallel import split_array
+
+        assert split_array(np.zeros(3), 1) == [(0, 1), (1, 2), (2, 3)]
+
+    def test_a_single_chunk_request_gives_one_chunk(self):
+        from pyutilz.system.parallel import split_list_into_nchunks_indices
+
+        assert list(split_list_into_nchunks_indices([1, 2], 1)) == [(0, 2)]
+
+    def test_the_least_loaded_worker_takes_the_next_largest_item_and_each_worker_keeps_input_order(self):
+        from pyutilz.system.parallel import distribute_work
+
+        values, indices = distribute_work([1, 5, 2, 9], n_jobs=2)
+        assert indices == [[3], [0, 1, 2]]
+        assert values == [[9], [1, 5, 2]]
+
+    def test_the_n_cores_warning_points_at_the_caller(self):
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        with pytest.warns(DeprecationWarning) as record:
+            applyfunc_parallel([(1,)], lambda x: x, n_cores=1, return_dataframe=False, use_threads=True)
+        assert record[0].filename == __file__
+
+    def test_a_single_worker_takes_everything_even_when_the_core_count_is_larger(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        monkeypatch.setattr(parallel, "cpu_count_physical", lambda: 4)
+        values, _indices = parallel.distribute_work([1, 2, 3], n_jobs=1)
+        assert len(values) == 1
+
+    def test_the_deprecation_warning_points_at_the_caller(self):
+        from pyutilz.system.parallel import distribute_work
+
+        with pytest.warns(DeprecationWarning) as record:
+            distribute_work([1, 2], nworkers=2)
+        assert record[0].filename == __file__
+
+    def test_physical_core_count_of_one_is_kept_and_not_replaced_by_the_fallback(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=True: 1)
+        assert parallel.cpu_count_physical(fallback=5) == 1
+
+    def test_parallel_run_defaults_to_minus_one_workers_and_keeps_it_without_real_cores(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+
+        class _FakeParallel(_Recorder):
+            def __init__(self, **kwargs):
+                super().__init__(made, **kwargs)
+
+            def __call__(self, jobs):
+                return list(jobs)
+
+        monkeypatch.setattr(parallel, "Parallel", _FakeParallel)
+        parallel.parallel_run(["a"], prefer_real_cores=False)
+        assert made[0].kwargs["n_jobs"] == -1
+
+    def test_a_single_worker_is_kept_even_when_real_cores_are_preferred(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+
+        class _FakeParallel(_Recorder):
+            def __init__(self, **kwargs):
+                super().__init__(made, **kwargs)
+
+            def __call__(self, jobs):
+                return list(jobs)
+
+        monkeypatch.setattr(parallel, "Parallel", _FakeParallel)
+        monkeypatch.setattr(parallel, "cpu_count_physical", lambda: 3)
+        parallel.parallel_run(["a"], n_jobs=1)
+        assert made[0].kwargs["n_jobs"] == 1
+
+    def test_only_the_dask_backend_is_entered_as_a_parallel_backend_context(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        made: list = []
+        entered: list = []
+
+        class _FakeParallel(_Recorder):
+            def __init__(self, **kwargs):
+                super().__init__(made, **kwargs)
+
+            def __call__(self, jobs):
+                return list(jobs)
+
+        class _Context:
+            def __init__(self, name):
+                entered.append(name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(parallel, "Parallel", _FakeParallel)
+        monkeypatch.setattr(parallel, "parallel_backend", _Context)
+        parallel.parallel_run(["a"], n_jobs=2, backend="loky")
+        assert entered == []
+        assert made[0].kwargs["backend"] == "loky"
+
+    def test_the_pool_is_sized_by_physical_cores_and_the_logical_flag_defaults_to_false(self, monkeypatch):
+        from pyutilz.system import parallel
+
+        asked: list = []
+        made: list = []
+        monkeypatch.setattr(parallel, "ThreadPool", lambda **kwargs: _Recorder(made, **kwargs))
+        monkeypatch.setattr(parallel.psutil, "cpu_count", lambda logical=True: asked.append(logical) or 8)
+        parallel.applyfunc_parallel([(1,), (2,)], lambda x: x, return_dataframe=False, use_threads=True)
+        assert asked == [False]
+
+    def test_the_start_and_end_messages_carry_the_function_name_and_counts(self, monkeypatch):
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        parallel, infos, errors = self._log_recorder(monkeypatch)
+
+        def named(x):
+            return x
+
+        applyfunc_parallel([(1,), (2,), (3,)], named, n_jobs=2, return_dataframe=False, use_threads=True)
+        start = [a for fmt, a in infos if fmt.startswith("Applying of")]
+        assert start == [("named", 2, 3)]
+        messages = [fmt for fmt, _ in infos]
+        assert "Function applied." in messages
+        assert messages.index("Function applied.") > messages.index("Applying of %s started, n_jobs=%s, nchunks=%s...")
+
+    def test_a_callable_without_a_name_is_called_function_in_the_log(self, monkeypatch):
+        import functools
+
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        parallel, infos, errors = self._log_recorder(monkeypatch)
+        applyfunc_parallel([(1,)], functools.partial(lambda a, b: a + b, 0), n_jobs=1, return_dataframe=False, use_threads=True)
+        start = [a for fmt, a in infos if fmt.startswith("Applying of")]
+        assert start[0][0] == "function"
+
+    def test_concatenated_results_are_logged_after_the_frames_are_joined(self, monkeypatch):
+        import pandas as pd
+
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        parallel, infos, errors = self._log_recorder(monkeypatch)
+        out = applyfunc_parallel([(1,)], lambda x: pd.DataFrame({"v": [x]}), n_jobs=1, use_threads=True)
+        assert list(out["v"]) == [1]
+        messages = [fmt for fmt, _ in infos]
+        assert "Results Concatenated." in messages
+
+    def test_the_gpu_queries_ask_for_the_gpu_kind(self, monkeypatch):
+        import sys
+        import types
+
+        from pyutilz.system import parallel
+
+        kinds: list = []
+        experimental = types.SimpleNamespace(
+            list_physical_devices=lambda kind: kinds.append(("physical", kind)) or ["g0"],
+            set_visible_devices=lambda device, kind: kinds.append(("set", kind)),
+            list_logical_devices=lambda kind: kinds.append(("logical", kind)) or ["l0"],
+        )
+        monkeypatch.setitem(sys.modules, "tensorflow", types.SimpleNamespace(config=types.SimpleNamespace(experimental=experimental)))
+        parallel.set_tf_gpu(0)
+        assert kinds == [("physical", "GPU"), ("set", "GPU"), ("logical", "GPU")]
+
+    def test_a_new_memory_map_directory_is_created_once_and_registered_for_cleanup(self, monkeypatch):
+        import numpy as np
+
+        from pyutilz.system import parallel
+
+        infos: list = []
+        monkeypatch.setattr(parallel, "_MEM_MAP_DIR", None)
+        monkeypatch.setattr(parallel, "_TEMP_DIRS", [])
+        monkeypatch.setattr(
+            parallel,
+            "logger",
+            type("L", (), {"info": lambda self, fmt, *a, **k: infos.append((fmt, a)), "debug": lambda self, *a, **k: None, "warning": lambda self, *a, **k: None, "error": lambda self, *a, **k: None})(),
+        )
+        parallel.mem_map_array(np.zeros(2), "gap_new_dir")
+        assert parallel._MEM_MAP_DIR is not None
+        assert parallel._TEMP_DIRS == [parallel._MEM_MAP_DIR]
+        created = [a for fmt, a in infos if fmt.startswith("mem_map_array: created")]
+        assert created == [(parallel._MEM_MAP_DIR,)]
+
+    def test_cleanup_removes_directories_while_ignoring_their_own_errors(self, monkeypatch, tmp_path):
+        from pyutilz.system import parallel
+
+        seen: list = []
+        monkeypatch.setattr(parallel.shutil, "rmtree", lambda path, **kwargs: seen.append((path, kwargs)))
+        monkeypatch.setattr(parallel, "_TEMP_DIRS", [str(tmp_path)])
+        parallel._cleanup_temp_dirs()
+        assert seen == [(str(tmp_path), {"ignore_errors": True})]

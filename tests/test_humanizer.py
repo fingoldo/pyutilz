@@ -496,3 +496,107 @@ class TestTheFirstCharacterKeepsItsCapital:
     def test_an_untouched_sentence_is_returned_unchanged(self):
         text = "Normal sentence, nothing to strip."
         assert strip_ai_patterns(text) == text
+
+
+class _Script:
+    """A stand-in for random.Random that returns the values a test queues, in order, and checks each choice is legal."""
+
+    def __init__(self, *values):
+        self._values = list(values)
+
+    def _next(self):
+        return self._values.pop(0)
+
+    def choice(self, seq):
+        value = self._next()
+        assert value in seq, (value, seq)
+        return value
+
+    def randint(self, lo, hi):
+        value = self._next()
+        assert lo <= value <= hi, (value, lo, hi)
+        return value
+
+    def choices(self, population, weights=None, k=1):
+        return [self._next()]
+
+
+_AI_PATTERN_REPLACEMENTS = [
+    ("We think it's worth noting that tests pass.", "We think tests pass."),
+    ("We think it is important to note that tests pass.", "We think tests pass."),
+    ("We have, in conclusion, tests.", "We have, tests."),
+    ("We did, to summarize, the tests.", "We did, the tests."),
+    ("This stands as a testament to care.", "This shows to care."),
+    ("This underscores its importance here.", "This matters here."),
+    ("We, as an AI, ship it.", "We, ship it."),
+    ("We delve into data.", "We look into data."),
+    ("We delve deeper.", "We dig deeper."),
+    ("We leverage tools.", "We use tools."),
+    ("We utilize tools.", "We use tools."),
+    ("We facilitate work.", "We help with work."),
+    ("We streamline work.", "We simplify work."),
+    ("We need comprehensive tests.", "We need thorough tests."),
+    ("We ensure that tests pass.", "We make sure tests pass."),
+    ("We ensure tests pass.", "We make sure tests pass."),
+    ("A pivotal change.", "A key change."),
+    ("A seamless flow.", "A smooth flow."),
+    ("A robust design.", "A solid design."),
+    ("A meticulous review.", "A careful review."),
+    ("This innovative idea.", "This new idea."),
+    ("A cutting-edge tool.", "A modern tool."),
+    ("A cutting edge tool.", "A modern tool."),
+    ("Tests pass. Furthermore, we ship.", "Tests pass. Also, we ship."),
+    ("Tests pass. Moreover, we ship.", "Tests pass. Also, we ship."),
+    ("Tests pass. Additionally we ship.", "Tests pass. Also, we ship."),
+    ("Tests pass. Consequently we ship.", "Tests pass. So, we ship."),
+    ("Tests pass. Nevertheless we ship.", "Tests pass. Still, we ship."),
+    ("I'm thrilled to help.", "I'm glad to help."),
+    ("I'd love to help.", "I'd like to help."),
+    ("I bring 10 years of experience.", "I have 10 years of experience."),
+    ("This plays a vital role here.", "This is important here."),
+]
+
+
+_GLUED_NEGATIVES = [
+    "xIt is important to note that tests stay.",
+    "xIn conclusion, tests stay.",
+    "xTo summarize, tests stay.",
+    "xstands as a testament to care.",
+    "This underscores itsimportance here.",
+    "xdelve into data stay.",
+    "xdelve deeper and stay.",
+    "xleverage tools and stay.",
+    "xutilize tools and stay.",
+    "xfacilitate work and stay.",
+    "xstreamline work and stay.",
+    "xcomprehensive tests stay.",
+    "xensure that tests stay.",
+    "xensure tests stay.",
+    "xpivotal change stays.",
+    "xseamless flow stays.",
+    "xmeticulous review stays.",
+    "xcutting edge tool stays.",
+    "We xFurthermore, we stay.",
+    "xI'm thrilled to help and stay.",
+    "xI'd love to help and stay.",
+    "xI bring 10 years of work and stay.",
+    "This plays avital role here.",
+    "xplays a vital role here and stay.",
+]
+
+
+class _Recorder(_Script):
+    """_Script that also records the bounds of every randint call and the candidate list of every choice call."""
+
+    def __init__(self, *values):
+        super().__init__(*values)
+        self.ranges: list = []
+        self.seqs: list = []
+
+    def randint(self, lo, hi):
+        self.ranges.append((lo, hi))
+        return super().randint(lo, hi)
+
+    def choice(self, seq):
+        self.seqs.append(list(seq))
+        return super().choice(seq)

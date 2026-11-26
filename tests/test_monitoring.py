@@ -418,3 +418,58 @@ class TestHeartbeatRetrierQueue:
         item.first_failed_at = 0.0
         mon._HeartbeatRetrier._log_gave_up(item, now=180.0)
         assert recorded == [("Giving up on heartbeat to %s on monitor %s after %d failed attempts over %.0f min", ("prov", "job", 4, 3.0))]
+
+
+class _Retrier:
+    def __init__(self):
+        self.submitted: list = []
+        self.forgotten: list = []
+
+    def submit(self, item):
+        self.submitted.append(item)
+
+    def forget(self, key):
+        self.forgotten.append(key)
+
+    def clear(self):
+        self.submitted.clear()
+        self.forgotten.clear()
+
+
+def _quiet_logger(sink=None):
+    """A stand-in logger whose info() records its arguments into sink (or discards them)."""
+
+    class _Logger:
+        def info(self, *args, **kwargs):
+            if sink is not None:
+                sink.append(args)
+
+        def warning(self, *args, **kwargs):
+            return None
+
+        def debug(self, *args, **kwargs):
+            return None
+
+        def error(self, *args, **kwargs):
+            return None
+
+    return _Logger()
+
+
+class _FakeResponse:
+    def __init__(self, status_code, text=""):
+        self.status_code = status_code
+        self.text = text
+
+
+class _FakeRequests:
+    def __init__(self, status=None, exc=None):
+        self.status = status
+        self.exc = exc
+        self.calls: list = []
+
+    def post(self, endpoint, data=None, params=None, timeout=None):
+        self.calls.append((endpoint, timeout))
+        if self.exc is not None:
+            raise self.exc
+        return _FakeResponse(self.status)
