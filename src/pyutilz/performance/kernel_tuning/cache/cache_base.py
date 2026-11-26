@@ -311,7 +311,7 @@ def _rounded_clock(clock_khz: object) -> str:
     """The rated maximum SM clock rounded to 100 MHz as a key fragment (``f16``: 1.6 GHz); ``fx`` when it is not reported."""
     try:
         khz = float(clock_khz)  # type: ignore[arg-type]  # object from a loosely-typed summary dict; the except covers a non-numeric value
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # best-effort: the rated clock is optional in the summary, ``fx`` is the key fragment of a host that does not report it (not an error to warn about on every key)
         return "fx"
     return f"f{round(khz / 1e5)}" if khz > 0 else "fx"
 
