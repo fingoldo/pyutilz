@@ -555,3 +555,71 @@ def test_the_node_resolution_receives_the_system_info_then_the_scraper_name(monk
     monkeypatch.setattr(dist, "_container", type("C", (), {"node_id": None})())
     dist.register_scraper(scraper_name="s1", version="v1", app_name="a", ip="1.2.3.4")
     assert seen == [({"host_name": "h"}, "s1")]
+
+
+class TestContentVersionDigestAndHeartbeatDefaults:
+    """The content version hashes the caller's module bytes, passing usedforsecurity=False only where the interpreter accepts
+    it (3.9+), and the heartbeat SQL defaults to status 'ok' (distributed.py 60-61, 172)."""
+
+    MODULE_BYTES = b"print('hi')" + bytes([10])
+
+    @classmethod
+    def _version_for(cls, monkeypatch, tmp_path, version_info):
+        import hashlib
+        import inspect
+        import sys
+        from types import SimpleNamespace
+
+        from pyutilz.system import distributed as dist
+
+        module_file = tmp_path / "scraper_module.py"
+        module_file.write_bytes(cls.MODULE_BYTES)
+        real_md5 = hashlib.md5
+        calls: list = []
+
+        def _md5(data, **kwargs):
+            calls.append(kwargs)
+            return real_md5(data)
+
+        monkeypatch.setattr(inspect, "getmodule", lambda frame: SimpleNamespace(__file__=str(module_file)))
+        monkeypatch.setattr(hashlib, "md5", _md5)
+        monkeypatch.setattr(sys, "version_info", version_info)
+        version = dist._content_version(object())
+        recorded = list(calls)
+        expected_tag = real_md5(cls.MODULE_BYTES).hexdigest()[:8]
+        return version, recorded, expected_tag
+
+    def test_the_digest_is_the_md5_of_the_module_bytes_with_usedforsecurity_on_3_9_and_later(self, monkeypatch, tmp_path):
+        for info in ((3, 9, 0), (3, 12, 1)):
+            version, calls, expected_tag = self._version_for(monkeypatch, tmp_path, info)
+            assert version.endswith("." + expected_tag)
+            assert calls == [{"usedforsecurity": False}], info
+
+    def test_on_3_8_the_digest_is_taken_without_the_keyword(self, monkeypatch, tmp_path):
+        version, calls, expected_tag = self._version_for(monkeypatch, tmp_path, (3, 8, 10))
+        assert version.endswith("." + expected_tag)
+        assert calls == [{}]
+
+    def test_the_heartbeat_sql_defaults_to_status_ok(self, monkeypatch):
+        from pyutilz.system import distributed as dist
+
+        monkeypatch.setattr(dist._container, "node_id", 7)
+        _sql, params = dist.get_heartbeat_sql()
+        assert "ok" in params
+
+    def test_registration_asks_for_the_full_system_info(self, monkeypatch):
+        from pyutilz.system import distributed as dist
+
+        kwargs_seen: list = []
+
+        def _info(**kwargs):
+            kwargs_seen.append(kwargs)
+            return {"host_name": "h"}
+
+        monkeypatch.setattr(dist, "_resolve_node_id", lambda info, scraper_name: setattr(dist._container, "node_id", 7))
+        monkeypatch.setattr(dist.system, "get_system_info", _info)
+        monkeypatch.setattr(dist, "db", _RecordingDB())
+        monkeypatch.setattr(dist, "heartbeat_scraper", lambda **kw: None)
+        monkeypatch.setattr(dist, "_container", type("C", (), {"node_id": None})())
+        dist.register_scraper(scraper_name="s1", version="v1", app_name="a", ip="1.2.3.4")
+        assert kwargs_seen == [{"only_stats": False}]
