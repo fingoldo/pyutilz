@@ -201,13 +201,13 @@ def test_snapshot_tree_copies_into_a_new_stamped_folder_and_refuses_one_inside(d
 
 
 def test_task_script_and_daily_command(tmp_path: Path) -> None:
-    body = ib.task_script(tmp_path / "repo dir", ["-m", "bench.backup", "--dest-dir", "//host/share"], tmp_path / "t.log", {"DATA": "C:/x y"}, python="py.exe")
+    body = ib.task_script(tmp_path / "repo dir", ["-m", "bench.backup", "--dest-dir", "//host/share"], tmp_path / "t.log", {"DATA": "data dir/x y"}, python="py.exe")
     assert body.endswith("\r\n")
     assert f'cd /d "{tmp_path / "repo dir"}"' in body
-    assert 'set "DATA=C:/x y"' in body
+    assert 'set "DATA=data dir/x y"' in body
     assert f'"py.exe" -m bench.backup --dest-dir "//host/share" >> "{tmp_path / "t.log"}" 2>&1' in body
-    cmd = ib.daily_task_command("T", '"C:/t.cmd"')
-    assert cmd[-2:] == ["/TR", '"C:/t.cmd"'] and "/F" not in cmd
+    cmd = ib.daily_task_command("T", '"t dir/t.cmd"')
+    assert cmd[-2:] == ["/TR", '"t dir/t.cmd"'] and "/F" not in cmd
     with pytest.raises(ValueError, match="261"):
         ib.daily_task_command("T", "x" * 262)
 
