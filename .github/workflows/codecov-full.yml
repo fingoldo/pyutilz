@@ -60,7 +60,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.11"
 
@@ -194,7 +194,7 @@ jobs:
           coverage report --rcfile=.coveragerc-merged
 
       - name: Upload combined coverage to Codecov
-        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@6cde3dc7ea7d8b36fb8273a5acb9dc96cf70caa5  # v1.23.12  # pragma: allowlist secret
+        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@d6e76b74b2c171ad79e4afcf3263113d0843af78  # v1.23.12  # pragma: allowlist secret
         with:
           files: ./coverage-full.xml
           flags: combined

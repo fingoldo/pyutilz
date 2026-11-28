@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   docs:
-    uses: fingoldo/py-ci-shared/.github/workflows/docs.yml@6cde3dc7ea7d8b36fb8273a5acb9dc96cf70caa5  # v1.23.12  # pragma: allowlist secret
+    uses: fingoldo/py-ci-shared/.github/workflows/docs.yml@d6e76b74b2c171ad79e4afcf3263113d0843af78  # v1.23.12  # pragma: allowlist secret
     with:
       default-branch: master
       # Installs the [docs] extra rather than a hand-copied duplicate of its single pin, so a
