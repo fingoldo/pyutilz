@@ -148,8 +148,9 @@ def save_manifest(path: Path, manifest: Mapping[str, Mapping[str, Any]]) -> None
 def find_changes(targets: Sequence[BackupTarget], manifest: Mapping[str, Mapping[str, Any]], staging: Path) -> List[Candidate]:
     """Files whose sha256 differs from the manifest or that the manifest has not seen; SQLite files are snapshotted under `staging` first.
 
-    A file locked or removed mid-run is logged and skipped; the next run picks it up."""
+    A file locked or removed mid-run is skipped, the next run picks it up; the skipped files are logged once, after the scan."""
     found: List[Candidate] = []
+    skipped: List[str] = []
     n = 0
     for target in targets:
         for rel, path in target_files(target):
@@ -159,10 +160,12 @@ def find_changes(targets: Sequence[BackupTarget], manifest: Mapping[str, Mapping
                 digest = file_sha256(source)
                 size = source.stat().st_size
             except (OSError, sqlite3.Error) as exc:
-                logger.warning("skipping %s this run: %s", path, exc)
+                skipped.append(f"{path}: {exc}")
                 continue
             if manifest.get(rel, {}).get("sha256") != digest:
                 found.append(Candidate(rel, source, digest, size))
+    if skipped:
+        logger.warning("skipped %d unreadable file(s) this run, e.g. %s", len(skipped), "; ".join(skipped[:3]))
     return found
 
 

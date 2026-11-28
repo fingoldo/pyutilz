@@ -115,7 +115,7 @@ def test_manifest_keeps_every_archived_file_when_a_later_archive_fails(data: Pat
     assert (dest / saved["d/a.jsonl"]["archive"]).exists()
 
 
-def test_find_changes_snapshots_sqlite_honours_a_file_selector_and_skips_unreadable(data: Path, tmp_path: Path) -> None:
+def test_find_changes_snapshots_sqlite_honours_a_file_selector_and_skips_unreadable(data: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     db = data / "store.sqlite3"
     con = sqlite3.connect(str(db))
     con.execute("create table t (x)")
@@ -131,8 +131,10 @@ def test_find_changes_snapshots_sqlite_honours_a_file_selector_and_skips_unreada
     assert [c.rel for c in changes] == ["d/store.sqlite3"]
     assert changes[0].source.parent == staging
     assert ib.find_changes([ib.BackupTarget("x", tmp_path / "absent")], {}, staging) == []
-    broken = ib.BackupTarget("d", data, files=lambda root: [root / "nope.jsonl"])
-    assert ib.find_changes([broken], {}, staging) == []
+    broken = ib.BackupTarget("d", data, files=lambda root: [root / "nope.jsonl", root / "gone.jsonl"])
+    with caplog.at_level("WARNING", logger=ib.__name__):
+        assert ib.find_changes([broken], {}, staging) == []
+    assert [r.getMessage().split(",")[0] for r in caplog.records] == ["skipped 2 unreadable file(s) this run"]
 
 
 def test_replace_retries_a_briefly_locked_destination_then_succeeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
