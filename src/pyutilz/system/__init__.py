@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .cli_logging import setup_cli_logging
     from .distributed import register_scraper
+    from .incremental_backup import archived_entries, copy_to_folder, daily_task_command, find_changes, require_env, restore_from_folder, set_aside_one_file_objects, snapshot_tree, task_script, upload_to_s3, utc_day
     from .gpu_dispatch import cuda_memory_guard, dispatch_cpu_vs_gpu, get_shared_mem_budget_per_block, occupancy_aware_block_size, optimal_threads_per_block, reset_cache, select_best_gpu
     from .monitoring import log_duration, monitored, timeout_wrapper
     from .parallel import applyfunc_parallel, distribute_work, mem_map_array, parallel_run, set_tf_gpu, split_array, split_list_into_chunks, split_list_into_nchunks_indices
@@ -14,6 +15,17 @@ if TYPE_CHECKING:
 _REEXPORTS = {
     "setup_cli_logging": "cli_logging",
     "register_scraper": "distributed",
+    "archived_entries": "incremental_backup",
+    "copy_to_folder": "incremental_backup",
+    "daily_task_command": "incremental_backup",
+    "find_changes": "incremental_backup",
+    "require_env": "incremental_backup",
+    "restore_from_folder": "incremental_backup",
+    "set_aside_one_file_objects": "incremental_backup",
+    "snapshot_tree": "incremental_backup",
+    "task_script": "incremental_backup",
+    "upload_to_s3": "incremental_backup",
+    "utc_day": "incremental_backup",
     "cuda_memory_guard": "gpu_dispatch",
     "dispatch_cpu_vs_gpu": "gpu_dispatch",
     "get_shared_mem_budget_per_block": "gpu_dispatch",
@@ -54,9 +66,9 @@ from .system import *
 # 2026-07-21 audit: `pyutilz.system.system.ensure_dir_exists`/`clean_ram` callers (core.serialization,
 # data.polarslib) were forced to have the WHOLE [system] extras stack installed just to import
 # THIS package's __init__.py, even though neither of them touches parallel/monitoring/hardware_monitor.
-__all__ = ["system", "parallel", "monitoring", "distributed", "hardware_monitor", "UtilizationMonitor", "resilience", "single_flight_cache", "cli_logging", "CircuitOpenError", "setup_cli_logging", "register_scraper", "cuda_memory_guard", "dispatch_cpu_vs_gpu", "get_shared_mem_budget_per_block", "occupancy_aware_block_size", "optimal_threads_per_block", "reset_cache", "select_best_gpu", "log_duration", "monitored", "timeout_wrapper", "applyfunc_parallel", "distribute_work", "mem_map_array", "parallel_run", "set_tf_gpu", "split_array", "split_list_into_chunks", "split_list_into_nchunks_indices", "retry_with_backoff"]
+__all__ = ["system", "parallel", "monitoring", "distributed", "hardware_monitor", "UtilizationMonitor", "resilience", "single_flight_cache", "cli_logging", "CircuitOpenError", "setup_cli_logging", "register_scraper", "cuda_memory_guard", "dispatch_cpu_vs_gpu", "get_shared_mem_budget_per_block", "occupancy_aware_block_size", "optimal_threads_per_block", "reset_cache", "select_best_gpu", "log_duration", "monitored", "timeout_wrapper", "applyfunc_parallel", "distribute_work", "mem_map_array", "parallel_run", "set_tf_gpu", "split_array", "split_list_into_chunks", "split_list_into_nchunks_indices", "retry_with_backoff", "incremental_backup", "archived_entries", "copy_to_folder", "daily_task_command", "find_changes", "require_env", "restore_from_folder", "set_aside_one_file_objects", "snapshot_tree", "task_script", "upload_to_s3", "utc_day"]
 
-_LAZY_SUBMODULES = frozenset({"parallel", "monitoring", "hardware_monitor", "distributed", "resilience", "single_flight_cache", "cli_logging"})
+_LAZY_SUBMODULES = frozenset({"parallel", "monitoring", "hardware_monitor", "distributed", "resilience", "single_flight_cache", "cli_logging", "incremental_backup"})
 
 
 def __getattr__(name):
